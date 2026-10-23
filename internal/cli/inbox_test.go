@@ -1228,6 +1228,9 @@ func ibxQueries(b []byte) string {
 }
 
 func TestNotifyChannelsOnlyListsWhatCanDeliver(t *testing.T) {
+	saved := desktopLookPath
+	desktopLookPath = func(string) (string, error) { return "", errors.New("not installed") }
+	t.Cleanup(func() { desktopLookPath = saved })
 	home := t.TempDir()
 	t.Setenv("PILOTHOUSE_HOME", home)
 	t.Setenv("PILOTHOUSE_USER_HOME", t.TempDir())
@@ -1249,4 +1252,10 @@ func TestNotifyChannelsOnlyListsWhatCanDeliver(t *testing.T) {
 	if ch := notifyChannels(context.Background()); len(ch) != 1 || ch[0] != "ntfy topic t1" {
 		t.Fatalf("want only ntfy, got %v", ch)
 	}
+}
+
+// Tests that expect a desktop channel must not depend on the machine having
+// notify-send (CI runners don't).
+func init() {
+	desktopLookPath = func(name string) (string, error) { return "/usr/bin/" + name, nil }
 }

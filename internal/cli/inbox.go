@@ -1107,6 +1107,10 @@ func newNotifyCmd() *cobra.Command {
 }
 
 // notifyChannels lists the configured channels for humans.
+// desktopLookPath finds the desktop notifier; tests replace it so results
+// don't depend on whether the machine has notify-send.
+var desktopLookPath = exec.LookPath
+
 // notifyChannels lists the channels that can actually deliver a
 // notification right now: a desktop notifier that exists on this machine,
 // paired devices that have Web Push turned on, ntfy and webhooks.
@@ -1117,7 +1121,7 @@ func notifyChannels(ctx context.Context) []string {
 	}
 	var ch []string
 	if cfg.Notify.Desktop {
-		if name, _ := notify.DesktopCommand(runtime.GOOS, "t", "b", exec.LookPath); name != "" {
+		if name, _ := notify.DesktopCommand(runtime.GOOS, "t", "b", desktopLookPath); name != "" {
 			ch = append(ch, "desktop")
 		}
 	}

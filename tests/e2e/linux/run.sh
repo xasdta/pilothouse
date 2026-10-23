@@ -479,9 +479,14 @@ expect_eq "codex session agent" "$(echo "$xs" | jq -r .agent)" codex
 CODEX_S=$(echo "$xs" | jq -r .id)
 hook codex "$(payload "$FIX_CODEX/pre_tool_bash.json" "$XSID" '.tool_input.command="git push -f origin main"')"
 echo "    | $HOOK_OUT"
-expect_eq "codex force-push" "$(echo "$HOOK_OUT" | jq -r .hookSpecificOutput.permissionDecision)" deny
+# Codex denies are exit code 2 with the reason on stderr: robust to shell
+# startup noise on stdout (Codex runs hooks through $SHELL -c).
+expect_eq "codex force-push (exit 2)" "$HOOK_RC" 2
+expect_match "codex force-push reason on stderr" "$HOOK_ERR" "."
 hook codex "$(payload "$FIX_CODEX/pre_tool_bash.json" "$XSID")"
-expect_eq "codex ask rule → no opinion (exit 0, empty)" "$HOOK_RC/$HOOK_OUT" "0/"
+# Codex can't "ask" at PreToolUse, so an ask rule becomes a deny that says a person must approve.
+expect_eq "codex ask rule → deny (exit 2)" "$HOOK_RC" 2
+expect_match "codex ask explains a person must approve" "$HOOK_ERR" "person must approve"
 hook codex "$(payload "$FIX_CODEX/pre_tool_apply_patch.json" "$XSID")"
 expect_eq "codex apply_patch rc" "$HOOK_RC" 0
 hook codex "$(payload "$FIX_CODEX/stop.json" "$XSID")"
@@ -574,8 +579,8 @@ wait "$BG_PID"
 o2=$(cat "$WORK/held2.out")
 echo "    | hook out: $o2"
 expect_eq "phone saw codex request" "$(echo "$ph2" | jq -r .request.agent)" codex
-expect_eq "codex behavior" "$(echo "$o2" | jq -r .hookSpecificOutput.decision.behavior)" deny
-expect_match "codex message" "$(echo "$o2" | jq -r .hookSpecificOutput.decision.message)" "use the lockfile"
+expect_eq "codex permission deny (exit 2)" "$(cat "$WORK/held2.rc")" 2
+expect_match "codex message on stderr" "$(cat "$WORK/held2.err")" "use the lockfile"
 end
 
 begin "away: allow for session → grant applies at PreToolUse"
@@ -750,7 +755,8 @@ TID=$(echo "$to" | sed -n 's/^task \(t_[a-z0-9]*\).*/\1/p' | head -1)
 expect_match "task id" "$TID" '^t_'
 WT=$(echo "$to" | sed -n 's/^ *worktree: *//p')
 BR=$(echo "$to" | sed -n 's/^ *branch: *\([^ ]*\).*/\1/p')
-expect_match "worktree under PILOTHOUSE_HOME" "$WT" "^$PILOTHOUSE_HOME/worktrees/proj/"
+# Worktrees live outside the self-protected Pilothouse home.
+expect_match "worktree outside PILOTHOUSE_HOME" "$WT" "^$PILOTHOUSE_USER_HOME/.pilothouse-worktrees/proj/"
 expect_match "branch" "$BR" '^pilothouse/'
 if git -C "$PROJ" rev-parse --verify -q "$BR" >/dev/null; then ok "branch exists"; else bad "branch $BR missing"; fi
 if wait_for 10 test -f "$WT/TASK_NOTES.md"; then ok "agent ran in the worktree"; else bad "agent didn't write TASK_NOTES.md in $WT"; fi
@@ -995,6 +1001,7 @@ XEOF
 		"$PH" start >/dev/null 2>&1
 		S3="$PILOTHOUSE_RUN_DIR/pilothouse.sock"
 		p() { curl -s --unix-socket "$S3" http://x/v1/presence; }
+		for i in $(seq 1 25); do [ "$(p | jq -r .source 2>/dev/null)" = os_idle ] && break; sleep 0.2; done
 		echo "P0=$(p | jq -r '.state+"/"+.source')"
 		for i in $(seq 1 20); do
 			echo "T$i xprintidle=$(xprintidle) presence=$(p | jq -c '{state,source,idle_secs}')"

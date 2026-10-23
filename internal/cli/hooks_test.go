@@ -331,7 +331,8 @@ func TestShimForwardsLargePayload(t *testing.T) {
 
 func TestHookTimeout(t *testing.T) {
 	cl := all.Get("claude")
-	if hookTimeout(cl, adapters.HookPermission) != 600*time.Second || hookTimeout(cl, adapters.HookPreTool) != 2*time.Second || hookTimeout(cl, adapters.HookSessionEnd) != time.Second {
+	if hookTimeout(cl, adapters.HookPermission, 0) != 600*time.Second || hookTimeout(cl, adapters.HookPreTool, 0) != 2*time.Second || hookTimeout(cl, adapters.HookSessionEnd, 0) != time.Second ||
+		hookTimeout(cl, adapters.HookPreTool, 5<<20) != 7*time.Second || hookTimeout(cl, adapters.HookPreTool, 60<<20) != 20*time.Second {
 		t.Error("timeouts")
 	}
 }

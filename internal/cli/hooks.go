@@ -292,9 +292,10 @@ func shimPath(warn io.Writer) (string, error) {
 // ---------------------------------------------------------------- pilothouse hook <agent>
 
 const (
-	maxHookPayload = 64 << 20        // stdin cap (BUILD-SPEC §6.1); the daemon accepts this much
-	shimTimeout    = 2 * time.Second // non-blocking hook kinds
-	shimEndTimeout = 1 * time.Second // SessionEnd: Claude Code's whole budget is 1.5 s
+	maxHookPayload = 64 << 20         // stdin cap (BUILD-SPEC §6.1); the daemon accepts this much
+	shimTimeout    = 2 * time.Second  // non-blocking hook kinds
+	maxShimTimeout = 20 * time.Second // ceiling for large payloads
+	shimEndTimeout = 1 * time.Second  // SessionEnd: Claude Code's whole budget is 1.5 s
 	maxAncestors   = 12
 )
 
@@ -356,7 +357,7 @@ func runShim(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int
 	}
 	kind = ev.Kind
 
-	ctx, cancel := context.WithTimeout(context.Background(), hookTimeout(ad, kind))
+	ctx, cancel := context.WithTimeout(context.Background(), hookTimeout(ad, kind, len(payload)))
 	defer cancel()
 	resp, err := client.New().Hook(ctx, env)
 	if err != nil {
@@ -367,7 +368,11 @@ func runShim(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int
 
 // hookTimeout: a permission hook may wait for a person up to the agent's
 // own hook timeout; everything else must answer in time for the agent.
-func hookTimeout(ad adapters.Adapter, kind adapters.HookKind) time.Duration {
+// Big payloads (a Write of a large file) get extra time to travel to the
+// daemon and be parsed: one more second per MB past the first, capped well
+// below the 30 s PreToolUse timeout Pilothouse installs. Timing out would
+// fail open, so a too-short budget is worse than a slower answer.
+func hookTimeout(ad adapters.Adapter, kind adapters.HookKind, size int) time.Duration {
 	switch kind {
 	case adapters.HookPermission:
 		if d := ad.MaxHold(kind); d > 0 {
@@ -376,7 +381,8 @@ func hookTimeout(ad adapters.Adapter, kind adapters.HookKind) time.Duration {
 	case adapters.HookSessionEnd:
 		return shimEndTimeout
 	}
-	return shimTimeout
+	extra := time.Duration(size>>20) * time.Second
+	return min(shimTimeout+extra, maxShimTimeout)
 }
 
 func hookEnvelope(agent api.AgentKind, rest []string, payload []byte) adapters.HookEnvelope {
