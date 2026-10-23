@@ -149,8 +149,8 @@ req_json() { sock GET "/v1/requests/$1"; }
 cleanup() {
 	set +e
 	[ -n "$PH" ] && "$PH" stop >/dev/null 2>&1
-	pkill -f "$PILOTHOUSE_RUN_DIR" >/dev/null 2>&1
-	pkill -f "__holder" -U "$(id -u)" >/dev/null 2>&1
+	pkill -f '[_]_holder --id' >/dev/null 2>&1
+	pkill -f "$WORK/agents/" >/dev/null 2>&1
 	if [ "${PH_E2E_KEEP:-0}" != 1 ]; then rm -rf "$WORK"; else echo "kept $WORK"; fi
 }
 trap cleanup EXIT
@@ -769,7 +769,7 @@ expect_match "actionable refusal" "$ta" "still running.*--force"
 ta=$("$PH" task abandon --force "$TID" 2>&1)
 echo "$ta" | sed 's/^/    | /'
 expect_match "abandon --force" "$ta" "abandoned"
-if wait_for 5 sh -c "! pgrep -f '__holder --id $TS' >/dev/null"; then ok "task agent stopped"; else note "task holder still running"; fi
+if wait_for 8 sh -c "! pgrep -f '[_]_holder --id $TS' >/dev/null"; then ok "task agent stopped"; else bad "task holder still running after abandon --force"; fi
 if [ ! -d "$WT" ]; then ok "worktree removed"; else bad "worktree still there"; fi
 if git -C "$PROJ" rev-parse --verify -q "$BR" >/dev/null; then bad "branch not deleted"; else ok "branch deleted"; fi
 end
@@ -905,6 +905,11 @@ if [ "${PH_E2E_SYSTEMD:-0}" = 1 ] && systemctl --user show-environment >/dev/nul
 	expect_match "data dir 0700" "$so" "^HOMEMODE=700$"
 	if printf '%s' "$so" | grep -q '^CONFMODE='; then expect_match "config.yaml 0600" "$so" "^CONFMODE=600$"; fi
 	expect_match "setup is re-runnable" "$so" "^RERUN_RC=0$"
+	# Headless runner: no notify-send and no paired device in this fresh home,
+	# so nothing can actually be delivered.
+	if ! command -v notify-send >/dev/null 2>&1; then
+		expect_nomatch "setup doesn't claim a test notification it couldn't deliver" "$so" "test notification sent \(desktop"
+	fi
 	for c in daemon "hooks: Claude Code" "hooks: Codex" service; do
 		expect_match "doctor $c" "$so" "^DOCTOR $c=ok$"
 	done
@@ -915,6 +920,8 @@ fi
 
 # ------------------------------------------------------------------ summary
 
+section "processes still running (expected: detached fake agent sessions only)"
+pgrep -af '[_]_holder' | sed 's/^/    | /'
 FAILS=$(grep -c $'\tFAIL\t' "$RESULTS")
 [ "$FAILS" -gt 0 ] && dump_logs
 section "summary ($(uname -m), subject=$SUBJECT, $("$PH" version | head -1))"
