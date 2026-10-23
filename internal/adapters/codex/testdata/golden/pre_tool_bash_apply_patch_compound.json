@@ -1,0 +1,19 @@
+{
+  "kind": "pre_tool",
+  "vendor_event": "PreToolUse",
+  "agent_session_id": "01a1693f-e04d-7421-bb5e-52e5fa5f4cb0",
+  "cwd": "/private/tmp/qa6/repo",
+  "transcript_path": "/private/tmp/qa6/uhome/.codex/sessions/2026/10/23/rollout-2026-10-23T09-52-36-01a1693f-e04d-7421-bb5e-52e5fa5f4cb0.jsonl",
+  "tool_use_id": "call_patch_compound_0_1",
+  "tool": "Bash",
+  "tool_kind": "shell",
+  "command": "git status && applypatch <<EOF\n*** Begin Patch\n*** Delete File: config/.env.production\n*** End Patch\nEOF\n",
+  "paths": [
+    "/private/tmp/qa6/repo/config/.env.production"
+  ],
+  "input": {
+    "command": "git status && applypatch <<EOF\n*** Begin Patch\n*** Delete File: config/.env.production\n*** End Patch\nEOF\n"
+  },
+  "summary": "Run: git status && applypatch <<EOF …",
+  "permission_mode": "bypassPermissions"
+}

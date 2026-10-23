@@ -7,10 +7,11 @@
 // model-request events. The feature flag `hooks` is stable and on by
 // default (codex-rs/features/src/lib.rs). What Pilothouse gets from it:
 //
-//   - PreToolUse can block (permissionDecision "deny" with a reason).
+//   - PreToolUse can block (exit 2 + reason on stderr, see encode.go).
 //     "allow" without updatedInput and "ask" are rejected by Codex as
-//     unsupported (hooks/src/engine/output_parser.rs), so policy allow/ask
-//     rules are no-ops on Codex: its own approval policy decides.
+//     unsupported (hooks/src/engine/output_parser.rs): policy allow is a
+//     no-op (Codex's own approval policy decides) and policy ask is sent
+//     as a deny telling the agent a person must do it.
 //   - PermissionRequest runs before Codex shows its approval prompt and
 //     may answer allow or deny (decision.behavior), so remote approvals work.
 //   - Hooks from user files run only once trusted (see trust.go);
@@ -22,6 +23,7 @@ package codex
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/xasdta/pilothouse/internal/adapters"
@@ -54,20 +56,52 @@ func (Adapter) DisplayName() string { return "Codex" }
 func (Adapter) ProcessNames() []string { return []string{"codex"} }
 
 // Home is Codex's home directory, resolved the way Codex does
-// (codex-rs/utils/home-dir): $CODEX_HOME canonicalized, else ~/.codex.
-// Trust keys embed this path, so it must match Codex exactly.
-// $PILOTHOUSE_USER_HOME wins over $CODEX_HOME so tests never reach a real
+// (codex-rs/utils/home-dir, find_codex_home): $CODEX_HOME canonicalized
+// (symlinks resolved; /tmp is /private/tmp on macOS), else ~/.codex as
+// spelled from $HOME, not canonicalized. Trust keys embed this path, so it
+// must match Codex exactly.
+//
+// Under $PILOTHOUSE_USER_HOME (tests, the e2e harness) $CODEX_HOME counts
+// only when it lies inside that home, so a test can never reach a real
 // Codex home through an inherited variable.
 func Home() string {
-	if os.Getenv("PILOTHOUSE_USER_HOME") == "" {
-		if h := os.Getenv("CODEX_HOME"); h != "" {
-			if real, err := filepath.EvalSymlinks(h); err == nil {
-				return real
-			}
-			return h
+	if h := os.Getenv("CODEX_HOME"); h != "" {
+		canon := canonical(h)
+		uh := os.Getenv("PILOTHOUSE_USER_HOME")
+		if uh == "" || within(canon, canonical(uh)) {
+			return canon
 		}
 	}
 	return filepath.Join(paths.UserHome(), ".codex")
+}
+
+// canonical is p made absolute with symlinks resolved; when p does not
+// exist (Codex then refuses to start), its nearest existing ancestor is
+// resolved instead.
+func canonical(p string) string {
+	if abs, err := filepath.Abs(p); err == nil {
+		p = abs
+	}
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return r
+	}
+	dir, rest := p, ""
+	for {
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return p
+		}
+		rest = filepath.Join(filepath.Base(dir), rest)
+		dir = parent
+		if r, err := filepath.EvalSymlinks(dir); err == nil {
+			return filepath.Join(r, rest)
+		}
+	}
+}
+
+func within(p, root string) bool {
+	rel, err := filepath.Rel(root, p)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, "../")
 }
 
 // HooksPath is the hooks file Pilothouse manages.

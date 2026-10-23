@@ -1,4 +1,4 @@
-import { h, icon, agentName, repoName, stateLabel, agoLong, clock, relPath } from '../dom.js';
+import { h, icon, agentName, repoName, stateLabel, agoLong, clock, relPath, fill, add } from '../dom.js';
 import { store, api, onEvent } from '../api.js';
 import { requestCard } from '../card.js';
 import { link, toast } from '../ui.js';
@@ -9,7 +9,7 @@ export function sessionView(id) {
   const root = h('div', { class: 'view' });
   const top = h('div');
   const tl = h('div');
-  root.append(top, tl);
+  add(root, top, tl);
   let events = null;
   let loadErr = null;
   let refetch = 0;
@@ -39,7 +39,7 @@ export function sessionView(id) {
   function render() {
     const s = store.sessions.get(id);
     if (!s) {
-      top.replaceChildren(loadErr
+      fill(top, loadErr
         ? h('div', { class: 'empty' }, h('h2', null, 'Session not found'), h('p', null, 'It may have ended more than a day ago.'))
         : h('p', { class: 'quiet' }, 'Loading…'));
       return;
@@ -52,7 +52,7 @@ export function sessionView(id) {
       ['Started', `${clock(s.started_at)} · ${agoLong(s.started_at)}`],
       s.task_id ? ['Task', s.task_id] : null,
     ].filter(Boolean);
-    top.replaceChildren(
+    fill(top,
       h('div', { class: 'card hero' },
         h('div', { class: 'hero-top' },
           avatar(s),
@@ -68,15 +68,15 @@ export function sessionView(id) {
 
   function renderTimeline() {
     if (loadErr && !events) {
-      tl.replaceChildren(section('Timeline', 0, h('p', { class: 'quiet' }, 'Couldn’t load the timeline.')));
+      fill(tl, section('Timeline', 0, h('p', { class: 'quiet' }, 'Couldn’t load the timeline.')));
       return;
     }
     if (!events) {
-      tl.replaceChildren(section('Timeline', 0, h('p', { class: 'quiet' }, 'Loading…')));
+      fill(tl, section('Timeline', 0, h('p', { class: 'quiet' }, 'Loading…')));
       return;
     }
     const items = timelineItems(events);
-    tl.replaceChildren(section('Timeline', 0, items.length
+    fill(tl, section('Timeline', 0, items.length
       ? h('ol', { class: 'timeline' }, items)
       : h('p', { class: 'quiet' }, 'Nothing has happened yet.')));
   }
@@ -207,13 +207,13 @@ export function requestView(id) {
   function render() {
     const r = store.requests.get(id);
     if (!r) {
-      root.replaceChildren(missing
+      fill(root, missing
         ? h('div', { class: 'empty' }, h('h2', null, 'Request not found'), h('p', null, 'It may be older than the retention window.'))
         : h('p', { class: 'quiet' }, 'Loading…'));
       return;
     }
     const s = store.sessions.get(r.session_id);
-    root.replaceChildren(
+    fill(root,
       h('div', { class: 'page-head' },
         h('h1', { class: 'page-title' }, r.status === 'open' ? 'Needs you' : 'Request'),
         h('p', { class: 'page-sub' }, `${agentName(r.agent)} · ${agoLong(r.created_at)}`)),

@@ -131,7 +131,10 @@ func selfProtection(c *evalCtx) (bool, string) {
 	if a.reason == "" && kind != api.ToolShell {
 		for _, p := range c.absPaths() {
 			if c.isProtected(p) {
-				a.hit("edits %s, which configures Pilothouse or an agent", tildePath(p, c.home))
+				if a.roots == nil {
+					a.roots = c.protectedRoots()
+				}
+				a.hit("edits %s", a.describe(p))
 				break
 			}
 		}
@@ -169,7 +172,7 @@ func (a *spAnalyzer) command(cmd *shCmd, cwd *string, depth int) {
 			continue // fd duplication (2>&1), not a file
 		}
 		if p, ok := a.protectedArg(r.target, *cwd); ok {
-			a.hit("writes to %s", p)
+			a.hit("writes to %s", a.describe(p))
 			return
 		}
 	}
@@ -239,13 +242,63 @@ func (a *spAnalyzer) command(cmd *shCmd, cwd *string, depth int) {
 	}
 	for _, arg := range args {
 		if p, ok := a.protectedArg(arg, *cwd); ok {
-			a.hit("runs %s on %s", base, p)
+			if isBareWord(arg) {
+				// `git status` in a protected directory: "status" only
+				// resolves to a protected path because of where it runs.
+				a.hit("runs `%s %s` in %s", base, arg, a.describe(filepath.Dir(p)))
+			} else {
+				a.hit("runs %s on %s", base, a.describe(p))
+			}
 			return
 		}
 	}
 }
 
-// pilothouse checks an pilothouse invocation for an admin subcommand.
+// isBareWord: an argument that names no directory (no "/", not ".", "..",
+// "~"), so it only points into a protected directory through the cwd.
+func isBareWord(arg string) bool {
+	return !strings.ContainsRune(arg, '/') && arg != "." && arg != ".." && !strings.HasPrefix(arg, "~") && !strings.HasPrefix(arg, "$")
+}
+
+// describe names a protected path for a person: the path, the protected
+// root it is in, and what that root holds.
+func (a *spAnalyzer) describe(p string) string {
+	what := protectedKind(p, a.pilothouseHome)
+	root := a.roots.root(foldPath(p))
+	if root == "" || root == foldPath(p) {
+		return tildePath(p, a.home) + " (" + what + ")"
+	}
+	shown := root
+	if len(p) >= len(root) && strings.EqualFold(p[:len(root)], root) {
+		shown = p[:len(root)] // the person's spelling, not the folded one
+	}
+	return tildePath(p, a.home) + ", inside " + tildePath(shown, a.home) + " (" + protectedKind(shown, a.pilothouseHome) + ")"
+}
+
+// protectedKind says what a protected path holds.
+func protectedKind(p, pilothouseHome string) string {
+	fp := foldPath(p)
+	if pilothouseHome != "" {
+		home := foldPath(filepath.Clean(pilothouseHome))
+		if fp == home || strings.HasPrefix(fp, home+"/") {
+			if rest := strings.TrimPrefix(fp, home); rest == "/run" || strings.HasPrefix(rest, "/run/") {
+				return "Pilothouse's sockets"
+			}
+			return "Pilothouse's own settings, keys and database"
+		}
+	}
+	switch {
+	case strings.Contains(fp, "/.claude/") || strings.HasSuffix(fp, "/.claude"):
+		return "Claude Code settings, which can approve tool calls"
+	case strings.Contains(fp, "/.codex/") || strings.HasSuffix(fp, "/.codex"):
+		return "Codex settings, which can approve tool calls"
+	case strings.Contains(fp, "/.pilothouse/") || strings.HasSuffix(fp, "/.pilothouse"):
+		return "the repo's Pilothouse policy"
+	}
+	return "Pilothouse or agent settings"
+}
+
+// pilothouse checks a pilothouse invocation for an admin subcommand.
 func (a *spAnalyzer) pilothouse(args []string, viaXargs bool, cwd string, depth int) {
 	unknown := 0
 	for j := 0; j < len(args); j++ {
@@ -433,7 +486,8 @@ func (a *spAnalyzer) rootForms() []string {
 }
 
 // protectedArg resolves a command argument as a path (also the value of
-// --opt=value and dd's of=) and reports whether it is protected.
+// --opt=value and dd's of=) and reports whether it is protected. The path
+// comes back absolute.
 func (a *spAnalyzer) protectedArg(arg, cwd string) (string, bool) {
 	if arg == "" || arg == "-" {
 		return "", false
@@ -448,7 +502,7 @@ func (a *spAnalyzer) protectedArg(arg, cwd string) (string, bool) {
 		c = a.expandVars(c)
 		p := absPath(c, cwd, a.home)
 		if a.roots.has(foldPath(p)) {
-			return tildePath(p, a.home), true
+			return p, true
 		}
 	}
 	return "", false

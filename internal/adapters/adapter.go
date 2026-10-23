@@ -76,6 +76,11 @@ type HookOutcome struct {
 	Behavior api.Behavior // allow | deny | ask | ""
 	Message  string       // reason shown to the agent / user
 	Context  string       // optional extra context for the model (session_start, prompt_submit)
+	// Rule is the policy rule that decided (policy.Result.Rule), if any.
+	// Adapters whose agent cannot express a decision use it to pick the
+	// fallback: Codex turns a pre_tool "ask" into a deny, worded
+	// differently for the built-in self-protection rule.
+	Rule string
 }
 
 // HookResponse is how the shim answers the agent: print Stdout, print

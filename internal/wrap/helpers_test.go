@@ -105,6 +105,10 @@ type fakeDaemon struct {
 	reqs []recorded
 	// fail makes every request return 503 (daemon "busy"), to exercise retry.
 	fail bool
+	// pid is what /v1/health reports; health checks are counted, not
+	// recorded in reqs.
+	pid    int
+	health int
 }
 
 type recorded struct {
@@ -117,7 +121,7 @@ func startFakeDaemon(t *testing.T) *fakeDaemon {
 	if err := paths.Ensure(); err != nil {
 		t.Fatal(err)
 	}
-	fd := &fakeDaemon{}
+	fd := &fakeDaemon{pid: 1000}
 	ln, err := net.Listen("unix", paths.Socket())
 	if err != nil {
 		t.Fatal(err)
@@ -131,6 +135,15 @@ func startFakeDaemon(t *testing.T) *fakeDaemon {
 
 func (fd *fakeDaemon) serve(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(r.Body)
+	if r.URL.Path == "/v1/health" {
+		fd.mu.Lock()
+		fd.health++
+		pid := fd.pid
+		fd.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(api.Health{Version: "test", Protocol: 1, PID: pid})
+		return
+	}
 	fd.mu.Lock()
 	fd.reqs = append(fd.reqs, recorded{r.Method, r.URL.Path, body})
 	fail := fd.fail
@@ -151,6 +164,18 @@ func (fd *fakeDaemon) serve(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		_ = json.NewEncoder(w).Encode(api.Error{Error: "not found", Code: "not_found"})
 	}
+}
+
+func (fd *fakeDaemon) setPID(pid int) {
+	fd.mu.Lock()
+	fd.pid = pid
+	fd.mu.Unlock()
+}
+
+func (fd *fakeDaemon) healthChecks() int {
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+	return fd.health
 }
 
 func (fd *fakeDaemon) requests() []recorded {

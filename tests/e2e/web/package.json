@@ -1,0 +1,1 @@
+{"name":"pilothouse-web-e2e","private":true,"type":"module","version":"0.0.0","dependencies":{"axe-core":"^4.14.0","puppeteer-core":"^25.16.0"}}

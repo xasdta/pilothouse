@@ -2,7 +2,6 @@ package codex
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/xasdta/pilothouse/internal/adapters"
@@ -60,6 +59,17 @@ func describeTool(ev *adapters.HookEvent) {
 		ev.ToolKind = api.ToolShell
 		ev.Command = field("command")
 		ev.Summary = "Run: " + hookkit.OneLine(ev.Command, 160)
+		// Without an apply_patch tool (unknown model slugs), the model
+		// patches through exec_command: `apply_patch <<'EOF' … EOF`. When
+		// that is the whole command Codex applies the patch itself, so it
+		// is an edit of the files the patch names; path rules must see them.
+		if paths, exact := hookkit.ShellPatch(ev.Command, ev.Cwd); len(paths) > 0 {
+			ev.Paths = paths
+			if exact {
+				ev.ToolKind = api.ToolEdit
+				ev.Summary = editSummary(paths, ev.Cwd)
+			}
+		}
 	case "write_stdin":
 		// Keystrokes into a running command (often a shell): treat them as
 		// a command so shell rules still apply.
@@ -68,7 +78,7 @@ func describeTool(ev *adapters.HookEvent) {
 		ev.Summary = "Type into running command: " + hookkit.OneLine(ev.Command, 120)
 	case "apply_patch":
 		ev.ToolKind = api.ToolEdit
-		ev.Paths = patchPaths(field("command"), ev.Cwd)
+		ev.Paths = hookkit.PatchPaths(field("command"), ev.Cwd)
 		ev.Summary = editSummary(ev.Paths, ev.Cwd)
 	case "request_permissions":
 		ev.ToolKind = api.ToolOther
@@ -91,33 +101,6 @@ func describeTool(ev *adapters.HookEvent) {
 			}
 		}
 	}
-}
-
-// patchPaths lists the files an apply_patch envelope touches, absolute
-// (patch paths are relative to the working directory), in patch order.
-// Grammar: codex-rs/apply-patch ("*** Add File: ", "*** Update File: ",
-// "*** Delete File: ", "*** Move to: ").
-func patchPaths(patch, cwd string) []string {
-	var out []string
-	seen := map[string]bool{}
-	for _, line := range strings.Split(patch, "\n") {
-		line = strings.TrimRight(line, "\r")
-		for _, prefix := range []string{"*** Add File: ", "*** Update File: ", "*** Delete File: ", "*** Move to: "} {
-			p, ok := strings.CutPrefix(line, prefix)
-			if !ok || strings.TrimSpace(p) == "" {
-				continue
-			}
-			p = strings.TrimSpace(p)
-			if !filepath.IsAbs(p) && cwd != "" {
-				p = filepath.Join(cwd, p)
-			}
-			if !seen[p] {
-				seen[p] = true
-				out = append(out, p)
-			}
-		}
-	}
-	return out
 }
 
 func editSummary(files []string, cwd string) string {

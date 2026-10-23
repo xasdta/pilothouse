@@ -26,6 +26,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -78,6 +79,10 @@ type Options struct {
 	UserFile         string   // paths.Policy()
 	TrustedReposFile string   // paths.TrustedRepos()
 	ProtectedPaths   []string // from every adapter + paths.Home()
+	// Unprotected are directories inside a protected path that agents
+	// may work in: task worktrees made by Pilothouse before v0.2 under
+	// ~/.pilothouse/worktrees. Settings files inside them stay protected.
+	Unprotected []string
 	// PilothouseHome lets the self-protection rule resolve $PILOTHOUSE_HOME in
 	// shell commands. Optional.
 	PilothouseHome string
@@ -93,10 +98,18 @@ func DefaultOptions(extraProtected ...string) Options {
 			prot = append(prot, p)
 		}
 	}
+	// Task worktrees used to live in the Pilothouse home (they now default
+	// to ~/.pilothouse-worktrees, see internal/task); agents of tasks made
+	// back then must still be able to work without a prompt per call.
+	unprot := []string{filepath.Join(paths.Home(), "worktrees")}
+	if wt := os.Getenv("PILOTHOUSE_WORKTREES"); wt != "" {
+		unprot = append(unprot, wt) // same variable as task.WorktreesRoot
+	}
 	return Options{
 		UserFile:         paths.Policy(),
 		TrustedReposFile: paths.TrustedRepos(),
 		ProtectedPaths:   prot,
+		Unprotected:      unprot,
 		PilothouseHome:   paths.Home(),
 	}
 }
@@ -160,6 +173,7 @@ func Load(opts Options) (*Engine, api.PolicyStatus) {
 		clock:          time.Now,
 	}
 	e.protected = e.protectedSet(opts.ProtectedPaths)
+	e.protected.except = e.protectedSet(opts.Unprotected).roots
 	e.builtin = []*rule{{
 		name:        SelfProtectionRule,
 		description: "Agents must not administer Pilothouse or edit Pilothouse/agent settings without a person",
@@ -317,6 +331,14 @@ func (d *decider) apply(c *evalCtx, rules []*rule, file string, trusted bool) {
 			d.res.Matched = append(d.res.Matched, m)
 			continue
 		}
+		if r.action == api.BehaviorAllow && c.in.ToolKind == api.ToolShell && len(c.in.Paths) > 0 && r.usesPaths() {
+			// A shell command's paths are only the files an apply_patch
+			// heredoc in it names; the command may do anything else too.
+			// They are good enough to deny or ask on, never to allow.
+			m.Ignored = shellPathAllowIgnored
+			d.res.Matched = append(d.res.Matched, m)
+			continue
+		}
 		d.res.Matched = append(d.res.Matched, m)
 		if rk := rank(r.action); rk > d.bestRank {
 			d.bestRank = rk
@@ -327,6 +349,19 @@ func (d *decider) apply(c *evalCtx, rules []*rule, file string, trusted bool) {
 }
 
 func (d *decider) result() Result { return d.res }
+
+const shellPathAllowIgnored = "allow rule decided on the files a shell command patches; the command may do more, so only deny and ask rules use them"
+
+// usesPaths reports whether the rule looks at the call's files: a `path:`
+// match, or a `when:` that mentions path or paths.
+func (r *rule) usesPaths() bool {
+	for _, m := range r.match {
+		if m.field == fPath {
+			return true
+		}
+	}
+	return strings.Contains(r.whenSrc, "path")
+}
 
 func (r *rule) messageFor(dynamic string) string {
 	switch {

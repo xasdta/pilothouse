@@ -140,13 +140,86 @@ func marshalInt(n int) json.RawMessage { return json.RawMessage(fmt.Sprint(n)) }
 
 // format pretty-prints doc with the indentation the original file used,
 // so a settings file Claude Code wrote with two spaces keeps two spaces.
+// Objects and arrays that appear byte for byte in the original (everything
+// Apply kept untouched) are written exactly as they were, so a person's
+// one-line `{ "type": "command", … }` stays on one line. They keep their
+// nesting depth, so their own line breaks still line up.
 func format(doc json.RawMessage, original []byte) []byte {
 	var b bytes.Buffer
-	if err := json.Indent(&b, doc, "", detectIndent(original)); err != nil {
-		return append([]byte(nil), doc...)
+	if err := writeValue(&b, doc, original, detectIndent(original), 0); err != nil {
+		b.Reset()
+		if err := json.Indent(&b, doc, "", detectIndent(original)); err != nil {
+			return append([]byte(nil), doc...)
+		}
 	}
 	b.WriteByte('\n')
 	return b.Bytes()
+}
+
+func writeValue(b *bytes.Buffer, raw json.RawMessage, original []byte, indent string, depth int) error {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 {
+		return errors.New("empty value")
+	}
+	if depth > 0 && (raw[0] == '{' || raw[0] == '[') && bytes.Contains(original, raw) {
+		b.Write(raw)
+		return nil
+	}
+	pad := func(d int) {
+		b.WriteByte('\n')
+		for range d {
+			b.WriteString(indent)
+		}
+	}
+	switch raw[0] {
+	case '{':
+		obj, err := parseObject(raw)
+		if err != nil {
+			return err
+		}
+		if len(obj) == 0 {
+			b.WriteString("{}")
+			return nil
+		}
+		b.WriteByte('{')
+		for i, m := range obj {
+			if i > 0 {
+				b.WriteByte(',')
+			}
+			pad(depth + 1)
+			b.Write(marshalString(m.key))
+			b.WriteString(": ")
+			if err := writeValue(b, m.val, original, indent, depth+1); err != nil {
+				return err
+			}
+		}
+		pad(depth)
+		b.WriteByte('}')
+	case '[':
+		arr, err := parseArray(raw)
+		if err != nil {
+			return err
+		}
+		if len(arr) == 0 {
+			b.WriteString("[]")
+			return nil
+		}
+		b.WriteByte('[')
+		for i, it := range arr {
+			if i > 0 {
+				b.WriteByte(',')
+			}
+			pad(depth + 1)
+			if err := writeValue(b, it, original, indent, depth+1); err != nil {
+				return err
+			}
+		}
+		pad(depth)
+		b.WriteByte(']')
+	default:
+		return json.Compact(b, raw)
+	}
+	return nil
 }
 
 func detectIndent(src []byte) string {

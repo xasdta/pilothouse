@@ -154,7 +154,7 @@ func (s *Server) handleUnsubscribe(w http.ResponseWriter, r *http.Request) {
 // handlePushTest sends a test notification to the calling device only.
 func (s *Server) handlePushTest(w http.ResponseWriter, r *http.Request) {
 	d := deviceOf(r)
-	n := core.Notification{Kind: core.NotifyTest, Title: "Pilothouse is connected", Body: "Notifications from " + machineName() + " will appear here.", Remote: true}
+	n := core.Notification{Kind: core.NotifyTest, Title: "Pilothouse is connected", Body: "Notifications from " + s.machineName() + " will appear here.", Remote: true}
 	sent, err := s.push(r.Context(), n, d.ID)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "push_failed", err.Error())

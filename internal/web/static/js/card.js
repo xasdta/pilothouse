@@ -2,7 +2,7 @@
 // Deny. Decisions are optimistic: the card shows the outcome at once and
 // rolls back if the daemon refuses (409 = someone answered first).
 
-import { h, icon, agentBadge, repoName, ago, left, toMs, requestVerb, grantPrefix, vibrate, relPath } from './dom.js';
+import { h, icon, agentBadge, repoName, ago, left, toMs, requestVerb, grantPrefix, vibrate, relPath, fill, add } from './dom.js';
 import { store, api, changed } from './api.js';
 import { toast } from './ui.js';
 
@@ -37,20 +37,20 @@ function inputField(req, ...keys) {
 function codeBlock(req) {
   const pre = h('pre', { class: 'code', tabindex: '0', 'aria-label': 'Details' });
   if (req.tool_kind === 'shell' && req.command) {
-    pre.append(h('span', { class: 'prompt' }, '$'), req.command);
+    add(pre, h('span', { class: 'prompt' }, '$'), req.command);
   } else if (req.paths && req.paths.length) {
     req.paths.slice(0, 6).forEach((p, i) => {
       const r = relPath(p, req.cwd);
       const cut = r.lastIndexOf('/');
-      if (i) pre.append('\n');
-      if (cut > 0) pre.append(h('span', { class: 'path-dir' }, r.slice(0, cut + 1)), r.slice(cut + 1));
-      else pre.append(r);
+      if (i) add(pre, '\n');
+      if (cut > 0) add(pre, h('span', { class: 'path-dir' }, r.slice(0, cut + 1)), r.slice(cut + 1));
+      else add(pre, r);
     });
-    if (req.paths.length > 6) pre.append('\n', h('span', { class: 'path-dir' }, `+ ${req.paths.length - 6} more`));
+    if (req.paths.length > 6) add(pre, '\n', h('span', { class: 'path-dir' }, `+ ${req.paths.length - 6} more`));
   } else if (req.tool_kind === 'web') {
-    pre.append(inputField(req, 'url', 'query') || req.summary || req.tool);
+    add(pre, inputField(req, 'url', 'query') || req.summary || req.tool);
   } else {
-    pre.append(req.summary || req.tool);
+    add(pre, req.summary || req.tool);
   }
   return pre;
 }
@@ -109,7 +109,7 @@ function build(req, opts) {
 
   els.outcome = h('div', { class: 'outcome', role: 'status', 'aria-live': 'polite' });
 
-  card.append(els.timer,
+  add(card, els.timer,
     h('div', { class: 'req-top' }, agentBadge(req.agent), els.where, els.age),
     els.what, els.code, els.meta, actions, denyForm, els.outcome);
 
@@ -118,7 +118,7 @@ function build(req, opts) {
 
   function showOutcome(o) {
     els.outcome.className = 'outcome ' + o.cls;
-    els.outcome.replaceChildren(icon(o.icon, '', 'check'), h('span', null, o.text));
+    fill(els.outcome, icon(o.icon, '', 'check'), h('span', null, o.text));
     card.classList.add('resolved');
   }
 
@@ -205,20 +205,20 @@ function build(req, opts) {
     els.timer.classList.toggle('low', low);
     els.left.classList.toggle('low', low);
     els.left.hidden = false;
-    els.left.replaceChildren(icon('clock', 'sm'), rem > 0 ? left(current.expires_at, now) + ' left' : 'Expiring…');
+    fill(els.left, icon('clock', 'sm'), rem > 0 ? left(current.expires_at, now) + ' left' : 'Expiring…');
   }
 
   function update(r) {
     current = r;
     const s = store.sessions.get(r.session_id);
-    els.where.replaceChildren(repoName(s, r), s && s.branch ? h('span', { class: 'branch' }, ' · ' + s.branch) : null);
+    fill(els.where, repoName(s, r), s && s.branch ? h('span', { class: 'branch' }, ' · ' + s.branch) : null);
     const verb = requestVerb(r);
-    els.what.replaceChildren(verb, r.tool_kind === 'mcp' || r.tool_kind === 'other' ? null : h('span', { class: 'tool' }, ' · ' + r.tool));
-    els.code.replaceChildren(codeBlock(r));
+    fill(els.what, verb, r.tool_kind === 'mcp' || r.tool_kind === 'other' ? null : h('span', { class: 'tool' }, ' · ' + r.tool));
+    fill(els.code, codeBlock(r));
     const metas = [];
     if (r.policy_rule) metas.push(h('span', { class: 'item' }, icon('shield', 'sm'), r.policy_rule));
     metas.push(els.left);
-    els.meta.replaceChildren(...metas);
+    fill(els.meta, ...metas);
     session.title = `Also allow ${grantPrefix(r)} for the rest of this session`;
     session.setAttribute('aria-label', `Allow for session: also allow ${grantPrefix(r)} until this session ends`);
     allow.setAttribute('aria-label', `Allow once: ${verb.toLowerCase()} ${r.command || r.summary || r.tool}`);

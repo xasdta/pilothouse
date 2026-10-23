@@ -17,7 +17,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -46,6 +45,9 @@ type PolicyEngine interface {
 	Evaluate(in policy.Input) policy.Result
 	Status() api.PolicyStatus
 	Changed() bool
+	// Reload re-reads the policy files. A file that fails to parse keeps
+	// its last good rules (and reports the error in Status).
+	Reload() api.PolicyStatus
 }
 
 // Options configures Run. Every field is optional.
@@ -62,8 +64,11 @@ type Options struct {
 	PeerGuard PeerGuard
 	// Alive reports whether a PID exists; defaults to proc.Alive.
 	Alive func(pid int) bool
-	// LoadPolicy builds the policy engine; defaults to policy.Load with
-	// policy.DefaultOptions plus every adapter's protected paths.
+	// LoadPolicy builds the policy engine, once: the daemon keeps that
+	// engine for its lifetime and calls Reload on it when files change, so
+	// a broken edit never loses the last good rules. Defaults to
+	// policy.Load with policy.DefaultOptions plus every adapter's protected
+	// paths.
 	LoadPolicy func() PolicyEngine
 	// Notifier defaults to notify.New(cfg, webServer, log).
 	Notifier core.Notifier
@@ -100,6 +105,8 @@ type Daemon struct {
 	policy   atomic.Pointer[policyHolder]
 
 	pres presenceState
+
+	compacted bool // the database was compacted at least once (prune loop only)
 
 	ctx  context.Context // cancelled when shutdown begins
 	stop context.CancelFunc
@@ -213,7 +220,7 @@ func (d *Daemon) run(parent context.Context) (err error) {
 	if err := d.initPresence(d.ctx); err != nil {
 		return err
 	}
-	d.reloadPolicy()
+	d.initPolicy()
 	d.initWeb()
 
 	unixSrv, unixLn, err := d.listenUnix()
@@ -328,7 +335,7 @@ func (d *Daemon) initWeb() {
 		if d.web != nil {
 			p = d.web
 		}
-		d.notifier = notify.New(d.cfg, p, d.log.With("component", "notify"))
+		d.notifier = notify.New(d.cfg, p, d.log) // notify adds component=notify itself
 	}
 }
 
@@ -380,19 +387,7 @@ func acquireLock(path string) (func(), error) {
 }
 
 // machineName is config `machine`, else $PILOTHOUSE_MACHINE, else the hostname.
-func machineName(cfg *config.Config) string {
-	if cfg != nil && strings.TrimSpace(cfg.Machine) != "" {
-		return strings.TrimSpace(cfg.Machine)
-	}
-	if m := strings.TrimSpace(os.Getenv("PILOTHOUSE_MACHINE")); m != "" {
-		return m
-	}
-	h, err := os.Hostname()
-	if err != nil || h == "" {
-		return "localhost"
-	}
-	return strings.TrimSuffix(h, ".local")
-}
+func machineName(cfg *config.Config) string { return config.MachineName(cfg) }
 
 // goBackground runs fn on a tracked goroutine so shutdown can wait for it.
 func (d *Daemon) goBackground(fn func()) {

@@ -126,7 +126,7 @@ POST /v1/hook(env):
   return ad.EncodeResponse(ev, outcome)
 ```
 
-Grants (`scope: session`): shell tools store `Prefix` = first two words of the command if the second word isn't a flag/path (`git push`), else the first word; other tools store the tool name only. Applied at pre_tool **after** deny/ask rules (deny always wins).
+Grants (`scope: session`): shell tools store `Prefix` = the program plus its subcommand, skipping global flags and their values (`git -c k=v commit` → `git commit`); if the subcommand can't be determined safely, the grant covers only the exact command. Chained commands (`;`, `&&`, `|`, `$(…)`) are never covered. Other tools store the tool name only. Grants also answer a matching permission request directly (needed for Codex, whose pre-tool hook can't allow). Applied at pre_tool **after** deny/ask rules (deny always wins).
 
 ## 6. Adapters
 
@@ -183,7 +183,7 @@ rules:
 
 ## 10. Tasks
 
-`pilothouse task new [--agent claude] [--base <ref>] [--name slug] [-a|--attach] "<prompt>"`: requires a git repo; creates branch `pilothouse/<slug>` and worktree `~/.pilothouse/worktrees/<repo>/<slug>` from base (default: current branch); registers `api.Task`; starts `pilothouse run -d --task <id>` with the agent and the prompt as its first message (`claude "<prompt>"`, `codex "<prompt>"`). `task ls` (status derived from its session), `task diff <id>` (`git diff base...branch`), `task done <id> [--pr] [--keep]` (`--pr` pushes and runs `gh pr create --fill`), `task abandon <id>`.
+`pilothouse task new [--agent claude] [--base <ref>] [--name slug] [-a|--attach] "<prompt>"`: requires a git repo; creates branch `pilothouse/<slug>` and worktree `$PILOTHOUSE_WORKTREES/<repo>/<slug>` (default `~/.pilothouse-worktrees`, outside the self-protected Pilothouse home) from base (default: current branch); registers `api.Task`; starts `pilothouse run -d --task <id>` with the agent and the prompt as its first message (`claude "<prompt>"`, `codex "<prompt>"`). `task ls` (status derived from its session), `task diff <id>` (`git diff base...branch`), `task done <id> [--pr] [--keep]` (`--pr` pushes and runs `gh pr create --fill`), `task abandon <id>`.
 
 ## 11. Web app and device API (TCP `127.0.0.1:7517`)
 

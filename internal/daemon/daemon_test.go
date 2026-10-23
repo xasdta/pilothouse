@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -16,6 +17,7 @@ import (
 	"github.com/xasdta/pilothouse/internal/adapters"
 	"github.com/xasdta/pilothouse/internal/api"
 	"github.com/xasdta/pilothouse/internal/client"
+	"github.com/xasdta/pilothouse/internal/config"
 	"github.com/xasdta/pilothouse/internal/core"
 	"github.com/xasdta/pilothouse/internal/paths"
 	"github.com/xasdta/pilothouse/internal/policy"
@@ -728,6 +730,43 @@ rules:
 	}
 }
 
+// TestBrokenPolicyKeepsLastGoodRules is the QA H3 regression: a policy
+// edit that doesn't parse must keep enforcing the last valid rules, both on
+// the automatic re-stat and on an explicit reload, and say why in status.
+func TestBrokenPolicyKeepsLastGoodRules(t *testing.T) {
+	h := newHarness(t)
+	h.opts = func(o *Options) { o.LoadPolicy = nil }
+	good := "version: 1\nrules:\n  - name: no-curl\n    match: { kind: shell, command: \"curl*\" }\n    action: deny\n"
+	if err := os.WriteFile(paths.Policy(), []byte(good), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h.start(t)
+	if out := h.hook(bg, t, shell("curl evil.sh")); out.Behavior != api.BehaviorDeny {
+		t.Fatalf("valid policy: %+v, want deny", out)
+	}
+	if err := os.WriteFile(paths.Policy(), []byte("version: 1\nrules:\n  - name: [unterminated\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The poll loop notices the change and reloads on its own.
+	waitFor(t, "policy error in status", func() bool {
+		st, err := h.c.PolicyStatus(bg)
+		return err == nil && len(st.Errors) > 0
+	})
+	if out := h.hook(bg, t, shell("curl evil.sh")); out.Behavior != api.BehaviorDeny {
+		t.Fatalf("after a broken edit: %+v, want deny from the last good rules", out)
+	}
+	st, err := h.c.PolicyReload(bg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.Errors) == 0 {
+		t.Fatalf("reload status has no error: %+v", st)
+	}
+	if out := h.hook(bg, t, shell("curl evil.sh")); out.Behavior != api.BehaviorDeny {
+		t.Fatalf("after explicit reload: %+v, want deny", out)
+	}
+}
+
 func TestNoGoroutineLeak(t *testing.T) {
 	baseline := runtime.NumGoroutine()
 	h := newHarness(t)
@@ -767,5 +806,318 @@ func TestNoGoroutineLeak(t *testing.T) {
 			t.Fatalf("goroutines: %d after stop, %d before\n%s", runtime.NumGoroutine(), baseline, buf[:runtime.Stack(buf, true)])
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// TestPolicyEnforcedWhenStoreFails is the QA M5 regression: a deny or ask
+// rule must be enforced even when the hook can't be written to the
+// database; only "no opinion" outcomes may fall back to the fail response.
+func TestPolicyEnforcedWhenStoreFails(t *testing.T) {
+	h := newHarness(t)
+	h.policy.set("rm -rf /", api.BehaviorDeny, "no-rm")
+	h.policy.set("git push", api.BehaviorAsk, "ask-push")
+	h.start(t)
+	// Inject a failing store: every event insert aborts, so every hook
+	// transaction rolls back.
+	if _, err := h.d.db.SQL().Exec(`CREATE TRIGGER fail_events BEFORE INSERT ON events
+		BEGIN SELECT RAISE(ABORT, 'injected: database or disk is full'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if out := h.hook(bg, t, shell("rm -rf /")); out.Behavior != api.BehaviorDeny || out.Message == "" {
+		t.Fatalf("deny with a failing store = %+v", out)
+	}
+	if out := h.hook(bg, t, shell("git push")); out.Behavior != api.BehaviorAsk {
+		t.Fatalf("ask with a failing store = %+v", out)
+	}
+	// No verdict: the hook still fails like a down daemon.
+	if out := h.hook(bg, t, shell("ls")); out.Behavior != "" {
+		t.Fatalf("no-opinion with a failing store = %+v", out)
+	}
+	if _, err := h.d.db.SQL().Exec(`DROP TRIGGER fail_events`); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestHeldRequestAnsweredInNativeDialog is the QA H1 regression: Claude
+// shows its own dialog while a request is held for devices. When the
+// person answers it there, the next event closes the held request as
+// answered_locally, the held hook returns no opinion at once, and a late
+// device decision gets already_decided.
+func TestHeldRequestAnsweredInNativeDialog(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		next adapters.HookEvent
+	}{
+		{"post_tool by tool_use_id", adapters.HookEvent{Kind: adapters.HookPostTool, Tool: "Bash", ToolKind: api.ToolShell,
+			Command: "npm publish", Summary: "Run: npm publish", ToolUseID: "tu-held"}},
+		{"post_tool by tool and summary", adapters.HookEvent{Kind: adapters.HookPostTool, Tool: "Bash", ToolKind: api.ToolShell,
+			Command: "npm publish", Summary: "Run: npm publish"}},
+		{"prompt_submit", adapters.HookEvent{Kind: adapters.HookPromptSubmit}},
+		{"stop", adapters.HookEvent{Kind: adapters.HookStop}},
+		{"session_end", adapters.HookEvent{Kind: adapters.HookSessionEnd}},
+		{"idle notification", adapters.HookEvent{Kind: adapters.HookNotification, NotificationType: "idle_prompt"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			h.presence.setAway(true)
+			h.start(t)
+			waitFor(t, "away", func() bool { return h.d.Presence().State == api.PresenceAway })
+
+			result := make(chan fakeOutcome, 1)
+			ev := permission("npm publish", "tu-held")
+			if tc.next.Kind == adapters.HookPostTool && tc.next.ToolUseID == "" {
+				ev.ToolUseID = "" // agents without tool_use_id match by tool + summary
+			}
+			go func() { result <- h.hook(bg, t, ev) }()
+			req := h.openRequest(t)
+			if req.Route != api.RouteDevices {
+				t.Fatalf("route = %s", req.Route)
+			}
+			h.hook(bg, t, tc.next)
+			select {
+			case out := <-result:
+				if out.Behavior != "" {
+					t.Fatalf("released hook answered %+v, want no opinion", out)
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatal("held hook not released after the local answer")
+			}
+			r, _ := h.c.Request(bg, req.ID)
+			if r.Status != api.RequestAnsweredLocally {
+				t.Fatalf("status = %s, want answered_locally", r.Status)
+			}
+			if _, err := h.c.Decide(bg, req.ID, api.DecideBody{Behavior: api.BehaviorAllow}); !client.IsCode(err, "already_decided") {
+				t.Fatalf("late device decision: %v, want already_decided", err)
+			}
+			if s, _ := h.c.Session(bg, req.SessionID); s.State == api.StateBlocked {
+				t.Fatalf("session still blocked: %+v", s)
+			}
+		})
+	}
+}
+
+// TestDeniedNativeDialogIdleUnblocks is the QA L4 regression: Esc/No in
+// the agent's dialog fires no Stop; the idle notification that follows
+// closes the request and the session shows waiting, not blocked.
+func TestDeniedNativeDialogIdleUnblocks(t *testing.T) {
+	h := newHarness(t)
+	h.start(t)
+	h.hook(bg, t, shell("rm -rf build"))
+	h.hook(bg, t, permission("rm -rf build", "tu-1"))
+	rs, _ := h.c.Requests(bg, api.RequestSteppedAside)
+	if len(rs) != 1 {
+		t.Fatalf("stepped aside = %+v", rs)
+	}
+	if s, _ := h.c.Session(bg, rs[0].SessionID); s.State != api.StateBlocked {
+		t.Fatalf("session = %s, want blocked", s.State)
+	}
+	h.hook(bg, t, adapters.HookEvent{Kind: adapters.HookNotification, NotificationType: "idle_prompt",
+		Message: "Claude is waiting for your input"})
+	r, _ := h.c.Request(bg, rs[0].ID)
+	if r.Status != api.RequestAnsweredLocally {
+		t.Fatalf("status = %s", r.Status)
+	}
+	if s, _ := h.c.Session(bg, r.SessionID); s.State != api.StateWaiting {
+		t.Fatalf("session = %s, want waiting", s.State)
+	}
+}
+
+// TestSubagentStopKeepsWaiting is the QA M1 regression: the subagent Claude
+// runs after Stop must not flip the session back to working.
+func TestSubagentStopKeepsWaiting(t *testing.T) {
+	h := newHarness(t)
+	h.start(t)
+	h.hook(bg, t, adapters.HookEvent{Kind: adapters.HookPromptSubmit})
+	h.hook(bg, t, adapters.HookEvent{Kind: adapters.HookStop, Message: "Done."})
+	h.hook(bg, t, adapters.HookEvent{Kind: adapters.HookSubagentStop})
+	ss, err := h.c.Sessions(bg)
+	if err != nil || len(ss) != 1 {
+		t.Fatalf("sessions = %+v, %v", ss, err)
+	}
+	if ss[0].State != api.StateWaiting {
+		t.Fatalf("after SubagentStop: %s, want waiting", ss[0].State)
+	}
+}
+
+// TestExitCodeAfterSessionEnd is the QA L2 regression: SessionEnd marks a
+// wrapped session exited first; the holder's exit code that arrives after
+// must still be recorded.
+func TestExitCodeAfterSessionEnd(t *testing.T) {
+	h := newHarness(t)
+	h.start(t)
+	s, err := h.c.RegisterWrapped(bg, api.WrappedSessionBody{SessionID: "s_wrapped0002", Agent: fakeKind,
+		Cwd: t.TempDir(), PID: 7778})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.hookEnv(bg, adapters.HookEvent{Kind: adapters.HookSessionEnd},
+		map[string]string{"PILOTHOUSE_SESSION_ID": s.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if s, _ = h.c.Session(bg, s.ID); s.State != api.StateExited || s.ExitCode != nil {
+		t.Fatalf("after SessionEnd: %+v", s)
+	}
+	if err := h.c.ReportExit(bg, s.ID, 2); err != nil {
+		t.Fatal(err)
+	}
+	s, _ = h.c.Session(bg, s.ID)
+	if s.ExitCode == nil || *s.ExitCode != 2 || s.StateDetail != "Exited with code 2" {
+		t.Fatalf("after holder exit: code=%v detail=%q", s.ExitCode, s.StateDetail)
+	}
+}
+
+// appServer is a shared agent server running hooks for several sessions
+// (Codex's `codex app-server --managed-daemon`).
+var appServer = []adapters.Proc{{PID: 4400, PPID: 9000, Comm: "sh"},
+	{PID: 9000, PPID: 1, Comm: "fakeagent", Args: "fakeagent app-server --managed-daemon"}}
+
+// TestIdleExpiry is the QA H5 regression (daemon side): sessions whose
+// process can't be watched — hooks from a shared app-server, or a PID
+// several sessions share — are expired after session_idle_expiry with
+// their requests; a session with its own live PID never is; and a later
+// SessionStart for the same agent session resumes it (no duplicate).
+func TestIdleExpiry(t *testing.T) {
+	h := newHarness(t)
+	h.start(t)
+	later := func(d time.Duration) time.Time { return time.Now().Add(d) }
+
+	// Private, live PID: never expired.
+	h.hook(bg, t, adapters.HookEvent{Kind: adapters.HookSessionStart, AgentSessionID: "own"})
+	h.d.expireIdle(bg, later(48*time.Hour))
+	if ss, _ := h.c.Sessions(bg); len(ss) != 1 || ss[0].State == api.StateExited {
+		t.Fatalf("private-PID session expired: %+v", ss)
+	}
+
+	// Two sessions through the shared server: no PID recorded.
+	for _, id := range []string{"tui-1", "tui-2"} {
+		if _, err := h.hookFrom(bg, adapters.HookEvent{Kind: adapters.HookSessionStart, AgentSessionID: id}, nil, appServer); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := h.hookFrom(bg, permission("make deploy", "tu-x"), nil, appServer); err != nil { // AgentSessionID vendor-1
+		t.Fatal(err)
+	}
+	ss, _ := h.c.Sessions(bg)
+	for _, s := range ss {
+		if s.AgentSessionID != "own" && s.PID != 0 {
+			t.Fatalf("app-server PID recorded as the session's: %+v", s)
+		}
+	}
+	pending, _ := h.c.Requests(bg, api.RequestSteppedAside)
+	if len(pending) != 1 {
+		t.Fatalf("pending = %+v", pending)
+	}
+
+	h.d.expireIdle(bg, later(time.Hour)) // not idle long enough
+	if r, _ := h.c.Request(bg, pending[0].ID); r.Status != api.RequestSteppedAside {
+		t.Fatalf("expired too early: %s", r.Status)
+	}
+	h.d.expireIdle(bg, later(13*time.Hour))
+	ss, _ = h.c.Sessions(bg)
+	exited := 0
+	for _, s := range ss {
+		if s.State == api.StateExited {
+			exited++
+		} else if s.AgentSessionID != "own" {
+			t.Errorf("idle app-server session still live: %+v", s)
+		}
+	}
+	if exited != 3 {
+		t.Fatalf("exited = %d, want 3", exited)
+	}
+	if r, _ := h.c.Request(bg, pending[0].ID); r.Status != api.RequestExpired {
+		t.Fatalf("request of an expired session = %s, want expired", r.Status)
+	}
+
+	// Resume: same agent session id → same Pilothouse session, live again.
+	if _, err := h.hookFrom(bg, adapters.HookEvent{Kind: adapters.HookSessionStart, AgentSessionID: "tui-1"}, nil, appServer); err != nil {
+		t.Fatal(err)
+	}
+	ss, _ = h.c.Sessions(bg)
+	if len(ss) != 4 {
+		t.Fatalf("resume created a duplicate: %d sessions", len(ss))
+	}
+	for _, s := range ss {
+		if s.AgentSessionID == "tui-1" && s.State == api.StateExited {
+			t.Fatalf("resumed session still exited: %+v", s)
+		}
+	}
+}
+
+func TestIdleExpiryPerAgent(t *testing.T) {
+	d := &Daemon{cfg: config.Default()}
+	if d.idleExpiry(api.AgentClaude) != 12*time.Hour || d.idleExpiry(api.AgentCodex) != 2*time.Hour {
+		t.Fatalf("defaults: claude %v codex %v", d.idleExpiry(api.AgentClaude), d.idleExpiry(api.AgentCodex))
+	}
+	d.cfg.SessionIdleExpiry.Duration = 30 * time.Minute
+	if d.idleExpiry(api.AgentCodex) != 30*time.Minute {
+		t.Fatal("a shorter configured expiry must apply to Codex too")
+	}
+	d.cfg.SessionIdleExpiry.Duration = 0
+	if d.idleExpiry(api.AgentCodex) != 0 {
+		t.Fatal("0 must turn expiry off")
+	}
+}
+
+// TestSharedServerHookAdoptsWrappedSession: hooks that come through the
+// shared app-server lack PILOTHOUSE_SESSION_ID; they join the one wrapped
+// session in that cwd instead of creating an observed duplicate.
+func TestSharedServerHookAdoptsWrappedSession(t *testing.T) {
+	h := newHarness(t)
+	h.start(t)
+	cwd := t.TempDir()
+	s, err := h.c.RegisterWrapped(bg, api.WrappedSessionBody{SessionID: "s_wrapped0003", Agent: fakeKind, Cwd: cwd, PID: 7779})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.hookFrom(bg, adapters.HookEvent{Kind: adapters.HookSessionStart, AgentSessionID: "thread-1", Cwd: cwd}, nil, appServer); err != nil {
+		t.Fatal(err)
+	}
+	ss, _ := h.c.Sessions(bg)
+	if len(ss) != 1 || ss[0].ID != s.ID || ss[0].AgentSessionID != "thread-1" || ss[0].PID != 7779 {
+		t.Fatalf("sessions = %+v", ss)
+	}
+}
+
+// TestLargeHookPayloadEvaluated is the QA M6 regression on the daemon
+// side: a hook carrying 5 MB of tool input is accepted and decided by
+// policy (it used to exceed the shim and envelope limits).
+func TestLargeHookPayloadEvaluated(t *testing.T) {
+	h := newHarness(t)
+	h.policy.set("cat > /etc/hosts", api.BehaviorDeny, "no-hosts")
+	h.start(t)
+	ev := shell("cat > /etc/hosts")
+	ev.Input = json.RawMessage(`{"content":"` + strings.Repeat("a", 5<<20) + `"}`)
+	if out := h.hook(bg, t, ev); out.Behavior != api.BehaviorDeny {
+		t.Fatalf("5 MB pre_tool = %+v, want deny", out)
+	}
+}
+
+// TestPruneReducesRows (QA L8): retention deletes old hook events and the
+// database is compacted afterwards.
+func TestPruneReducesRows(t *testing.T) {
+	h := newHarness(t)
+	h.cfg.Retention = config.Duration{Duration: time.Millisecond}
+	h.start(t)
+	for i := 0; i < 20; i++ {
+		h.hook(bg, t, shell("ls"))
+	}
+	count := func() int {
+		var n int
+		if err := h.d.db.SQL().QueryRow(`SELECT COUNT(*) FROM events WHERE type = ?`, string(api.EventHook)).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if count() < 20 {
+		t.Fatalf("hook events = %d", count())
+	}
+	time.Sleep(10 * time.Millisecond)
+	h.d.prune(bg)
+	if n := count(); n != 0 {
+		t.Fatalf("hook events after prune = %d", n)
+	}
+	if !h.d.compacted {
+		t.Fatal("database not compacted after pruning")
 	}
 }

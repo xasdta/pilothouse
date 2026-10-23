@@ -13,6 +13,7 @@ import (
 	"github.com/xasdta/pilothouse/internal/adapters"
 	"github.com/xasdta/pilothouse/internal/adapters/hookkit"
 	"github.com/xasdta/pilothouse/internal/api"
+	"github.com/xasdta/pilothouse/internal/policy"
 )
 
 var update = flag.Bool("update", false, "rewrite golden files")
@@ -104,6 +105,14 @@ func TestParseHookKeyFields(t *testing.T) {
 		{"pre_tool_bash", "Run: git push origin main", adapters.HookPreTool, api.ToolShell, nil},
 		{"pre_tool_apply_patch", "Edit: src/app.go, docs/new.md, old.txt (+2 more)", adapters.HookPreTool, api.ToolEdit,
 			[]string{"/home/user/project/src/app.go", "/home/user/project/docs/new.md", "/home/user/project/old.txt", "/home/user/project/lib/x.go", "/home/user/project/lib/y.go"}},
+		// Real Codex 0.164 payloads (tests/e2e/codex scenario=patch_env): with
+		// no apply_patch tool the model patches through exec_command (M10).
+		{"pre_tool_bash_apply_patch_heredoc", "Edit: .env.local", adapters.HookPreTool, api.ToolEdit,
+			[]string{"/private/tmp/qa6/repo/.env.local"}},
+		{"pre_tool_bash_apply_patch_cd", "Edit: sub/.env", adapters.HookPreTool, api.ToolEdit,
+			[]string{"/private/tmp/qa6/repo/sub/.env"}},
+		{"pre_tool_bash_apply_patch_compound", "Run: git status && applypatch <<EOF …", adapters.HookPreTool, api.ToolShell,
+			[]string{"/private/tmp/qa6/repo/config/.env.production"}},
 		{"pre_tool_mcp", "MCP memory: create_entities", adapters.HookPreTool, api.ToolMCP, nil},
 		{"pre_tool_spawn_agent", "spawn_agent: Review the diff for bugs", adapters.HookPreTool, api.ToolOther, nil},
 		{"permission_bash", "Run: npm install left-pad", adapters.HookPermission, api.ToolShell, nil},
@@ -140,37 +149,86 @@ func TestParseHookKeyFields(t *testing.T) {
 func TestEncodeResponse(t *testing.T) {
 	a := Adapter{}
 	ev := func(k adapters.HookKind) adapters.HookEvent { return adapters.HookEvent{Kind: k} }
+	type resp = adapters.HookResponse
+	deny := func(reason string) resp { return resp{Stderr: reason + "\n", ExitCode: 2} }
 	for _, tc := range []struct {
 		name string
 		ev   adapters.HookEvent
 		out  adapters.HookOutcome
-		want string
+		want resp
 	}{
+		// Denies are exit 2 + stderr (H4): stdout noise from shell startup
+		// files cannot hide them. No trailing period: Codex appends
+		// ". Command: …" itself (L10).
 		{"pre deny", ev(adapters.HookPreTool), adapters.HookOutcome{Behavior: api.BehaviorDeny, Message: "No force-push."},
-			`{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"No force-push."}}`},
+			deny("No force-push")},
 		{"pre deny needs a reason", ev(adapters.HookPreTool), adapters.HookOutcome{Behavior: api.BehaviorDeny},
-			`{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Blocked by Pilothouse policy."}}`},
-		{"pre allow unsupported", ev(adapters.HookPreTool), adapters.HookOutcome{Behavior: api.BehaviorAllow, Message: "ok"}, ``},
-		{"pre ask unsupported", ev(adapters.HookPreTool), adapters.HookOutcome{Behavior: api.BehaviorAsk, Message: "ask"}, ``},
+			deny("Blocked by Pilothouse policy")},
+		{"pre allow unsupported", ev(adapters.HookPreTool), adapters.HookOutcome{Behavior: api.BehaviorAllow, Message: "ok"}, resp{}},
+		// Codex cannot ask at PreToolUse; ask becomes a deny (M9).
+		{"pre ask from self-protection", ev(adapters.HookPreTool), adapters.HookOutcome{Behavior: api.BehaviorAsk,
+			Rule: "pilothouse-self-protection", Message: "Pilothouse self-protection: this writes to ~/.pilothouse/x. A person must confirm it."},
+			deny("Pilothouse: a person must approve this, and Codex cannot ask them from a hook — ask the user to run it themselves (Pilothouse self-protection: this writes to ~/.pilothouse/x. A person must confirm it)")},
+		{"pre ask self-protection without rule name", ev(adapters.HookPreTool), adapters.HookOutcome{Behavior: api.BehaviorAsk,
+			Message: "Pilothouse self-protection: this runs `pilothouse approve`. A person must confirm it."},
+			deny("Pilothouse: a person must approve this, and Codex cannot ask them from a hook — ask the user to run it themselves (Pilothouse self-protection: this runs `pilothouse approve`. A person must confirm it)")},
+		{"pre ask from a user rule", ev(adapters.HookPreTool), adapters.HookOutcome{Behavior: api.BehaviorAsk, Rule: "ask-push", Message: "Pushing needs a person's OK."},
+			deny("Pilothouse: a person must approve this, and Codex cannot ask them from a hook — ask the user to run it themselves or allow it with a Pilothouse rule (Pushing needs a person's OK)")},
 		{"permission allow", ev(adapters.HookPermission), adapters.HookOutcome{Behavior: api.BehaviorAllow},
-			`{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}`},
+			resp{Stdout: `{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}` + "\n"}},
 		{"permission deny", ev(adapters.HookPermission), adapters.HookOutcome{Behavior: api.BehaviorDeny, Message: "Denied from phone"},
-			`{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny","message":"Denied from phone"}}}`},
-		{"permission none", ev(adapters.HookPermission), adapters.HookOutcome{}, ``},
+			deny("Denied from phone")},
+		{"permission deny needs a reason", ev(adapters.HookPermission), adapters.HookOutcome{Behavior: api.BehaviorDeny},
+			deny("Denied through Pilothouse.")},
+		{"permission none", ev(adapters.HookPermission), adapters.HookOutcome{}, resp{}},
+		{"permission ask is no opinion", ev(adapters.HookPermission), adapters.HookOutcome{Behavior: api.BehaviorAsk}, resp{}},
+		{"prompt deny", ev(adapters.HookPromptSubmit), adapters.HookOutcome{Behavior: api.BehaviorDeny, Message: "no"}, deny("no")},
 		{"session context", ev(adapters.HookSessionStart), adapters.HookOutcome{Context: "ctx"},
-			`{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"ctx"}}`},
-		{"stop", ev(adapters.HookStop), adapters.HookOutcome{Behavior: api.BehaviorDeny}, ``},
+			resp{Stdout: `{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"ctx"}}` + "\n"}},
+		{"stop", ev(adapters.HookStop), adapters.HookOutcome{Behavior: api.BehaviorDeny}, resp{}},
 	} {
-		got := a.EncodeResponse(tc.ev, tc.out)
-		if strings.TrimSuffix(got.Stdout, "\n") != tc.want || got.ExitCode != 0 {
-			t.Errorf("%s: got %q\nwant %s", tc.name, got.Stdout, tc.want)
+		if got := a.EncodeResponse(tc.ev, tc.out); got != tc.want {
+			t.Errorf("%s:\n got %+v\nwant %+v", tc.name, got, tc.want)
 		}
 	}
-	if r := a.FailResponse(adapters.HookPreTool, true); !strings.Contains(r.Stdout, `"deny"`) {
+	if r := a.FailResponse(adapters.HookPreTool, true); r.ExitCode != 2 || r.Stdout != "" || !strings.Contains(r.Stderr, "approvals.fail_closed") || strings.HasSuffix(r.Stderr, ".\n") {
 		t.Errorf("fail closed: %+v", r)
 	}
-	if r := a.FailResponse(adapters.HookPermission, true); r.Stdout != "" {
+	if r := a.FailResponse(adapters.HookPermission, true); r != (resp{}) {
 		t.Errorf("fail closed permission: %+v", r)
+	}
+	if r := a.FailResponse(adapters.HookPreTool, false); r != (resp{}) {
+		t.Errorf("fail open: %+v", r)
+	}
+}
+
+// TestAskReasonUsesPolicyRuleName pins the rule name the adapter keys on.
+func TestAskReasonUsesPolicyRuleName(t *testing.T) {
+	if policy.SelfProtectionRule != "pilothouse-self-protection" {
+		t.Fatal(policy.SelfProtectionRule)
+	}
+}
+
+// TestShellNoise: a shell whose startup prints to stdout is reported,
+// a quiet one is not.
+func TestShellNoise(t *testing.T) {
+	dir := t.TempDir()
+	noisy := filepath.Join(dir, "noisy-sh")
+	if err := os.WriteFile(noisy, []byte("#!/bin/sh\necho 'ZSHENV NOISE'\nexec /bin/sh \"$@\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SHELL", noisy)
+	out, err := ShellNoise()
+	if err != nil || out != "ZSHENV NOISE\n" {
+		t.Errorf("noisy: %q, %v", out, err)
+	}
+	t.Setenv("SHELL", "/bin/sh")
+	if out, err := ShellNoise(); err != nil || out != "" {
+		t.Errorf("quiet: %q, %v", out, err)
+	}
+	t.Setenv("SHELL", filepath.Join(dir, "missing"))
+	if _, err := ShellNoise(); err == nil {
+		t.Error("missing shell: no error")
 	}
 }
 

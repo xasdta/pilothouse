@@ -1,0 +1,18 @@
+import { BASE, launch, pairViaUI, text, waitText, check, summary, sleep, shot } from './lib.mjs';
+const browser = await launch();
+const page = await browser.newPage();
+await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 2 });
+await pairViaUI(page, 'toast');
+const bcdp = await browser.target().createCDPSession();
+await bcdp.send('Browser.grantPermissions', { origin: BASE, permissions: ['notifications'] });
+await page.goto(BASE + '/settings', { waitUntil: 'domcontentloaded' });
+await sleep(1500);
+await (await page.waitForSelector('xpath///button[contains(., "Turn on notifications")]')).click();
+check('push on', await waitText(page, 'Notifications are on', 60000));
+await (await page.waitForSelector('xpath///button[contains(., "Turn off")]')).click();
+await sleep(500);
+const t = await text(page, '.toast');
+check('toast "Notifications are off" has no literal null', !t.includes('null'), JSON.stringify(t));
+await page.screenshot({ path: '/private/tmp/qa2/shots/07-toast-off.png', clip: { x: 0, y: 600, width: 390, height: 244 } });
+await browser.close();
+process.exit(summary());

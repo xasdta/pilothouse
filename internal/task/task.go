@@ -26,6 +26,26 @@ import (
 // BranchPrefix namespaces task branches.
 const BranchPrefix = "pilothouse/"
 
+// WorktreesEnv overrides where task worktrees are created.
+const WorktreesEnv = "PILOTHOUSE_WORKTREES"
+
+// WorktreesRoot is the directory task worktrees are created in:
+// $PILOTHOUSE_WORKTREES, else ~/.pilothouse-worktrees; each task gets
+// <root>/<repo>/<slug>. It is deliberately outside the Pilothouse home
+// (~/.pilothouse), which the built-in self-protection rule guards: an
+// agent working in a worktree there would need a person for every tool
+// call. Tasks made before this (worktrees in ~/.pilothouse/worktrees) keep
+// the path they recorded, and policy exempts that directory too.
+func WorktreesRoot() string {
+	if d := os.Getenv(WorktreesEnv); d != "" {
+		if abs, err := filepath.Abs(d); err == nil {
+			return abs
+		}
+		return d
+	}
+	return filepath.Join(paths.UserHome(), ".pilothouse-worktrees")
+}
+
 // StartSpec is what a Starter needs to launch a task's agent.
 type StartSpec struct {
 	TaskID string
@@ -140,7 +160,7 @@ func (m *Manager) New(ctx context.Context, o NewOptions) (t api.Task, err error)
 	if o.Name != "" {
 		want = Slugify(o.Name)
 	}
-	wtRoot := filepath.Join(paths.Home(), "worktrees", Slugify(filepath.Base(repo)))
+	wtRoot := filepath.Join(WorktreesRoot(), Slugify(filepath.Base(repo)))
 	slug, err := uniqueSlug(ctx, top, wtRoot, want, existing)
 	if err != nil {
 		return t, err
@@ -198,6 +218,9 @@ func (m *Manager) New(ctx context.Context, o NewOptions) (t api.Task, err error)
 		return t, err
 	}
 	m.mirror(ctx, t)
+	if t.Agent == api.AgentClaude && ClaudeAsksTrust(repo, t.Worktree) {
+		m.surfaceTrustPrompt(ctx, t)
+	}
 	return t, nil
 }
 

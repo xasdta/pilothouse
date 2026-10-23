@@ -192,9 +192,15 @@ func (Adapter) Status(opts adapters.InstallOptions) (adapters.HookStatus, error)
 		st.Problems = append(st.Problems, fmt.Sprintf("%s: %v", ConfigPath(), perr))
 	case hooksFeatureOff(doc):
 		st.Problems = append(st.Problems, "[features] hooks = false in config.toml turns Codex hooks off")
-	case st.Installed && opts.ShimPath != "" && !p.hooks.Result.Changed:
-		if n := untrusted(doc, p.hooks.Result.Placed, specs(opts.ShimPath)); n > 0 {
-			st.Problems = append(st.Problems, fmt.Sprintf("Codex will skip %d Pilothouse hooks until they are trusted: run `pilothouse hooks install --agent codex`, or approve them in Codex (/hooks)", n))
+	case st.Installed:
+		// Check trust the way Codex will: the key from the handler's real
+		// position in hooks.json under Codex's own spelling of the path
+		// (Home), the hash from the declaration as written there.
+		if n := untrusted(doc, p.hooks.Result.Found); n > 0 {
+			st.Problems = append(st.Problems, fmt.Sprintf("not trusted: Codex will skip %d Pilothouse hooks until they are trusted; run `pilothouse hooks install --agent codex`, or approve them in Codex (/hooks)", n))
+		}
+		if other := otherTrustPaths(doc); len(other) > 0 {
+			st.Problems = append(st.Problems, fmt.Sprintf("Pilothouse's trust entries in %s name %s, but Codex reads %s (CODEX_HOME or a symlinked home?); run `pilothouse hooks install --agent codex` again", ConfigPath(), strings.Join(other, ", "), HooksPath()))
 		}
 	}
 	current := !p.hooks.Result.Changed && !p.configChanged()
@@ -205,16 +211,49 @@ func (Adapter) Status(opts adapters.InstallOptions) (adapters.HookStatus, error)
 	return st, nil
 }
 
-func untrusted(doc *tomlDoc, placed map[string]hookkit.Ref, sp []hookkit.Spec) int {
+// untrusted counts our handlers in hooks.json whose trust entry is
+// missing or does not match the hash Codex computes for them.
+func untrusted(doc *tomlDoc, found []hookkit.Found) int {
 	n := 0
-	for _, s := range sp {
-		ref, ok := placed[s.Event]
-		if !ok {
-			continue
+	for _, f := range found {
+		spec := hookkit.Spec{Event: f.Event, Matcher: f.Matcher, Command: f.Command, Timeout: f.Timeout}
+		if _, known := eventLabels[f.Event]; !known {
+			continue // an event Codex does not have never runs anyway
 		}
-		if h, _ := trustState(doc, trustKey(HooksPath(), ref)); h != trustHash(s) {
+		if h, _ := trustState(doc, trustKey(HooksPath(), f.Ref)); h != trustHash(spec) {
 			n++
 		}
 	}
 	return n
+}
+
+// otherTrustPaths lists hooks.json paths named by our marked trust
+// entries other than the one Codex reads: an install made under another
+// spelling of the Codex home, which Codex will not match.
+func otherTrustPaths(doc *tomlDoc) []string {
+	lines := doc.lines()
+	seen := map[string]bool{}
+	var out []string
+	for _, t := range doc.tables {
+		if !isStateTable(t) || t.line == 0 || !isMarker(lines[t.line-1]) {
+			continue
+		}
+		path, ok := trustKeyPath(t.path[2])
+		if !ok || path == HooksPath() || seen[path] {
+			continue
+		}
+		seen[path] = true
+		out = append(out, path)
+	}
+	return out
+}
+
+// trustKeyPath is the source path part of a trust key
+// "<path>:<event label>:<group>:<handler>".
+func trustKeyPath(key string) (string, bool) {
+	parts := strings.Split(key, ":")
+	if len(parts) < 4 {
+		return "", false
+	}
+	return strings.Join(parts[:len(parts)-3], ":"), true
 }

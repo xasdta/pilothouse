@@ -48,14 +48,26 @@ export function subscribe(fn) {
 }
 
 let queued = false;
-/** Coalesces change notifications into one per frame. */
+function flush(kind) {
+  if (!queued) return;
+  queued = false;
+  for (const fn of listeners) fn(kind);
+}
+/**
+ * Coalesces change notifications into one per frame. Hidden tabs get no
+ * animation frames, so there the flush runs as a microtask instead (the
+ * title badge must keep counting while the tab is in the background). The
+ * timeout covers a tab hidden after the frame was requested.
+ */
 export function changed(kind = 'data') {
   if (queued) return;
   queued = true;
-  requestAnimationFrame(() => {
-    queued = false;
-    for (const fn of listeners) fn(kind);
-  });
+  if (document.hidden) {
+    queueMicrotask(() => flush(kind));
+    return;
+  }
+  requestAnimationFrame(() => flush(kind));
+  setTimeout(() => flush(kind), 250);
 }
 
 export function loadSnapshot(snap) {
@@ -109,6 +121,13 @@ let es = null;
 let retryTimer = 0;
 let backoff = 0;
 let hiddenAt = 0;
+let lastHeard = 0;
+
+// A connection can die silently (Wi-Fi handoff, sleeping proxy) without an
+// error event. The server sends `event: ping` every 15 s; after 45 s with
+// nothing at all, reconnect.
+const SILENCE_MS = 45000;
+const heard = () => { lastHeard = Date.now(); };
 
 function setConn(c) {
   if (store.conn !== c) {
@@ -128,14 +147,19 @@ export function connect() {
   setConn(store.conn === 'live' ? 'live' : 'connecting');
   const src = new EventSource('/api/events?after=' + store.seq);
   es = src;
+  heard();
   src.addEventListener('open', () => {
+    heard();
     backoff = 0;
     setConn('live');
   });
+  src.addEventListener('ping', heard);
   src.addEventListener('event', (m) => {
+    heard();
     try { applyEvent(JSON.parse(m.data)); } catch (e) { console.warn('bad event', e); }
   });
   src.addEventListener('control', async (m) => {
+    heard();
     let c = {};
     try { c = JSON.parse(m.data); } catch { /* ignore */ }
     if (!c.resync_required) return;
@@ -178,3 +202,25 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 addEventListener('online', () => { if (store.loaded) { backoff = 0; connect(); } });
+
+setInterval(() => {
+  if (!es || !store.loaded || Date.now() - lastHeard < SILENCE_MS) return;
+  console.warn('event stream silent for 45 s; reconnecting');
+  es.close();
+  es = null;
+  setConn('connecting');
+  backoff = 0;
+  connect();
+}, 5000);
+
+// Back/forward cache: a page kept in the bfcache would hold its stream open
+// (browsers allow only 6 connections per host on HTTP/1.1, so a few
+// navigations would hang the app). Close it on the way out and reopen it,
+// catching up from store.seq, when the page is restored.
+addEventListener('pagehide', () => {
+  clearTimeout(retryTimer);
+  if (es) { es.close(); es = null; }
+});
+addEventListener('pageshow', (e) => {
+  if (e.persisted && store.loaded) { backoff = 0; connect(); }
+});

@@ -1,4 +1,4 @@
-import { h, toMs } from '../dom.js';
+import { h, toMs, fill } from '../dom.js';
 import { store } from '../api.js';
 import { sessionRow, section } from './rows.js';
 
@@ -21,7 +21,7 @@ export function sessionsView() {
         h('h2', null, 'No sessions yet'),
         h('p', null, 'Start Claude Code or Codex on your computer and it shows up here.')));
     }
-    root.replaceChildren(...parts);
+    fill(root, ...parts);
   }
 
   render();

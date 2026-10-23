@@ -1,4 +1,4 @@
-import { h, icon, agoLong } from '../dom.js';
+import { h, icon, agoLong, fill, add } from '../dom.js';
 import { store, api } from '../api.js';
 import { toast, refreshChrome } from '../ui.js';
 import { pushStatus, enablePush, disablePush } from '../push.js';
@@ -11,7 +11,7 @@ export function settingsView() {
   const device = h('div', { class: 'group' });
   const conn = h('div', { class: 'group' });
 
-  root.append(
+  add(root,
     h('div', { class: 'page-head' }, h('h1', { class: 'page-title' }, 'Settings')),
     section('Notifications', 0, notif),
     section('Where should requests go?', 0, presence),
@@ -69,12 +69,19 @@ export function settingsView() {
               h('p', null, 'Get a notification when an agent needs you while you’re away. You can answer right from it on most phones.'))),
           h('div', { class: 'row-btns' }, h('button', { class: 'btn primary', type: 'button', onclick: onPush }, 'Turn on notifications')));
     }
-    notif.replaceChildren(...[content].flat());
+    fill(notif, ...[content].flat());
   }
 
   async function onPush(e) {
     const b = e.currentTarget;
     b.disabled = true;
+    // Subscribing goes through the browser's push service and can take
+    // many seconds: show that something is happening.
+    fill(b, h('span', { class: 'spin', 'aria-hidden': 'true' }), 'Turning on…');
+    b.setAttribute('aria-busy', 'true');
+    const status = h('p', { class: 'group-note push-progress', role: 'status' },
+      'Waiting for your browser to register with its push service…');
+    if (b.parentNode) b.parentNode.after(status);
     try {
       await enablePush();
       toast('Notifications are on', 'ok');
@@ -113,7 +120,7 @@ export function settingsView() {
     const why = p.mode === 'auto'
       ? (away ? 'Your computer has been idle' + (p.idle_secs ? ` for ${Math.round(p.idle_secs / 60)} min` : '') : 'You’re using your computer')
       : 'Set by hand';
-    presence.replaceChildren(seg,
+    fill(presence, seg,
       h('div', { class: 'presence-now' }, h('span', { class: 'dot' + (away ? ' away' : '') }),
         h('span', null, away ? 'Requests come to your devices' : 'Requests open in the terminal', h('span', { class: 'sr-only' }, '. '))),
       h('p', { class: 'group-note' }, why + '. Auto switches to Away when your computer is idle.'));
@@ -152,7 +159,7 @@ export function settingsView() {
       }
       save.disabled = false;
     });
-    device.replaceChildren(
+    fill(device,
       h('div', { class: 'group-pad' }, h('label', { class: 'field-label', for: 'device-name' }, 'Name'), form),
       h('div', { class: 'setting' }, h('span', { class: 'icon-tile green' }, icon('key')),
         h('div', { class: 'label' }, h('b', null, 'Signing key'), h('span', null, 'Kept on this device; signs every answer')),
@@ -164,7 +171,7 @@ export function settingsView() {
 
   function renderConn() {
     const me = store.me;
-    conn.replaceChildren(
+    fill(conn,
       h('div', { class: 'setting' }, h('span', { class: 'icon-tile blue' }, icon('desk')),
         h('div', { class: 'label' }, h('b', null, store.machine || me.machine), h('span', null, store.conn === 'live' ? 'Connected · live' : 'Reconnecting…')),
         h('div', { class: 'value' }, /^\d/.test(me.version) ? 'v' + me.version : me.version)),

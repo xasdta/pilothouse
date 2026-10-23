@@ -39,7 +39,9 @@ and one of them force-pushes. Pilothouse fixes both:
   - **At your desk:** the agent's own prompt appears as usual, so nothing
     freezes.
   - **Away** (keyboard idle): the request is held and pushed to your paired
-    phone. Tap Allow, Allow for session or Deny. The first answer wins.
+    phone. Tap Allow, Allow for session or Deny. Claude Code also keeps its
+    own prompt open in the terminal; whichever you answer first wins, and the
+    other one closes.
   - **When you come back:** any request still held is handed back to your
     terminal.
 - **Yours.** A single open-source Go binary. No account, no cloud, no

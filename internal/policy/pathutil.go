@@ -80,6 +80,10 @@ func underAny(p string, roots []string) bool {
 type protectedSet struct {
 	roots []string // absolute, cleaned, folded
 	globs []*glob  // compiled from folded, absolute-or-"**/" patterns
+	// except are carve-outs from broader roots (same form as roots): a
+	// path under one is protected only by a root that is itself inside
+	// the carve-out (a worktree's own .claude/settings.json) or by a glob.
+	except []string
 }
 
 // has reports whether p (absolute, cleaned, folded) is protected.
@@ -87,7 +91,7 @@ func (s *protectedSet) has(p string) bool {
 	if s == nil {
 		return false
 	}
-	if underAny(p, s.roots) {
+	if s.root(p) != "" {
 		return true
 	}
 	for _, g := range s.globs {
@@ -105,7 +109,29 @@ func (s *protectedSet) has(p string) bool {
 	return false
 }
 
+// root returns the literal root that protects p, the most specific one
+// when several do, or "" when none does (globs are not consulted).
+func (s *protectedSet) root(p string) string {
+	if s == nil {
+		return ""
+	}
+	exempt := underAny(p, s.except)
+	best := ""
+	for _, r := range s.roots {
+		if !underAny(p, []string{r}) {
+			continue
+		}
+		if exempt && !underAny(r, s.except) {
+			continue // a broad root (~/.pilothouse) that the carve-out opens
+		}
+		if len(r) > len(best) {
+			best = r
+		}
+	}
+	return best
+}
+
 // withRoots returns a copy of s with extra literal roots (same form).
 func (s *protectedSet) withRoots(extra ...string) *protectedSet {
-	return &protectedSet{roots: append(slices.Clip(s.roots), extra...), globs: s.globs}
+	return &protectedSet{roots: append(slices.Clip(s.roots), extra...), globs: s.globs, except: s.except}
 }

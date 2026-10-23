@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"reflect"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/xasdta/pilothouse/internal/api"
@@ -315,19 +314,19 @@ func (d *Daemon) closeRequest(ctx context.Context, id string, from []api.Request
 	return out, nil
 }
 
-// closeInTx closes a request inside a caller's transaction (the caller
-// saves the session afterwards). Used for stepped-aside requests, which
-// have no waiter.
-func closeInTx(ctx context.Context, tx *store.Tx, id string, to api.RequestStatus) error {
+// closeInTx closes a pending request inside a caller's transaction (the
+// caller saves the session afterwards and resolves any waiter once the
+// transaction commits). ok is false when it was already closed.
+func closeInTx(ctx context.Context, tx *store.Tx, id string, to api.RequestStatus) (api.Request, bool, error) {
 	req, err := tx.CloseRequest(ctx, id, to, nil, tx.Now())
 	if errors.Is(err, store.ErrAlreadyClosed) {
-		return nil
+		return api.Request{}, false, nil
 	}
 	if err != nil {
-		return err
+		return api.Request{}, false, err
 	}
 	_, err = tx.Emit(ctx, api.EventRequestClosed, req.SessionID, req.ID, req)
-	return err
+	return req, err == nil, err
 }
 
 // releaseHeld hands every held request back to its agent's own dialog
@@ -360,54 +359,4 @@ func (d *Daemon) recoverRequests(ctx context.Context) error {
 		}
 	}
 	return nil
-}
-
-// grantPrefix is what an "allow for this session" covers (BUILD-SPEC §5):
-// for shell tools the first two words of the command when the second is a
-// subcommand ("git push"), else the first word; other tools: the whole tool.
-func grantPrefix(req api.Request) string {
-	if req.ToolKind != api.ToolShell {
-		return ""
-	}
-	words := strings.Fields(req.Command)
-	switch {
-	case len(words) == 0:
-		return ""
-	case len(words) >= 2 && !isFlagOrPath(words[1]):
-		return words[0] + " " + words[1]
-	default:
-		return words[0]
-	}
-}
-
-func isFlagOrPath(w string) bool {
-	return strings.HasPrefix(w, "-") || strings.ContainsAny(w, "/.~=$") || strings.HasPrefix(w, "\"") || strings.HasPrefix(w, "'")
-}
-
-// shellControl are characters that chain or redirect commands. A grant for
-// "git push" must not also allow "git push; rm -rf ~", so commands
-// containing any of these never match a grant and go back to a person.
-const shellControl = ";&|`$<>()\n\\"
-
-// matchGrant returns the first grant covering a tool call.
-func matchGrant(grants []api.Grant, tool string, kind api.ToolKind, command string) (api.Grant, bool) {
-	for _, g := range grants {
-		if g.Tool != tool {
-			continue
-		}
-		if g.Prefix == "" {
-			if kind != api.ToolShell {
-				return g, true
-			}
-			continue // a shell grant always has a prefix; an empty one is malformed
-		}
-		if strings.ContainsAny(command, shellControl) {
-			continue
-		}
-		words, prefix := strings.Fields(command), strings.Fields(g.Prefix)
-		if len(words) >= len(prefix) && reflect.DeepEqual(words[:len(prefix)], prefix) {
-			return g, true
-		}
-	}
-	return api.Grant{}, false
 }

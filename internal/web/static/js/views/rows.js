@@ -21,8 +21,11 @@ export function sessionLine(s) {
 }
 
 export function sessionRow(s) {
-  return link('/s/' + s.id, { class: 'row', 'aria-label': `${agentName(s.agent)} in ${repoName(s)}: ${stateLabel(s)}` },
+  // No aria-label: the name comes from the visible text (WCAG 2.5.3), with
+  // the agent and state (shown only as colour/initials) for screen readers.
+  return link('/s/' + s.id, { class: 'row' },
     avatar(s),
+    h('span', { class: 'sr-only' }, `${agentName(s.agent)}, ${stateLabel(s)}: `),
     h('span', { class: 'row-main' },
       h('span', { class: 'row-title' },
         h('span', { class: 't' }, repoName(s)),

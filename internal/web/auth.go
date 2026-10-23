@@ -10,13 +10,13 @@ import (
 	"errors"
 	"net"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/xasdta/pilothouse/internal/api"
+	"github.com/xasdta/pilothouse/internal/config"
 	"github.com/xasdta/pilothouse/internal/version"
 )
 
@@ -218,7 +218,7 @@ func (s *Server) handlePair(w http.ResponseWriter, r *http.Request) {
 func (s *Server) me(d *deviceRow) meResponse {
 	return meResponse{
 		Device:    d.Device,
-		Machine:   machineName(),
+		Machine:   s.machineName(),
 		Version:   version.Version,
 		VAPIDKey:  s.vapid.Public,
 		BaseURL:   s.BaseURL(),
@@ -226,14 +226,9 @@ func (s *Server) me(d *deviceRow) meResponse {
 	}
 }
 
-func machineName() string {
-	h, err := os.Hostname()
-	if err != nil {
-		return "this computer"
-	}
-	h, _, _ = strings.Cut(h, ".")
-	return h
-}
+// machineName is the name the daemon reports everywhere else: config
+// `machine`, then $PILOTHOUSE_MACHINE, then the host name.
+func (s *Server) machineName() string { return config.MachineName(s.d.Config) }
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.me(deviceOf(r)))

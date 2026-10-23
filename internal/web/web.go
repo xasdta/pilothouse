@@ -64,6 +64,9 @@ type Deps struct {
 	PushClient *http.Client
 	// KeysDir overrides where vapid.json lives. Default: paths.Keys().
 	KeysDir string
+	// PingEvery is the keep-alive interval on /api/events (tests shorten
+	// it). Default: 15 s. The app reconnects after 45 s of silence.
+	PingEvery time.Duration
 }
 
 // Server is the web app + device API.
@@ -104,6 +107,9 @@ func New(d Deps) (*Server, error) {
 	}
 	if d.PushClient == nil {
 		d.PushClient = &http.Client{Timeout: 15 * time.Second}
+	}
+	if d.PingEvery <= 0 {
+		d.PingEvery = 15 * time.Second
 	}
 	if d.KeysDir == "" {
 		d.KeysDir = paths.Keys()

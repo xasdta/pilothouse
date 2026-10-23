@@ -330,3 +330,76 @@ func TestHolderRejectsBadClients(t *testing.T) {
 	b.waitFrame(FrameExit)
 	h.wait(t)
 }
+
+// L3: a holder whose agent reports nothing new still brings a restarted
+// daemon up to date: it notices the restart (daemon gone, or a new pid)
+// through the health check, registers again and re-sends the last state.
+func TestHolderReregistersAfterDaemonRestart(t *testing.T) {
+	testEnv(t)
+	old := reporterHealthEvery
+	reporterHealthEvery = 200 * time.Millisecond
+	t.Cleanup(func() { reporterHealthEvery = old })
+
+	gotState := func(fd *fakeDaemon, sid string) func() bool {
+		return func() bool {
+			var reg, osc bool
+			for _, r := range fd.requests() {
+				reg = reg || r.Path == "/v1/sessions/wrapped"
+				osc = osc || (reg && r.Path == "/v1/sessions/"+sid+"/osc" && strings.Contains(string(r.Body), `"kind":"permission"`))
+			}
+			return reg && osc
+		}
+	}
+
+	fd := startFakeDaemon(t)
+	h := startHolder(t, HolderConfig{
+		Argv:   []string{"/bin/sh", "-c", `printf '\033]7501;state=blocked:app=x:kind=permission\033\\'; read x; exit 0`},
+		Linger: 10 * time.Second,
+	})
+	waitFor(t, 5*time.Second, "first registration and state", gotState(fd, h.sid))
+
+	// Restart without downtime between two checks: same socket, new pid.
+	fd.mu.Lock()
+	fd.reqs = nil
+	fd.mu.Unlock()
+	fd.setPID(2000)
+	waitFor(t, 5*time.Second, "re-registration after pid change", gotState(fd, h.sid))
+
+	// Daemon down, then a new one on the same socket.
+	fd.srv.Close()
+	time.Sleep(500 * time.Millisecond)
+	fd2 := startFakeDaemon(t)
+	fd2.setPID(3000)
+	waitFor(t, 6*time.Second, "re-registration with the new daemon", gotState(fd2, h.sid))
+	if fd2.healthChecks() == 0 {
+		t.Fatal("no health checks reached the new daemon")
+	}
+
+	// Steady state: no re-registration while the daemon stays the same.
+	time.Sleep(700 * time.Millisecond)
+	n := 0
+	for _, r := range fd2.requests() {
+		if r.Path == "/v1/sessions/wrapped" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("registered %d times with an unchanged daemon, want 1", n)
+	}
+	h.stop()
+	h.wait(t)
+}
+
+// L1: the holder answers Claude Code's OSC 7501 support query on the
+// agent's input, with or without a terminal attached.
+func TestHolderAnswersOSCQuery(t *testing.T) {
+	testEnv(t)
+	agent := `stty raw -echo; printf '\033]7501;?\033\\'; ` +
+		`r=$(dd bs=1 count=10 2>/dev/null | od -An -c | tr -d ' \n'); stty sane; echo "reply:$r"; read x`
+	h := startHolder(t, HolderConfig{Argv: []string{"/bin/sh", "-c", agent}})
+	time.Sleep(300 * time.Millisecond) // no client yet: the holder answers anyway
+	s := attachSession(t, h.sock, true)
+	s.waitOutput(`reply:033]7501;?033\`)
+	s.send("\r")
+	h.wait(t)
+}

@@ -170,6 +170,7 @@ func (h *Holder) run(ctx context.Context) (int, error) {
 	}, h.log)
 	go h.rep.run(repCtx)
 
+	h.osc.OnQuery = h.answerOSCQuery
 	pumpDone := make(chan struct{})
 	go func() { defer close(pumpDone); h.pump() }()
 	acceptDone := make(chan struct{})
@@ -320,6 +321,14 @@ func (h *Holder) startChild() error {
 		env = append(env, "TERM=xterm-256color")
 	}
 	cmd.Env = env
+	if h.cfg.Agent == api.AgentCodex && !hasEnv(env, "PILOTHOUSE_CODEX_SHARED_DAEMON") {
+		// Hooks must run in the wrapped session's process tree; see codex.go.
+		if argv, ok := codexNoDaemonArgv(h.cfg.Argv); ok && codexSupportsNoDaemon(argv[0], env, h.cfg.Dir) {
+			h.log.Info("running codex without its shared background server so hooks join this session", "flag", "--no-daemon")
+			h.cfg.Argv = argv
+			cmd.Args = argv
+		}
+	}
 	// pty.Start puts the child in a new session with the PTY as its
 	// controlling terminal, so its PID is also its process group ID.
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: h.cfg.Cols, Rows: h.cfg.Rows})
@@ -388,6 +397,23 @@ func (h *Holder) pump() {
 			return
 		}
 	}
+}
+
+// answerOSCQuery tells the agent that its terminal speaks OSC 7501: the
+// holder is the agent's terminal as far as status goes, whatever terminal
+// is attached (or none). Claude Code reports status only after this reply.
+// The write happens off the pump goroutine, which must never block on
+// PTY input.
+func (h *Holder) answerOSCQuery() {
+	go func() {
+		h.ptyWrite.Lock()
+		defer h.ptyWrite.Unlock()
+		if _, err := h.ptmx.Write([]byte(QueryReply)); err != nil {
+			h.log.Debug("answer OSC 7501 query", "err", err)
+			return
+		}
+		h.log.Debug("answered OSC 7501 query")
+	}()
 }
 
 func (h *Holder) accept() {

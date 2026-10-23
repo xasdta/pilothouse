@@ -2,9 +2,11 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -149,7 +151,7 @@ func TestCloseRequestFirstAnswerWins(t *testing.T) {
 	}
 }
 
-func TestMatchSteppedAside(t *testing.T) {
+func TestMatchPending(t *testing.T) {
 	db := openTest(t)
 	now := time.Now().UTC().Round(0)
 	putSession(t, db, api.Session{ID: "s_1", Agent: api.AgentClaude, UpdatedAt: now})
@@ -169,13 +171,31 @@ func TestMatchSteppedAside(t *testing.T) {
 		{"tu-other", "r_b"}, // unknown id falls back too
 	}
 	for _, tt := range tests {
-		got, err := db.MatchSteppedAside(ctx, "s_1", tt.tuid, "Bash", "Run: ls")
+		got, err := db.MatchPending(ctx, "s_1", tt.tuid, "Bash", "Run: ls")
 		if err != nil || got.ID != tt.want {
-			t.Errorf("MatchSteppedAside(%q) = %s, %v; want %s", tt.tuid, got.ID, err, tt.want)
+			t.Errorf("MatchPending(%q) = %s, %v; want %s", tt.tuid, got.ID, err, tt.want)
 		}
 	}
-	if _, err := db.MatchSteppedAside(ctx, "s_1", "", "Edit", "x"); !errors.Is(err, ErrNotFound) {
+	if _, err := db.MatchPending(ctx, "s_1", "", "Edit", "x"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("no match err = %v", err)
+	}
+	// A request held for devices (open) matches too; closed ones never do.
+	r := api.Request{ID: "r_held", SessionID: "s_1", Checkpoint: api.CheckpointPermission, Tool: "Bash",
+		Summary: "Run: rm", Status: api.RequestOpen, CreatedAt: now}
+	if err := db.Write(ctx, func(tx *Tx) error { return tx.InsertRequest(ctx, r, "tu-h") }); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := db.MatchPending(ctx, "s_1", "tu-h", "Bash", "Run: rm"); err != nil || got.ID != "r_held" {
+		t.Errorf("held request: %s, %v", got.ID, err)
+	}
+	if err := db.Write(ctx, func(tx *Tx) error {
+		_, err := tx.CloseRequest(ctx, "r_held", api.RequestDecided, nil, now)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.MatchPending(ctx, "s_1", "tu-h", "Bash", "Run: rm"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("closed request matched: %v", err)
 	}
 }
 
@@ -345,5 +365,103 @@ func TestGrantsTasksMetaAndRead(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func pragma(t *testing.T, db *DB, name string) int64 {
+	t.Helper()
+	var v int64
+	if err := db.w.QueryRow(`PRAGMA ` + name).Scan(&v); err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+
+// fillAndPrune writes n large hook events 40 days old, then prunes them.
+func fillAndPrune(t *testing.T, db *DB, n int) PruneResult {
+	t.Helper()
+	old := time.Now().Add(-40 * 24 * time.Hour).UTC().Round(0)
+	db.SetClock(func() time.Time { return old })
+	payload := map[string]string{"input": strings.Repeat("x", 2048)}
+	if err := db.Write(ctx, func(tx *Tx) error {
+		for i := 0; i < n; i++ {
+			if _, err := tx.Emit(ctx, api.EventHook, "", "", payload); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	db.SetClock(time.Now)
+	var res PruneResult
+	if err := db.Write(ctx, func(tx *Tx) error {
+		var err error
+		res, err = tx.Prune(ctx, time.Now().Add(-30*24*time.Hour))
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return res
+}
+
+// TestCompactAfterPrune is the QA L8 regression: pruning must give space
+// back, not just free pages inside the file and leave a large WAL.
+func TestCompactAfterPrune(t *testing.T) {
+	db := openTest(t)
+	if pragma(t, db, "auto_vacuum") != 2 {
+		t.Fatalf("new database auto_vacuum = %d, want 2 (incremental)", pragma(t, db, "auto_vacuum"))
+	}
+	if res := fillAndPrune(t, db, 2000); res.Events != 2000 {
+		t.Fatalf("pruned %+v", res)
+	}
+	var n int
+	if err := db.r.QueryRow(`SELECT COUNT(*) FROM events`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("events left: %d, %v", n, err)
+	}
+	cr, err := db.Compact(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cr.FreedPages == 0 || pragma(t, db, "freelist_count") != 0 {
+		t.Fatalf("compact = %+v, freelist now %d", cr, pragma(t, db, "freelist_count"))
+	}
+	if st, err := os.Stat(db.Path() + "-wal"); err == nil && st.Size() != 0 {
+		t.Fatalf("WAL not truncated: %d bytes", st.Size())
+	}
+}
+
+// TestCompactConvertsLegacyDatabase: a database created before
+// incremental auto-vacuum gets one full VACUUM once mostly free.
+func TestCompactConvertsLegacyDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+	raw, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`CREATE TABLE legacy(x)`); err != nil { // a table first: auto_vacuum stays NONE
+		t.Fatal(err)
+	}
+	_ = raw.Close()
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if pragma(t, db, "auto_vacuum") != 0 {
+		t.Skip("sqlite enabled auto_vacuum on an existing database")
+	}
+	fillAndPrune(t, db, 2000)
+	cr, err := db.Compact(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cr.Vacuumed || pragma(t, db, "auto_vacuum") != 2 || pragma(t, db, "freelist_count") != 0 {
+		t.Fatalf("legacy compact = %+v, auto_vacuum %d", cr, pragma(t, db, "auto_vacuum"))
+	}
+	// Converted: the next compaction is incremental, never a full VACUUM.
+	fillAndPrune(t, db, 500)
+	if cr, err := db.Compact(ctx); err != nil || cr.Vacuumed || cr.FreedPages == 0 {
+		t.Fatalf("second compact = %+v, %v", cr, err)
 	}
 }

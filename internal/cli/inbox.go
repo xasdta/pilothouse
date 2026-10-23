@@ -26,9 +26,11 @@ import (
 
 	"github.com/xasdta/pilothouse/internal/adapters"
 	"github.com/xasdta/pilothouse/internal/adapters/all"
+	"github.com/xasdta/pilothouse/internal/adapters/codex"
 	"github.com/xasdta/pilothouse/internal/api"
 	"github.com/xasdta/pilothouse/internal/client"
 	"github.com/xasdta/pilothouse/internal/config"
+	"github.com/xasdta/pilothouse/internal/notify"
 	"github.com/xasdta/pilothouse/internal/paths"
 	"github.com/xasdta/pilothouse/internal/presence"
 	"github.com/xasdta/pilothouse/internal/service"
@@ -73,6 +75,7 @@ var (
 	inboxNow           = time.Now
 	inboxHolders       = wrap.ListHolders
 	inboxHealthWait    = 10 * time.Second
+	inboxShellNoise    = shellNoise
 )
 
 // inboxClient is the daemon client for CLI commands; decisions made
@@ -100,17 +103,85 @@ func inboxErr(err error, ref string) error {
 	return err
 }
 
-// resolvedExe is the absolute, symlink-free path of this binary: hooks
-// and the service must call a path that stays valid.
+// resolvedExe is the absolute path of this binary that hooks and the
+// login service should call. It must survive upgrades: Homebrew runs
+// /opt/homebrew/bin/pilothouse, a symlink into the versioned
+// …/Cellar/pilothouse/<version>/bin/pilothouse that `brew upgrade` deletes.
+// So: the `pilothouse` found on PATH when it is this same file; else, for
+// a Homebrew Cellar binary, <brew prefix>/bin/pilothouse when it exists;
+// else the symlink-free path of this binary.
 func resolvedExe() (string, error) {
 	exe, err := inboxExecutable()
 	if err != nil {
 		return "", fmt.Errorf("can't find the pilothouse binary: %w", err)
 	}
+	real := exe
 	if r, err := filepath.EvalSymlinks(exe); err == nil {
-		exe = r
+		real = r
 	}
-	return filepath.Abs(exe)
+	if real, err = filepath.Abs(real); err != nil {
+		return "", err
+	}
+	if p, err := inboxLookPath("pilothouse"); err == nil {
+		if p, err = filepath.Abs(p); err == nil && sameFile(p, real) {
+			return p, nil
+		}
+	}
+	if prefix, ok := brewPrefix(real); ok {
+		stable := filepath.Join(prefix, "bin", "pilothouse")
+		if sameFile(stable, real) || fileExists(stable) {
+			return stable, nil
+		}
+	}
+	return real, nil
+}
+
+// brewPrefix returns the Homebrew prefix of a versioned Cellar path
+// (<prefix>/Cellar/pilothouse/<version>/…).
+func brewPrefix(path string) (string, bool) {
+	const marker = "/Cellar/pilothouse/"
+	i := strings.Index(path, marker)
+	if i <= 0 || !strings.Contains(path[i+len(marker):], "/") {
+		return "", false
+	}
+	return path[:i], true
+}
+
+// versionedBrewPath reports whether path points into a versioned Homebrew
+// Cellar directory, which the next `brew upgrade` removes.
+func versionedBrewPath(path string) bool {
+	_, ok := brewPrefix(path)
+	return ok
+}
+
+func sameFile(a, b string) bool {
+	fa, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	fb, err := os.Stat(b)
+	return err == nil && os.SameFile(fa, fb)
+}
+
+// samePath reports whether a and b name the same binary once symlinks are
+// resolved on both sides: setup records the stable, unresolved path (e.g.
+// Homebrew's /opt/homebrew/bin/pilothouse, a symlink into the Cellar).
+func samePath(a, b string) bool {
+	resolve := func(p string) string {
+		if r, err := filepath.EvalSymlinks(p); err == nil {
+			p = r
+		}
+		if abs, err := filepath.Abs(p); err == nil {
+			p = abs
+		}
+		return p
+	}
+	return a == b || resolve(a) == resolve(b) || sameFile(a, b)
+}
+
+func fileExists(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && !st.IsDir()
 }
 
 // unstableExe reports why exe is a bad path to wire into hooks, if it is.
@@ -120,6 +191,8 @@ func unstableExe(exe string) string {
 		tmp = r
 	}
 	switch {
+	case versionedBrewPath(exe):
+		return "this binary lives in a versioned Homebrew directory (" + exe + ") that `brew upgrade` removes; run setup with " + filepath.Join(strings.SplitN(exe, "/Cellar/", 2)[0], "bin", "pilothouse")
 	case strings.Contains(exe, string(filepath.Separator)+"go-build"):
 		return "this binary was built by `go run` and will disappear; install it (`go install`, Homebrew or a release) and run setup again"
 	case strings.HasPrefix(exe, tmp+string(filepath.Separator)) || strings.HasPrefix(exe, "/tmp/") || strings.HasPrefix(exe, "/private/tmp/"):
@@ -1021,7 +1094,12 @@ func newNotifyCmd() *cobra.Command {
 			if err := inboxClient().NotifyTest(cmd.Context()); err != nil {
 				return inboxErr(err, "")
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), "✓ Test notification sent to: "+strings.Join(notifyChannels(), ", "))
+			ch := notifyChannels(cmd.Context())
+			if len(ch) == 0 {
+				fmt.Fprintln(cmd.OutOrStdout(), "! "+noChannelsHint)
+				return nil
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "✓ Test notification sent to: "+strings.Join(ch, ", "))
 			return nil
 		},
 	})
@@ -1029,16 +1107,31 @@ func newNotifyCmd() *cobra.Command {
 }
 
 // notifyChannels lists the configured channels for humans.
-func notifyChannels() []string {
+// notifyChannels lists the channels that can actually deliver a
+// notification right now: a desktop notifier that exists on this machine,
+// paired devices that have Web Push turned on, ntfy and webhooks.
+func notifyChannels(ctx context.Context) []string {
 	cfg, err := config.Load()
 	if err != nil {
 		cfg = config.Default()
 	}
 	var ch []string
 	if cfg.Notify.Desktop {
-		ch = append(ch, "desktop")
+		if name, _ := notify.DesktopCommand(runtime.GOOS, "t", "b", exec.LookPath); name != "" {
+			ch = append(ch, "desktop")
+		}
 	}
-	ch = append(ch, "paired devices (Web Push)")
+	if devs, err := inboxClient().Devices(ctx); err == nil {
+		n := 0
+		for _, d := range devs {
+			if d.PushOK && d.RevokedAt == nil {
+				n++
+			}
+		}
+		if n > 0 {
+			ch = append(ch, fmt.Sprintf("%d paired device(s) via Web Push", n))
+		}
+	}
 	if cfg.Notify.Ntfy.Topic != "" {
 		ch = append(ch, "ntfy topic "+cfg.Notify.Ntfy.Topic)
 	}
@@ -1047,6 +1140,10 @@ func notifyChannels() []string {
 	}
 	return ch
 }
+
+// noChannelsHint is printed when nothing can reach the person yet.
+const noChannelsHint = "no notification channel can reach you yet — pair a phone with `pilothouse pair`" +
+	" (or install notify-send, or set notify.ntfy.topic)"
 
 type versionInfo struct {
 	Version  string `json:"version"`
@@ -1265,7 +1362,12 @@ func runSetup(cmd *cobra.Command, yes bool) error {
 			fmt.Fprintf(w, "  ! test notification failed: %v\n", inboxErr(err, ""))
 			note("! test notification failed")
 		} else {
-			fmt.Fprintln(w, "  ✓ test notification sent ("+strings.Join(notifyChannels(), ", ")+")")
+			if ch := notifyChannels(ctx); len(ch) > 0 {
+				fmt.Fprintln(w, "  ✓ test notification sent ("+strings.Join(ch, ", ")+")")
+			} else {
+				fmt.Fprintln(w, "  ! "+noChannelsHint)
+				note("! no notification channel yet")
+			}
 		}
 	}
 
@@ -1299,6 +1401,25 @@ func inboxOr(s, def string) string {
 }
 
 // ---------------------------------------------------------------- doctor
+
+// shellNoise runs `$SHELL -c true` the way Codex runs hooks
+// (codex.ShellNoise) and returns what it printed on stdout (stderr is
+// harmless to hook replies).
+func shellNoise(context.Context) (shell, noise string, err error) {
+	shell = os.Getenv("SHELL")
+	if shell == "" {
+		shell = "/bin/sh"
+	}
+	out, err := codex.ShellNoise()
+	return shell, strings.TrimSpace(out), err
+}
+
+func inboxTrunc(s string, n int) string {
+	if r := []rune(s); len(r) > n {
+		return string(r[:n-1]) + "…"
+	}
+	return s
+}
 
 type checkLevel int
 
@@ -1394,15 +1515,10 @@ func runDoctor(ctx context.Context) []doctorCheck {
 		add("binary", checkFail, exe, unstableExe(exe))
 	default:
 		onPath, perr := inboxLookPath("pilothouse")
-		if perr == nil {
-			if r, err := filepath.EvalSymlinks(onPath); err == nil {
-				onPath = r
-			}
-		}
 		switch {
 		case perr != nil:
 			add("binary", checkWarn, exe+" ("+version.Version+")", "pilothouse isn't on your PATH; hooks still work, but add its directory to PATH to use the CLI everywhere")
-		case onPath != exe:
+		case !samePath(onPath, exe):
 			add("binary", checkWarn, exe+" ("+version.Version+")", "`pilothouse` on your PATH is "+onPath+"; hooks and the service use the binary that ran setup — run `pilothouse setup` with the one you keep")
 		default:
 			add("binary", checkOK, exe+" ("+version.Version+")", "")
@@ -1455,6 +1571,7 @@ func runDoctor(ctx context.Context) []doctorCheck {
 
 	// Hooks per agent.
 	opts := adapters.InstallOptions{ShimPath: exe}
+	codexInstalled := false
 	for _, a := range liveAdapters() {
 		name := "hooks: " + a.DisplayName()
 		d := a.Detect()
@@ -1462,10 +1579,25 @@ func runDoctor(ctx context.Context) []doctorCheck {
 			add(name, checkInfo, "agent not found on this machine", "")
 			continue
 		}
+		if a.Kind() == api.AgentCodex {
+			codexInstalled = true
+		}
 		st, err := a.Status(opts)
+		var stale []string
+		if err == nil {
+			stale = StaleHookProblems(st.Path)
+		}
 		switch {
 		case err != nil:
 			add(name, checkFail, err.Error(), "")
+		case len(stale) > 0:
+			// A missing binary means the hooks fail now; a versioned
+			// Homebrew path works until the next `brew upgrade`.
+			level := checkWarn
+			if strings.Contains(strings.Join(stale, "\n"), "doesn't exist") {
+				level = checkFail
+			}
+			add(name, level, strings.Join(stale, "; "), "")
 		case st.Current:
 			add(name, checkOK, fmt.Sprintf("%d events wired in %s", len(st.Events), tui.ShortPath(st.Path)), "")
 		case st.Installed:
@@ -1476,6 +1608,23 @@ func runDoctor(ctx context.Context) []doctorCheck {
 			add(name, checkWarn, detail, "`pilothouse hooks install`")
 		default:
 			add(name, checkFail, "not installed — this agent's sessions are invisible to Pilothouse", "`pilothouse setup` or `pilothouse hooks install`")
+		}
+	}
+
+	// Shell noise: Codex runs every hook as `$SHELL -c "<command>"`, so
+	// anything the shell's startup files print (zsh reads ~/.zshenv even
+	// for -c) lands in front of the hook's JSON reply and Codex can't read
+	// it: remote allows fall back to Codex's own prompt.
+	if codexInstalled {
+		shell, noise, err := inboxShellNoise(ctx)
+		switch {
+		case err != nil:
+			add("shell", checkInfo, "couldn't check for shell startup output: "+err.Error(), "")
+		case noise != "":
+			add("shell", checkWarn, fmt.Sprintf("`%s -c true` prints %q — Codex can't read hook replies after it (remote approvals fall back to Codex's own prompt)", shell, inboxTrunc(noise, 60)),
+				"move whatever prints from your shell's always-read startup file (for zsh: ~/.zshenv) into an interactive-only one (~/.zshrc), or guard it with `[[ -o interactive ]]`")
+		default:
+			add("shell", checkOK, "`"+shell+" -c true` prints nothing (safe for Codex hooks)", "")
 		}
 	}
 

@@ -7,11 +7,19 @@ import (
 	"unicode/utf8"
 )
 
+// ownedMarker ends a hook command whose binary isn't named pilothouse*
+// (installed as `ph`, say), so OwnedBy still recognises it. Both agents run
+// hook commands through a shell, which ignores the comment.
+const ownedMarker = " #pilothouse"
+
 // ShimCommand is the hook command line for agent: the shim path, quoted
-// for sh when needed, then `hook <agent>`. Both agents run hook commands
-// through a shell.
+// for sh when needed, then `hook <agent>`.
 func ShimCommand(shimPath, agent string) string {
-	return ShellQuote(shimPath) + " hook " + agent
+	cmd := ShellQuote(shimPath) + " hook " + agent
+	if !strings.HasPrefix(filepath.Base(shimPath), "pilothouse") {
+		cmd += ownedMarker
+	}
+	return cmd
 }
 
 // OwnedBy returns a matcher for hook commands Pilothouse installed for agent:
@@ -19,8 +27,9 @@ func ShimCommand(shimPath, agent string) string {
 // Matching the name rather than the exact path lets a reinstall from a new
 // location replace a stale entry instead of adding a second one.
 func OwnedBy(agent string) Owned {
-	re := regexp.MustCompile(`(^|[/\s'"])pilothouse[^/\s'"]*['"]?\s+hook\s+` + regexp.QuoteMeta(agent) + `(\s|$)`)
-	return func(cmd string) bool { return re.MatchString(cmd) }
+	named := regexp.MustCompile(`(^|[/\s'"])pilothouse[^/\s'"]*['"]?\s+hook\s+` + regexp.QuoteMeta(agent) + `(\s|$)`)
+	marked := regexp.MustCompile(`\shook\s+` + regexp.QuoteMeta(agent) + `\s+#pilothouse\s*$`)
+	return func(cmd string) bool { return named.MatchString(cmd) || marked.MatchString(cmd) }
 }
 
 // ShellQuote quotes s for POSIX sh if it contains anything but safe

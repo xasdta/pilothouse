@@ -30,7 +30,12 @@ import (
 
 // markerComment precedes every trust table we write, so uninstall finds
 // them even if hooks.json was edited by hand in between.
-const markerComment = "# pilothouse-managed: trust for an pilothouse hook in hooks.json (pilothouse hooks uninstall removes it)"
+const markerComment = "# pilothouse-managed: trust for a Pilothouse hook in hooks.json (pilothouse hooks uninstall removes it)"
+
+// isMarker recognizes markerComment, including earlier wordings.
+func isMarker(line string) bool {
+	return strings.HasPrefix(strings.TrimSpace(line), "# pilothouse-managed:")
+}
 
 // eventLabels mirrors hook_event_key_label.
 var eventLabels = map[string]string{
@@ -155,7 +160,7 @@ func applyTrust(src string, e trustEdit) (string, error) {
 		}
 		key := t.path[2]
 		hash, _ := doc.stringAt("hooks", "state", key, "trusted_hash")
-		marked := t.line > 0 && strings.TrimSpace(lines[t.line-1]) == markerComment
+		marked := t.line > 0 && isMarker(lines[t.line-1])
 		ours := e.stale[key] || marked
 		want, wanted := e.want[key]
 		switch to, moved := e.rename[key]; {

@@ -20,8 +20,13 @@ func FromHook(ev adapters.HookEvent) (st api.State, kind api.BlockKind, detail s
 		return api.StateWorking, "", orDefault(ev.Summary, "Used "+ev.Tool), true
 	case adapters.HookPromptSubmit:
 		return api.StateWorking, "", "Working on a prompt", true
-	case adapters.HookSubagentStop, adapters.HookPreCompact:
+	case adapters.HookPreCompact:
 		return api.StateWorking, "", "Working", true
+	case adapters.HookSubagentStop:
+		// A subagent finishing says nothing about the parent: Claude Code
+		// runs one (prompt suggestions) right after Stop, and treating it
+		// as work kept idle sessions "working" for a minute.
+		return "", "", "", false
 	case adapters.HookStop:
 		return api.StateWaiting, "", "Finished its turn", true
 	case adapters.HookSessionEnd:
@@ -42,7 +47,7 @@ func fromNotification(ev adapters.HookEvent) (api.State, api.BlockKind, string, 
 	switch {
 	case strings.Contains(t, "permission"):
 		return api.StateBlocked, api.BlockPermission, orDefault(msg, "Waiting for permission"), true
-	case strings.Contains(t, "idle"):
+	case IsIdleNotification(ev):
 		return api.StateWaiting, "", orDefault(msg, "Waiting for input"), true
 	case strings.Contains(t, "elicitation"), strings.Contains(t, "question"):
 		return api.StateBlocked, api.BlockQuestion, orDefault(msg, "Asked a question"), true
@@ -50,6 +55,12 @@ func fromNotification(ev adapters.HookEvent) (api.State, api.BlockKind, string, 
 		return api.StateBlocked, api.BlockAuth, orDefault(msg, "Needs to sign in"), true
 	}
 	return "", "", "", false
+}
+
+// IsIdleNotification reports whether ev says the agent is idle at its
+// prompt, waiting for input (Claude Code: idle_prompt).
+func IsIdleNotification(ev adapters.HookEvent) bool {
+	return ev.Kind == adapters.HookNotification && strings.Contains(strings.ToLower(ev.NotificationType), "idle")
 }
 
 func lowerFirst(s string) string {

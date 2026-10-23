@@ -1,4 +1,4 @@
-import { h, icon, toMs, ago, repoName } from '../dom.js';
+import { h, icon, toMs, ago, repoName, fill, add } from '../dom.js';
 import { store } from '../api.js';
 import { requestCard, pruneCards, settling } from '../card.js';
 import { link } from '../ui.js';
@@ -11,7 +11,7 @@ export function inboxView() {
   const root = h('div', { class: 'view' });
   const head = h('div', { class: 'page-head' });
   const body = h('div');
-  root.append(head, body);
+  add(root, head, body);
 
   function render() {
     const reqs = [...store.requests.values()];
@@ -33,7 +33,7 @@ export function inboxView() {
       .slice(0, 4);
 
     const n = open.length;
-    head.replaceChildren(
+    fill(head,
       h('h1', { class: 'page-title' }, 'Inbox'),
       h('p', { class: 'page-sub' }, store.machine ? store.machine + ' · ' : '',
         n ? `${n} ${n === 1 ? 'request needs' : 'requests need'} you` : 'Nothing needs you'));
@@ -59,7 +59,7 @@ export function inboxView() {
     if (!sessions.length && !n) {
       parts.push(h('p', { class: 'quiet' }, 'No agent sessions yet. Start Claude Code or Codex on your computer.'));
     }
-    body.replaceChildren(...parts);
+    fill(body, ...parts);
   }
 
   render();

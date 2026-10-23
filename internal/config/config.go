@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -53,6 +54,13 @@ type Config struct {
 	// Retention is how long closed requests and raw hook events are kept.
 	Retention Duration `yaml:"retention"` // default 30 days
 
+	// SessionIdleExpiry: a session whose process can't be watched (no PID,
+	// or one shared by several sessions such as Codex's app-server) and
+	// that sends nothing for this long is marked exited and its open
+	// requests expire. Codex sessions use at most CodexSessionIdleExpiry.
+	// 0s turns expiry off.
+	SessionIdleExpiry Duration `yaml:"session_idle_expiry"` // default 12h
+
 	// Machine is the name shown in the inbox, the web app and notifications.
 	// Empty means the hostname. Useful when several machines report to one
 	// phone, or to keep the hostname out of screenshots.
@@ -80,6 +88,12 @@ func (d *Duration) UnmarshalYAML(n *yaml.Node) error {
 
 func (d Duration) MarshalYAML() (any, error) { return d.Duration.String(), nil }
 
+// Session idle expiry defaults (see Config.SessionIdleExpiry).
+const (
+	DefaultSessionIdleExpiry = 12 * time.Hour
+	CodexSessionIdleExpiry   = 2 * time.Hour
+)
+
 // Default returns the configuration used when no file exists.
 func Default() *Config {
 	c := &Config{}
@@ -90,6 +104,7 @@ func Default() *Config {
 	c.Notify.Desktop = true
 	c.Notify.Ntfy.Server = "https://ntfy.sh"
 	c.Retention = Duration{30 * 24 * time.Hour}
+	c.SessionIdleExpiry = Duration{DefaultSessionIdleExpiry}
 	return c
 }
 
@@ -116,6 +131,9 @@ func (c *Config) Validate() error {
 	if c.Approvals.HoldLimit.Duration < 10*time.Second {
 		return errors.New("approvals.hold_limit must be at least 10s")
 	}
+	if d := c.SessionIdleExpiry.Duration; d != 0 && d < time.Minute {
+		return errors.New("session_idle_expiry must be at least 1m (or 0s to turn it off)")
+	}
 	return nil
 }
 
@@ -141,4 +159,21 @@ func (c *Config) Save() error {
 		return err
 	}
 	return os.Rename(tmp, paths.Config())
+}
+
+// MachineName is the name shown in the inbox, the web app and notifications:
+// config `machine`, else $PILOTHOUSE_MACHINE, else the hostname without a
+// trailing ".local". cfg may be nil.
+func MachineName(cfg *Config) string {
+	if cfg != nil && strings.TrimSpace(cfg.Machine) != "" {
+		return strings.TrimSpace(cfg.Machine)
+	}
+	if m := strings.TrimSpace(os.Getenv("PILOTHOUSE_MACHINE")); m != "" {
+		return m
+	}
+	h, err := os.Hostname()
+	if err != nil || h == "" {
+		return "localhost"
+	}
+	return strings.TrimSuffix(h, ".local")
 }

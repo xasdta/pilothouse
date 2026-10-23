@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1242,4 +1243,94 @@ func TestCodesAndNames(t *testing.T) {
 
 func notifyRequest(r api.Request) core.Notification {
 	return core.Notification{Kind: core.NotifyRequest, Title: "Claude Code · pilothouse", Body: "Wants to run `git push origin main`", Request: &r, Remote: true}
+}
+
+// W5: the stream carries a real `event: ping` (with data, so EventSource
+// dispatches it and the app's watchdog sees it), keeping the `: ping`
+// comment for older readers.
+func TestSSEPingEvent(t *testing.T) {
+	e := newEnv(t, func(d *Deps) { d.PingEvery = 50 * time.Millisecond })
+	ts := e.live(t)
+	_, pub := genKey(t)
+	ck, _ := e.pair(pub)
+	c := openSSE(t, ts, ck, fmt.Sprintf("?after=%d", e.fc.Seq()), nil)
+	if ev, data := c.next(t); ev != "ping" || data != "{}" {
+		t.Fatalf("got %q %q, want ping {}", ev, data)
+	}
+
+	// Raw framing: comment line plus event in one block.
+	req, _ := http.NewRequest("GET", ts.URL+"/api/events", nil)
+	req.Header.Set("Cookie", cookieName+"="+ck)
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var raw strings.Builder
+	buf := make([]byte, 512)
+	deadline := time.Now().Add(5 * time.Second)
+	for !strings.Contains(raw.String(), "data: {}\n\n") && time.Now().Before(deadline) {
+		n, err := resp.Body.Read(buf)
+		raw.Write(buf[:n])
+		if err != nil {
+			break
+		}
+	}
+	if !strings.Contains(raw.String(), ": ping\nevent: ping\ndata: {}\n\n") {
+		t.Fatalf("raw stream %q lacks the ping block", raw.String())
+	}
+}
+
+// W4: /api/me reports the same machine name as the daemon (config
+// `machine`, then $PILOTHOUSE_MACHINE), not the raw host name.
+func TestMeMachineName(t *testing.T) {
+	t.Setenv("PILOTHOUSE_MACHINE", "env-box")
+	e := newEnv(t)
+	_, pub := genKey(t)
+	ck, _ := e.pair(pub)
+	machine := func() string {
+		w := e.do("GET", "/api/me", nil, reqOpt{cookie: ck})
+		var m struct {
+			Machine string `json:"machine"`
+		}
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &m) != nil {
+			t.Fatalf("me: %d %s", w.Code, w.Body)
+		}
+		return m.Machine
+	}
+	if got := machine(); got != "env-box" {
+		t.Fatalf("machine = %q, want env-box ($PILOTHOUSE_MACHINE)", got)
+	}
+	e.cfg.Machine = "cfg-box"
+	if got := machine(); got != "cfg-box" {
+		t.Fatalf("machine = %q, want cfg-box (config wins)", got)
+	}
+}
+
+// W1: the native replaceChildren/append render null/undefined children as
+// the text "null"; the app must go through dom.js fill()/add(), which skip
+// them. Only dom.js itself may call the native methods.
+func TestStaticJSUsesNullSafeDOMHelpers(t *testing.T) {
+	var bad []string
+	err := fs.WalkDir(staticFS, "static/js", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(p, ".js") || p == "static/js/dom.js" {
+			return err
+		}
+		b, err := staticFS.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		for i, line := range strings.Split(string(b), "\n") {
+			if strings.Contains(line, ".replaceChildren(") || strings.Contains(line, ".append(") {
+				bad = append(bad, fmt.Sprintf("%s:%d: %s", p, i+1, strings.TrimSpace(line)))
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bad) > 0 {
+		t.Fatalf("use fill()/add() from dom.js instead of native DOM insertion:\n%s", strings.Join(bad, "\n"))
+	}
 }

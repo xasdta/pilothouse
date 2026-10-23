@@ -262,3 +262,95 @@ func TestStatusFeatureOff(t *testing.T) {
 		t.Errorf("%+v", st)
 	}
 }
+
+// TestHomeUsesCodexHomeInsideUserHome: the e2e harness sets both
+// PILOTHOUSE_USER_HOME and CODEX_HOME (inside it), often through a
+// symlink such as /tmp → /private/tmp. Codex canonicalizes CODEX_HOME, so
+// we must too, or the trust keys never match (L9).
+func TestHomeUsesCodexHomeInsideUserHome(t *testing.T) {
+	isolate(t)
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real")
+	if err := os.MkdirAll(filepath.Join(real, ".codex"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PILOTHOUSE_USER_HOME", link)
+	t.Setenv("CODEX_HOME", filepath.Join(link, ".codex"))
+	want, _ := filepath.EvalSymlinks(filepath.Join(real, ".codex"))
+	if Home() != want || HooksPath() != filepath.Join(want, "hooks.json") {
+		t.Errorf("Home = %s, want %s", Home(), want)
+	}
+	// Without CODEX_HOME Codex uses $HOME/.codex as spelled, not resolved.
+	t.Setenv("CODEX_HOME", "")
+	if Home() != filepath.Join(link, ".codex") {
+		t.Errorf("Home = %s", Home())
+	}
+}
+
+// TestStatusChecksTrustAsCodexComputesIt: trust recorded under another
+// spelling of the Codex home, or with a stale hash, means Codex skips
+// the hooks; status must say so instead of "current" (L9).
+func TestStatusChecksTrustAsCodexComputesIt(t *testing.T) {
+	isolate(t)
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real")
+	if err := os.MkdirAll(filepath.Join(real, ".codex"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PILOTHOUSE_USER_HOME", link)
+	t.Setenv("CODEX_HOME", "")
+	a := Adapter{}
+	shim := fakeShim(t)
+	opts := adapters.InstallOptions{ShimPath: shim}
+	if _, err := a.InstallHooks(opts); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := a.Status(opts); !st.Current {
+		t.Fatalf("fresh install not current: %+v", st)
+	}
+
+	// Codex started with CODEX_HOME=<link>/.codex reads the canonical
+	// path: the recorded keys (under the link) no longer match.
+	t.Setenv("CODEX_HOME", filepath.Join(link, ".codex"))
+	for _, o := range []adapters.InstallOptions{opts, {}} {
+		st, _ := a.Status(o)
+		if st.Current || !hasProblem(st, "not trusted: Codex will skip 9") || !hasProblem(st, "name "+filepath.Join(link, ".codex", "hooks.json")) {
+			t.Errorf("shim %q: %+v", o.ShimPath, st)
+		}
+	}
+	// Reinstalling under the right spelling fixes it.
+	if _, err := a.InstallHooks(opts); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := a.Status(opts); !st.Current || len(st.Problems) != 0 {
+		t.Errorf("after reinstall: %+v", st)
+	}
+
+	// A hash that does not match the declaration is "not trusted" too,
+	// even when status does not know the shim path.
+	cfg := read(t, ConfigPath())
+	i := strings.Index(cfg, `trusted_hash = "sha256:`) + len(`trusted_hash = "sha256:`)
+	if err := os.WriteFile(ConfigPath(), []byte(cfg[:i]+"00"+cfg[i+2:]), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := a.Status(adapters.InstallOptions{}); st.Current || !hasProblem(st, "not trusted: Codex will skip 1 ") {
+		t.Errorf("bad hash: %+v", st)
+	}
+}
+
+func hasProblem(st adapters.HookStatus, sub string) bool {
+	for _, p := range st.Problems {
+		if strings.Contains(p, sub) {
+			return true
+		}
+	}
+	return false
+}

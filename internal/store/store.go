@@ -88,6 +88,10 @@ func Open(path string) (*DB, error) {
 func openPool(path, txlock string, maxConns int) (*sql.DB, error) {
 	q := url.Values{}
 	q.Add("_pragma", "busy_timeout(5000)")
+	// A new database frees deleted pages incrementally (DB.Compact). The
+	// setting must precede WAL mode and the first table; on an existing
+	// database it changes nothing until Compact's one-time VACUUM.
+	q.Add("_pragma", "auto_vacuum(INCREMENTAL)")
 	q.Add("_pragma", "journal_mode(WAL)")
 	q.Add("_pragma", "foreign_keys(1)")
 	q.Add("_pragma", "synchronous(NORMAL)")
@@ -196,4 +200,62 @@ type Tx struct {
 	tx     *sql.Tx
 	now    time.Time
 	events []api.Event
+}
+
+// CompactResult describes what Compact did.
+type CompactResult struct {
+	Vacuumed   bool // a full VACUUM ran (one-time conversion or mostly-free file)
+	FreedPages int64
+}
+
+// Compact returns space freed by deletes (retention) to the filesystem:
+// it checkpoints and truncates the WAL, then releases free pages with
+// incremental_vacuum. A database created before auto_vacuum=INCREMENTAL
+// was enabled can't vacuum incrementally; it gets one full VACUUM, which
+// also converts it, when more than half of its pages are free. Compact
+// holds the write lock, so no Write runs meanwhile.
+func (db *DB) Compact(ctx context.Context) (CompactResult, error) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	var res CompactResult
+	pragmaInt := func(name string) (int64, error) {
+		var v int64
+		err := db.w.QueryRowContext(ctx, `PRAGMA `+name).Scan(&v)
+		return v, err
+	}
+	before, err := pragmaInt("freelist_count")
+	if err != nil {
+		return res, fmt.Errorf("compact: %w", err)
+	}
+	pages, err := pragmaInt("page_count")
+	if err != nil {
+		return res, fmt.Errorf("compact: %w", err)
+	}
+	mode, err := pragmaInt("auto_vacuum")
+	if err != nil {
+		return res, fmt.Errorf("compact: %w", err)
+	}
+	switch {
+	case mode != 2 && pages > 0 && before*2 > pages:
+		if _, err := db.w.ExecContext(ctx, `PRAGMA auto_vacuum = INCREMENTAL`); err != nil {
+			return res, fmt.Errorf("compact: %w", err)
+		}
+		if _, err := db.w.ExecContext(ctx, `VACUUM`); err != nil {
+			return res, fmt.Errorf("compact: vacuum: %w", err)
+		}
+		res.Vacuumed = true
+	case mode == 2 && before > 0:
+		if _, err := db.w.ExecContext(ctx, `PRAGMA incremental_vacuum`); err != nil {
+			return res, fmt.Errorf("compact: incremental vacuum: %w", err)
+		}
+	}
+	if _, err := db.w.ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
+		return res, fmt.Errorf("compact: checkpoint: %w", err)
+	}
+	after, err := pragmaInt("freelist_count")
+	if err != nil {
+		return res, fmt.Errorf("compact: %w", err)
+	}
+	res.FreedPages = before - after
+	return res, nil
 }

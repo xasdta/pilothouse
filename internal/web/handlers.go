@@ -98,6 +98,9 @@ func streamEvent(e api.Event) bool { return e.Type != api.EventHook }
 // handleEvents streams the event log as SSE, like /v1/events?follow=1:
 // `event: event` with `id: <seq>`, `event: control` {"resync_required":
 // true} when the client must reload /api/snapshot, and a ping every 15 s.
+// The ping is an `event: ping` with data (EventSource only surfaces events
+// with data, so the app's watchdog can see it) preceded by a `: ping`
+// comment line, which older clients that look for the comment still get.
 // EventSource's automatic Last-Event-ID takes precedence over ?after.
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
@@ -137,14 +140,14 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	if rc.Flush() != nil {
 		return
 	}
-	ping := time.NewTicker(15 * time.Second)
+	ping := time.NewTicker(s.d.PingEvery)
 	defer ping.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ping.C:
-			if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil || rc.Flush() != nil {
+			if _, err := fmt.Fprint(w, ": ping\nevent: ping\ndata: {}\n\n"); err != nil || rc.Flush() != nil {
 				return
 			}
 		case ev, ok := <-sub.C:

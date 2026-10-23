@@ -1,6 +1,6 @@
 // App chrome: top bar, tab bar, connection banner, toasts, navigation.
 
-import { h, icon, appIcon } from './dom.js';
+import { h, icon, appIcon, fill } from './dom.js';
 import { store } from './api.js';
 
 let navigateFn = () => {};
@@ -39,7 +39,7 @@ export function mountShell(root) {
   };
   el.tabbar = h('nav', { class: 'tabbar', 'aria-label': 'Main' }, h('div', { class: 'tabbar-in' }, ...Object.values(el.tabs)));
   el.toast = h('div', { class: 'toast', role: 'status', 'aria-live': 'assertive' });
-  root.replaceChildren(el.topbar, el.banner, el.main, el.tabbar, el.toast);
+  fill(root, el.topbar, el.banner, el.main, el.tabbar, el.toast);
   addEventListener('scroll', () => el.topbar.classList.toggle('scrolled', scrollY > 4), { passive: true });
   return el.main;
 }
@@ -52,13 +52,13 @@ export function mountShell(root) {
 export function chrome(opts = {}) {
   if (opts.back) {
     el.left.className = '';
-    el.left.replaceChildren(h('button', {
+    fill(el.left, h('button', {
       class: 'back', type: 'button',
       onclick: () => (history.state && history.state.inApp ? history.back() : go(opts.backTo || '/', true)),
     }, icon('back', 'lg'), opts.back));
   } else {
     el.left.className = 'brand';
-    el.left.replaceChildren(appIcon(), h('span', null, 'Pilothouse'));
+    fill(el.left, appIcon(), h('span', null, 'Pilothouse'));
   }
   const showTabs = opts.tab !== null && opts.tab !== undefined;
   el.tabbar.hidden = !showTabs;
@@ -77,16 +77,17 @@ export function refreshChrome() {
   if (p) {
     const away = p.state === 'away';
     el.presence.className = 'chip ' + (away ? 'away' : 'here');
-    el.presence.replaceChildren(h('span', { class: 'dot' }), away ? 'Away' : 'At desk');
+    fill(el.presence, h('span', { class: 'dot' }), away ? 'Away' : 'At desk');
+    // The accessible name starts with the visible text (WCAG 2.5.3).
     el.presence.setAttribute('aria-label', away
-      ? 'Presence: away — requests come to this device. Change in settings.'
-      : 'Presence: at the desk — requests show in the terminal. Change in settings.');
+      ? 'Away: requests come to this device. Change in settings.'
+      : 'At desk: requests show in the terminal. Change in settings.');
   }
   el.conn.className = 'conn ' + (store.conn === 'live' ? '' : store.conn);
   el.conn.setAttribute('aria-label', store.conn === 'live' ? 'Live' : store.conn === 'offline' ? 'Offline' : 'Connecting');
   const showBanner = store.loaded && store.conn !== 'live';
   el.banner.classList.toggle('show', showBanner);
-  el.banner.replaceChildren(
+  fill(el.banner,
     icon(store.conn === 'offline' ? 'wifiOff' : 'hourglass', 'sm'),
     store.conn === 'offline' ? `Can’t reach ${store.machine || 'your computer'} — retrying` : 'Reconnecting…');
   let n = 0;
@@ -104,6 +105,6 @@ let toastTimer = 0;
 export function toast(text, kind = '') {
   clearTimeout(toastTimer);
   el.toast.className = 'toast show ' + kind;
-  el.toast.replaceChildren(kind ? icon(kind === 'ok' ? 'check' : 'alert', 'sm') : null, h('span', null, text));
+  fill(el.toast, kind ? icon(kind === 'ok' ? 'check' : 'alert', 'sm') : null, h('span', null, text));
   toastTimer = setTimeout(() => el.toast.classList.remove('show'), 3200);
 }

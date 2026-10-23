@@ -372,3 +372,97 @@ func BenchmarkSelfProtectionEditGlobs(b *testing.B) {
 		e.Evaluate(in)
 	}
 }
+
+// TestSelfProtectionTaskWorktrees (H2): agents of tasks whose worktree is
+// in the Pilothouse home (tasks made before worktrees moved out) must be
+// able to work there without a prompt per call; Pilothouse's own files
+// and the worktree's agent settings stay protected.
+func TestSelfProtectionTaskWorktrees(t *testing.T) {
+	te := newTestEnv(t)
+	e, _ := te.load(t)
+	wt := filepath.Join(te.agHome, "worktrees", "app", "fix-login")
+	newWT := filepath.Join(te.home, ".pilothouse-worktrees", "app", "fix-login")
+	in := func(dir string, i Input) Input {
+		i.Agent, i.Cwd, i.Repo = api.AgentClaude, dir, dir
+		return i
+	}
+	sh := func(dir, cmd string) Input { return in(dir, shell(cmd)) }
+	edit := func(dir, p string) Input {
+		return in(dir, Input{Tool: "Edit", ToolKind: api.ToolEdit, Paths: []string{p}})
+	}
+	for _, dir := range []string{wt, newWT} {
+		for _, tt := range []struct {
+			name string
+			in   Input
+			want bool
+		}{
+			{"git status", sh(dir, "git status"), false},
+			{"git commit", sh(dir, "git add -A && git commit -m wip"), false},
+			{"go test", sh(dir, "go test ./..."), false},
+			{"write a file", sh(dir, "echo hi > main.go"), false},
+			{"edit a file", edit(dir, filepath.Join(dir, "main.go")), false},
+			{"edit relative", edit(dir, "src/a.go"), false},
+			{"worktree's claude settings", edit(dir, filepath.Join(dir, ".claude", "settings.json")), true},
+			{"worktree's repo policy", sh(dir, "rm .pilothouse/policy.yaml"), true},
+			{"pilothouse config from the worktree", sh(dir, "rm "+filepath.Join(te.agHome, "config.yaml")), true},
+			{"climb out", sh(dir, "cd ../../.. && rm policy.yaml"), dir == wt},
+			{"pilothouse approve", sh(dir, "pilothouse approve r_1"), true},
+		} {
+			r := e.Evaluate(tt.in)
+			if got := r.Rule == SelfProtectionRule; got != tt.want {
+				t.Errorf("%s in %s: protected=%v, want %v (%s)", tt.name, tildePath(dir, te.home), got, tt.want, r.Message)
+			}
+		}
+	}
+}
+
+// TestSelfProtectionReasonNamesThePath: the reason says which protected
+// path a call touches and what it holds, instead of treating a
+// subcommand as a file name ("runs git on …/status").
+func TestSelfProtectionReasonNamesThePath(t *testing.T) {
+	te := newTestEnv(t)
+	e, _ := te.load(t)
+	keys := filepath.Join(te.agHome, "keys")
+	for _, tt := range []struct {
+		in   Input
+		want string
+	}{
+		{Input{Agent: api.AgentClaude, Tool: "Bash", ToolKind: api.ToolShell, Command: "git status", Cwd: keys},
+			"Pilothouse self-protection: this runs `git status` in ~/.pilothouse/keys, inside ~/.pilothouse (Pilothouse's own settings, keys and database). A person must confirm it."},
+		{shell("rm ~/.pilothouse/policy.yaml"),
+			"Pilothouse self-protection: this runs rm on ~/.pilothouse/policy.yaml, inside ~/.pilothouse (Pilothouse's own settings, keys and database). A person must confirm it."},
+		{shell("echo x > ~/.claude/settings.json"),
+			"Pilothouse self-protection: this writes to ~/.claude/settings.json (Claude Code settings, which can approve tool calls). A person must confirm it."},
+		{Input{Tool: "Write", ToolKind: api.ToolEdit, Paths: []string{"~/.pilothouse"}},
+			"Pilothouse self-protection: this edits ~/.pilothouse (Pilothouse's own settings, keys and database). A person must confirm it."},
+		{Input{Tool: "Write", ToolKind: api.ToolEdit, Paths: []string{"/r/.codex/config.toml"}, Cwd: "/r", Repo: "/r"},
+			"Pilothouse self-protection: this edits /r/.codex/config.toml (Codex settings, which can approve tool calls). A person must confirm it."},
+	} {
+		if r := e.Evaluate(tt.in); r.Message != tt.want {
+			t.Errorf("%q:\n got %s\nwant %s", tt.in.Command+strings.Join(tt.in.Paths, ","), r.Message, tt.want)
+		}
+	}
+}
+
+func TestProtectedSetExcept(t *testing.T) {
+	s := &protectedSet{
+		roots:  []string{"/h/.pilothouse", "/h/.pilothouse/worktrees/r/s/.claude/settings.json"},
+		except: []string{"/h/.pilothouse/worktrees"},
+	}
+	for p, want := range map[string]bool{
+		"/h/.pilothouse/config.yaml":                         true,
+		"/h/.pilothouse/worktrees":                           false,
+		"/h/.pilothouse/worktrees/r/s/main.go":               false,
+		"/h/.pilothouse/worktrees/r/s/.claude/settings.json": true,
+		"/h/.pilothouse/worktreesx":                          true,
+	} {
+		if got := s.has(p); got != want {
+			t.Errorf("has(%q) = %v, want %v", p, got, want)
+		}
+	}
+	// A carve-out can never open a root that lies inside it.
+	s = &protectedSet{roots: []string{"/h/.pilothouse"}, except: []string{"/"}}
+	if !s.has("/h/.pilothouse/keys") {
+		t.Error("carve-out above a root opened it")
+	}
+}

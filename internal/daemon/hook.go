@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"time"
@@ -35,7 +36,11 @@ type hookCall struct {
 	root     string
 	branch   string
 	agentPID int
+	shared   bool // the hook ran under a shared agent server (Codex app-server)
 	mode     api.Mode
+	// answered are requests this hook showed were answered in the agent's
+	// own dialog; their waiters are released after the commit.
+	answered []api.Request
 }
 
 // permissionPlan is a permission request about to be opened.
@@ -63,7 +68,13 @@ func (d *Daemon) Hook(ctx context.Context, env adapters.HookEnvelope) adapters.H
 	}
 	resp, err := d.routeHook(ctx, ad, env, ev)
 	if err != nil {
-		d.log.Error("hook failed", "agent", env.Agent, "kind", ev.Kind, "err", err)
+		lvl := slog.LevelError
+		if isTimeout(ctx, err) {
+			// The shim gave up (its own timeout) or the agent killed it:
+			// expected under load, not a daemon fault.
+			lvl = slog.LevelWarn
+		}
+		d.log.Log(ctx, lvl, "hook failed", "agent", env.Agent, "kind", ev.Kind, "err", err)
 		return ad.FailResponse(ev.Kind, d.cfg.Approvals.FailClosed)
 	}
 	return resp
@@ -76,6 +87,7 @@ func (d *Daemon) routeHook(ctx context.Context, ad adapters.Adapter, env adapter
 	}
 	h.root, h.branch = d.git.lookup(ctx, h.cwd)
 	h.agentPID = agentPID(ad, env.Ancestors)
+	h.shared = underSharedServer(ad, env.Ancestors)
 
 	// Policy is evaluated before the write transaction so the (pure, CPU
 	// bound) rule evaluation doesn't hold the database write lock.
@@ -124,7 +136,21 @@ func (d *Daemon) routeHook(ctx context.Context, ad adapters.Adapter, env adapter
 		if plan != nil && plan.wait != nil {
 			d.waiters.remove(plan.req.ID)
 		}
+		// The verdict doesn't depend on the database: a deny or ask must
+		// hold even when recording the hook failed (locked or full disk).
+		if out, ok := policyVerdict(ev, pol); ok {
+			d.log.Error("hook not recorded; enforcing the policy verdict anyway",
+				"agent", env.Agent, "kind", ev.Kind, "behavior", out.Behavior, "rule", pol.Rule, "err", err)
+			return ad.EncodeResponse(ev, out), nil
+		}
 		return adapters.HookResponse{}, err
+	}
+
+	for _, r := range h.answered {
+		if r.Route == api.RouteDevices {
+			d.log.Info("held request answered in the agent's own dialog", "request", r.ID, "by", ev.Kind)
+		}
+		d.waiters.resolve(r.ID, r)
 	}
 
 	switch ev.Kind {
@@ -171,29 +197,62 @@ func (d *Daemon) applyHookEffects(ctx context.Context, tx *store.Tx, s api.Sessi
 		_, err := tx.Emit(ctx, api.EventRequestOpened, s.ID, plan.req.ID, plan.req)
 		return adapters.HookOutcome{}, err
 	case adapters.HookPostTool:
-		// The person answered the agent's own dialog: the tool ran.
-		req, err := tx.MatchSteppedAside(ctx, s.ID, ev.ToolUseID, ev.Tool, ev.Summary)
+		// The person answered the agent's own dialog: the tool ran. That
+		// dialog shows even while the request is held for devices, so a
+		// held (open) request is answered here too, and its hook released.
+		req, err := tx.MatchPending(ctx, s.ID, ev.ToolUseID, ev.Tool, ev.Summary)
 		if errors.Is(err, store.ErrNotFound) {
 			return adapters.HookOutcome{}, nil
 		}
 		if err != nil {
 			return adapters.HookOutcome{}, err
 		}
-		return adapters.HookOutcome{}, closeInTx(ctx, tx, req.ID, api.RequestAnsweredLocally)
+		return adapters.HookOutcome{}, h.answerLocally(ctx, tx, req.ID)
 	case adapters.HookPromptSubmit, adapters.HookStop, adapters.HookSessionEnd:
-		// The turn moved on, so whatever the dialog showed was answered.
-		reqs, err := tx.Requests(ctx, store.RequestFilter{SessionID: s.ID,
-			Statuses: []api.RequestStatus{api.RequestSteppedAside}})
-		if err != nil {
-			return adapters.HookOutcome{}, err
-		}
-		for _, r := range reqs {
-			if err := closeInTx(ctx, tx, r.ID, api.RequestAnsweredLocally); err != nil {
-				return adapters.HookOutcome{}, err
-			}
+		// The turn moved on, so whatever the dialog showed was answered
+		// (a denied dialog fires no Stop: the next prompt closes it).
+		return adapters.HookOutcome{}, h.answerAllLocally(ctx, tx, s.ID)
+	case adapters.HookNotification:
+		// "Waiting for your input": no dialog is up any more (Esc/No in
+		// the native dialog fires nothing else).
+		if state.IsIdleNotification(ev) {
+			return adapters.HookOutcome{}, h.answerAllLocally(ctx, tx, s.ID)
 		}
 	}
 	return adapters.HookOutcome{}, nil
+}
+
+// isTimeout reports whether err comes from the hook call's context ending
+// (shim timeout or disconnect) rather than a fault.
+func isTimeout(ctx context.Context, err error) bool {
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || ctx.Err() != nil
+}
+
+// answerLocally closes a pending request as answered in the agent's own
+// dialog. A held request's waiter is released after the commit (see
+// routeHook) and its hook answers "no opinion"; a device decision arriving
+// later gets already_decided.
+func (h *hookCall) answerLocally(ctx context.Context, tx *store.Tx, id string) error {
+	req, ok, err := closeInTx(ctx, tx, id, api.RequestAnsweredLocally)
+	if ok {
+		h.answered = append(h.answered, req)
+	}
+	return err
+}
+
+// answerAllLocally closes every pending request of a session as answered
+// locally.
+func (h *hookCall) answerAllLocally(ctx context.Context, tx *store.Tx, sessionID string) error {
+	reqs, err := tx.Requests(ctx, store.RequestFilter{SessionID: sessionID, Statuses: store.PendingStatuses})
+	if err != nil {
+		return err
+	}
+	for _, r := range reqs {
+		if err := h.answerLocally(ctx, tx, r.ID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // decidePreTool combines policy and grants: deny > ask > grant allow >
@@ -203,14 +262,8 @@ func (d *Daemon) applyHookEffects(ctx context.Context, tx *store.Tx, s api.Sessi
 // replay` pairs with the hook by tool_use_id) records it.
 func (d *Daemon) decidePreTool(ctx context.Context, tx *store.Tx, s api.Session, ev adapters.HookEvent, pol policy.Result) (adapters.HookOutcome, error) {
 	de := policy.DecisionEvent{ToolUseID: ev.ToolUseID, Tool: ev.Tool, Summary: ev.Summary, Result: pol}
-	var out adapters.HookOutcome
-	switch pol.Action {
-	case api.BehaviorDeny:
-		out = adapters.HookOutcome{Behavior: api.BehaviorDeny,
-			Message: firstNonEmpty(pol.Message, "Blocked by Pilothouse policy rule "+pol.Rule+".")}
-	case api.BehaviorAsk:
-		out = adapters.HookOutcome{Behavior: api.BehaviorAsk, Message: pol.Message}
-	default:
+	out, decided := policyVerdict(ev, pol)
+	if !decided {
 		grants, err := tx.Grants(ctx, s.ID)
 		if err != nil {
 			return out, err
@@ -228,6 +281,23 @@ func (d *Daemon) decidePreTool(ctx context.Context, tx *store.Tx, s api.Session,
 	de.Outcome = out.Behavior
 	_, err := tx.Emit(ctx, api.EventPolicyDecision, s.ID, "", de)
 	return out, err
+}
+
+// policyVerdict is the pre_tool outcome policy alone decides: deny or ask.
+// It needs no database, so it is enforced even when the hook can't be
+// recorded.
+func policyVerdict(ev adapters.HookEvent, pol policy.Result) (adapters.HookOutcome, bool) {
+	if ev.Kind != adapters.HookPreTool {
+		return adapters.HookOutcome{}, false
+	}
+	switch pol.Action {
+	case api.BehaviorDeny:
+		return adapters.HookOutcome{Behavior: api.BehaviorDeny, Rule: pol.Rule,
+			Message: firstNonEmpty(pol.Message, "Blocked by Pilothouse policy rule "+pol.Rule+".")}, true
+	case api.BehaviorAsk:
+		return adapters.HookOutcome{Behavior: api.BehaviorAsk, Rule: pol.Rule, Message: pol.Message}, true
+	}
+	return adapters.HookOutcome{}, false
 }
 
 // grantPermission answers a permission request from a session grant, when
@@ -399,7 +469,36 @@ func (d *Daemon) sessionForHook(ctx context.Context, tx *store.Tx, h *hookCall) 
 	if !errors.Is(err, store.ErrNotFound) {
 		return s, err
 	}
+	if s, ok, err := adoptWrapped(ctx, tx, h); ok || err != nil {
+		return s, err
+	}
 	return d.createSession(ctx, tx, h, newID("s_"))
+}
+
+// adoptWrapped links a hook that arrived through a shared agent server to
+// the `pilothouse run` session it belongs to. Such hooks run with the
+// server's environment, so PILOTHOUSE_SESSION_ID is missing; without this
+// every wrapped Codex TUI session would also show up as a second, observed
+// one. Only an unambiguous match is adopted: exactly one live wrapped
+// session of the same agent and cwd that has no agent session id yet.
+func adoptWrapped(ctx context.Context, tx *store.Tx, h *hookCall) (api.Session, bool, error) {
+	if !h.shared || h.env.PilothouseSessionID != "" || h.ev.AgentSessionID == "" {
+		return api.Session{}, false, nil
+	}
+	live, err := tx.LiveSessions(ctx)
+	if err != nil {
+		return api.Session{}, false, err
+	}
+	var match []api.Session
+	for _, s := range live {
+		if s.Mode == api.ModeWrapped && s.Agent == h.env.Agent && s.AgentSessionID == "" && s.Cwd == h.cwd {
+			match = append(match, s)
+		}
+	}
+	if len(match) != 1 {
+		return api.Session{}, false, nil
+	}
+	return match[0], true, nil
 }
 
 func (d *Daemon) createSession(ctx context.Context, tx *store.Tx, h *hookCall, id string) (api.Session, error) {
@@ -476,18 +575,49 @@ func loggedEvent(ev adapters.HookEvent) adapters.HookEvent {
 	return ev
 }
 
-// agentPID is the nearest ancestor of the hook shim that is the agent.
+// agentPID is the nearest ancestor of the hook shim that is the agent, or
+// 0 when that process is a shared agent server (Codex's `codex app-server
+// --managed-daemon` runs the hooks of every TUI session): its PID says
+// nothing about whether one session is still alive, so such sessions are
+// left to idle expiry instead of PID liveness.
 func agentPID(ad adapters.Adapter, ancestors []adapters.Proc) int {
 	names := ad.ProcessNames()
 	for _, p := range ancestors {
 		base := filepath.Base(p.Comm)
 		for _, n := range names {
 			if base == n {
+				if sharedAgentServer(p) {
+					return 0
+				}
 				return p.PID
 			}
 		}
 	}
 	return 0
+}
+
+// underSharedServer reports whether the hook's agent ancestor is a shared
+// agent server.
+func underSharedServer(ad adapters.Adapter, ancestors []adapters.Proc) bool {
+	names := ad.ProcessNames()
+	for _, p := range ancestors {
+		for _, n := range names {
+			if filepath.Base(p.Comm) == n {
+				return sharedAgentServer(p)
+			}
+		}
+	}
+	return false
+}
+
+// sharedAgentServer reports whether p is an agent's multi-session server.
+func sharedAgentServer(p adapters.Proc) bool {
+	for _, f := range strings.Fields(p.Args) {
+		if f == "app-server" {
+			return true
+		}
+	}
+	return false
 }
 
 func checkpointOf(k adapters.HookKind) api.Checkpoint {

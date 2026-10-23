@@ -51,7 +51,9 @@ type Ref struct {
 type Found struct {
 	Ref
 	Command string
-	Current bool // matches the Spec for its event exactly
+	Matcher string // the group's matcher ("" when absent)
+	Timeout int    // the handler's timeout in seconds (0 when absent)
+	Current bool   // matches the Spec for its event exactly
 }
 
 // Result is the outcome of Apply.
@@ -203,7 +205,8 @@ func (ed *editor) group(event string, gi, newIndex int, raw json.RawMessage) (js
 			continue
 		}
 		current := wanted && sameJSON(h, spec.handlerJSON()) && matcherOf(gobj) == spec.Matcher
-		ed.res.Found = append(ed.res.Found, Found{Ref: Ref{event, gi, hi}, Command: cmd, Current: current})
+		ed.res.Found = append(ed.res.Found, Found{Ref: Ref{event, gi, hi}, Command: cmd,
+			Matcher: matcherOf(gobj), Timeout: timeoutOf(h), Current: current})
 		if _, placed := ed.res.Placed[event]; current && !placed {
 			ed.res.Placed[event] = Ref{event, newIndex, len(kept)}
 			kept = append(kept, h)
@@ -231,6 +234,14 @@ func commandOf(h json.RawMessage) (string, bool) {
 		return "", false
 	}
 	return v.Command, true
+}
+
+func timeoutOf(h json.RawMessage) int {
+	var v struct {
+		Timeout float64 `json:"timeout"`
+	}
+	_ = json.Unmarshal(h, &v)
+	return int(v.Timeout)
 }
 
 func matcherOf(g object) string {

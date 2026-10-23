@@ -124,3 +124,52 @@ func FuzzOSCScanner(f *testing.F) {
 		}
 	})
 }
+
+// M8: the exact sequences Codex 0.164 writes (codex-rs/tui/src/
+// terminal_program_status.rs, also in tests/e2e/codex/osccheck), and the
+// colon form Claude Code uses.
+func TestOSCCodexAndClaudeForms(t *testing.T) {
+	tests := []struct {
+		in   string
+		want []api.OSCBody
+	}{
+		{"\x1b]7501;state=idle:app=codex\x1b\\", []api.OSCBody{{State: "idle", App: "codex", Raw: "state=idle:app=codex"}}},
+		{"\x1b]7501;state=working:app=codex\x1b\\", []api.OSCBody{{State: "working", App: "codex", Raw: "state=working:app=codex"}}},
+		{"\x1b]7501;state=blocked:app=codex:kind=permission\x1b\\",
+			[]api.OSCBody{{State: "blocked", App: "codex", Kind: "permission", Raw: "state=blocked:app=codex:kind=permission"}}},
+		{"\x1b]7501;state=done:app=codex\x1b\\", []api.OSCBody{{State: "done", App: "codex", Raw: "state=done:app=codex"}}},
+		{"\x1b]7501;state=clear\x1b\\", []api.OSCBody{{State: "idle", Raw: "state=clear"}}},
+		{"\x1b]7501;state=working;app=claude\x07", []api.OSCBody{{State: "working", App: "claude", Raw: "state=working;app=claude"}}},
+		// Claude Code: colon-separated, base64 title, kind only when blocked.
+		{"\x1b]7501;state=blocked:app=claude-code:kind=question:title=aGk=\x1b\\",
+			[]api.OSCBody{{State: "blocked", App: "claude-code", Kind: "question", Raw: "state=blocked:app=claude-code:kind=question:title=aGk="}}},
+		// Sub-task statuses (id=…) are not the session's state.
+		{"\x1b]7501;state=working:app=claude-code:id=task1\x1b\\", nil},
+		{"\x1b]7501;state=clear:id=task1\x1b\\", nil},
+	}
+	for _, tt := range tests {
+		if got := scanAll(tt.in); !reflect.DeepEqual(got, tt.want) {
+			t.Errorf("%q: got %+v, want %+v", tt.in, got, tt.want)
+		}
+	}
+}
+
+// L1: the support query is reported through OnQuery, never as a status.
+func TestOSCQuery(t *testing.T) {
+	var s OSCScanner
+	queries := 0
+	s.OnQuery = func() { queries++ }
+	var got []api.OSCBody
+	emit := func(b api.OSCBody) { got = append(got, b) }
+	for _, c := range []string{"\x1b]7501;?\x1b", "\\", "x\x1b]7501;?\x07", "\x1b]7501;state=idle\x07", "\x1b]0;?\x07"} {
+		s.Feed([]byte(c), emit)
+	}
+	if queries != 2 || len(got) != 1 || got[0].State != "idle" {
+		t.Fatalf("queries=%d got=%+v", queries, got)
+	}
+	var quiet OSCScanner // no OnQuery: queries are just skipped
+	quiet.Feed([]byte("\x1b]7501;?\x07"), emit)
+	if want := "\x1b]7501;?\x1b\\"; QueryReply != want {
+		t.Fatalf("QueryReply = %q, want %q", QueryReply, want)
+	}
+}

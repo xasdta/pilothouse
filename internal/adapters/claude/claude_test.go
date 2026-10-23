@@ -249,3 +249,20 @@ func TestMetadata(t *testing.T) {
 		t.Errorf("Detect = %+v", d)
 	}
 }
+
+// TestParseBashApplyPatchPaths: a patch fed to an apply_patch program
+// through a heredoc names files that path rules must see (M10); the call
+// stays a shell command.
+func TestParseBashApplyPatchPaths(t *testing.T) {
+	payload, _ := json.Marshal(map[string]any{
+		"session_id": "s1", "cwd": "/repo", "hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_use_id": "t1",
+		"tool_input": map[string]any{"command": "apply_patch <<'EOF'\n*** Begin Patch\n*** Add File: .env.local\n+x\n*** End Patch\nEOF\n"},
+	})
+	ev, err := Adapter{}.ParseHook(adapters.HookEnvelope{Payload: payload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ev.ToolKind != api.ToolShell || len(ev.Paths) != 1 || ev.Paths[0] != "/repo/.env.local" {
+		t.Errorf("%+v", ev)
+	}
+}

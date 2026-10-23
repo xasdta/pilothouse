@@ -380,3 +380,84 @@ func TestDiffAppendAtEnd(t *testing.T) {
 		t.Errorf("got:\n%s", d)
 	}
 }
+
+// TestApplyKeepsUserFormatting: QA's hooks.json had one-line handler
+// objects; installing and uninstalling must leave them as written (L10).
+func TestApplyKeepsUserFormatting(t *testing.T) {
+	const doc = `{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "echo user-sessionstart >> /tmp/qa6/userhook.log" }
+        ]
+      }
+    ],
+    "Stop": [ { "hooks": [ { "type": "command", "command": "say done" } ] } ]
+  },
+  "other": {"a": [1, 2,  3]}
+}
+`
+	res := mustApply(t, doc, specs("/usr/local/bin/pilothouse"))
+	out := string(res.Doc)
+	for _, keep := range []string{
+		`          { "type": "command", "command": "echo user-sessionstart >> /tmp/qa6/userhook.log" }`,
+		`{ "hooks": [ { "type": "command", "command": "say done" } ] }`,
+		`"other": {"a": [1, 2,  3]}`,
+	} {
+		if !strings.Contains(out, keep) {
+			t.Errorf("reformatted %q:\n%s", keep, out)
+		}
+	}
+	decode(t, res.Doc)
+	// Our own entries are indented like the file.
+	if !strings.Contains(out, "\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"/usr/local/bin/pilothouse hook claude\"") {
+		t.Errorf("our entry not indented:\n%s", out)
+	}
+	// Uninstall restores the content, and every entry it did not have to
+	// touch keeps its formatting (an array it removed ours from is
+	// re-laid out; its remaining items are not).
+	back := string(mustApply(t, out, nil).Doc)
+	if !reflect.DeepEqual(decode(t, []byte(back)), decode(t, []byte(doc))) {
+		t.Errorf("uninstall did not restore the content:\n%s", Diff("hooks.json", doc, back))
+	}
+	for _, keep := range []string{
+		`          { "type": "command", "command": "echo user-sessionstart >> /tmp/qa6/userhook.log" }`,
+		`      { "hooks": [ { "type": "command", "command": "say done" } ] }`,
+		`"other": {"a": [1, 2,  3]}`,
+	} {
+		if !strings.Contains(back, keep) {
+			t.Errorf("uninstall reformatted %q:\n%s", keep, back)
+		}
+	}
+	found := map[string]Found{}
+	for _, f := range mustApply(t, out, specs("/usr/local/bin/pilothouse")).Found {
+		found[f.Event] = f
+	}
+	if f := found["PreToolUse"]; f.Matcher != "*" || f.Timeout != 30 {
+		t.Errorf("PreToolUse Found = %+v", f)
+	}
+	if f := found["Stop"]; f.Matcher != "" || f.Timeout != 0 || f.Ref != (Ref{"Stop", 1, 0}) {
+		t.Errorf("Stop Found = %+v", f)
+	}
+}
+
+func TestOwnedByRenamedBinary(t *testing.T) {
+	for _, shim := range []string{"/usr/local/bin/ph", "/opt/homebrew/bin/pilothouse", "/tmp/x y/ph"} {
+		cmd := ShimCommand(shim, "claude")
+		if !OwnedBy("claude")(cmd) {
+			t.Errorf("OwnedBy(claude) does not recognise %q", cmd)
+		}
+		if OwnedBy("codex")(cmd) {
+			t.Errorf("OwnedBy(codex) wrongly recognises %q", cmd)
+		}
+	}
+	if got := ShimCommand("/opt/homebrew/bin/pilothouse", "claude"); strings.Contains(got, "#") {
+		t.Errorf("a pilothouse-named binary needs no marker: %q", got)
+	}
+	for _, foreign := range []string{"/usr/bin/ph hook claude", "my-tool hook claude # pilothouse"} {
+		if OwnedBy("claude")(foreign) {
+			t.Errorf("foreign hook %q must not be treated as Pilothouse's", foreign)
+		}
+	}
+}

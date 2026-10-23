@@ -1,4 +1,4 @@
-import { h, icon } from '../dom.js';
+import { h, icon, fill, add } from '../dom.js';
 import { api } from '../api.js';
 import { pushStatus } from '../push.js';
 
@@ -17,7 +17,7 @@ export function guessName() {
 
 function messageFor(err) {
   switch (err.code) {
-    case 'invalid_code': return 'That code didn’t work — it may be used or expired. Run pilothouse pair again.';
+    case 'invalid_code': return 'That code didn’t work — it may be used or expired. Run pilothouse pair again and enter the new code.';
     case 'rate_limited': return 'Too many tries. Wait a minute and try again.';
     case 'network': return 'Can’t reach your computer. Is the daemon running?';
     default: return err.message || 'Pairing failed.';
@@ -42,36 +42,51 @@ export function pairView({ code, mode, onDone }) {
 
   if (mode === 'login' && code) {
     const err = h('p', { class: 'form-error', role: 'alert' });
-    root.append(hero('Signing in…', 'Connecting this browser to your computer.'), err);
+    add(root, hero('Signing in…', 'Connecting this browser to your computer.'), err);
     redeem(code, guessName()).then(onDone, (e) => {
-      root.replaceChildren(hero('Couldn’t sign in', messageFor(e)),
+      fill(root, hero('Couldn’t sign in', messageFor(e)),
         h('div', { class: 'terminal-hint' }, h('span', { class: 'prompt' }, '$'), 'pilothouse open'));
     });
     return { el: root };
   }
 
   // Without a code in the link, the person types the one `pilothouse pair` shows.
+  // A code from the link that fails is shown as failed, and the field to
+  // type a new one appears.
+  let linkCode = code;
   const err = h('p', { class: 'form-error', role: 'alert', 'aria-live': 'assertive' });
-  const codeInput = code ? null : h('input', {
+  const codeInput = h('input', {
     class: 'input code-input', id: 'pair-code', autocomplete: 'one-time-code', autocapitalize: 'characters',
     spellcheck: 'false', inputmode: 'text', placeholder: 'XXXX-XXXX-XXXX', maxlength: 20, required: true,
   });
+  const codeField = (label) => h('div', null, h('label', { class: 'field-label', for: 'pair-code' }, label), codeInput);
+  const codeSlot = h('div', { class: 'code-slot' },
+    code
+      ? h('div', { class: 'code-chip' }, icon('check', 'sm'), h('span', { class: 'sr-only' }, 'Pairing code '), code)
+      : codeField('Pairing code'));
   const nameInput = h('input', { class: 'input', id: 'pair-name', value: guessName(), maxlength: 60, autocomplete: 'off', required: true });
   const submit = h('button', { class: 'btn primary block', type: 'submit' }, 'Pair this device');
   const form = h('form', { novalidate: true },
-    code
-      ? h('div', { class: 'code-chip', 'aria-label': 'Pairing code ' + code }, icon('check', 'sm'), code)
-      : h('div', null, h('label', { class: 'field-label', for: 'pair-code' }, 'Pairing code'), codeInput),
+    codeSlot,
     h('div', null, h('label', { class: 'field-label', for: 'pair-name' }, 'Name this device'), nameInput),
     err,
     submit);
 
+  function linkCodeFailed() {
+    const failed = linkCode;
+    linkCode = '';
+    fill(codeSlot,
+      h('div', { class: 'code-chip bad' }, icon('x', 'sm'),
+        h('span', { class: 'sr-only' }, 'Pairing code '), h('s', null, failed), h('span', { class: 'sr-only' }, ' didn’t work')),
+      codeField('Enter a new code'));
+  }
+
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const c = code || codeInput.value.trim();
+    const c = linkCode || codeInput.value.trim();
     if (!c) { err.textContent = 'Enter the code shown by pilothouse pair.'; codeInput.focus(); return; }
     submit.disabled = true;
-    submit.replaceChildren(h('span', { class: 'spin', 'aria-hidden': 'true' }), 'Pairing…');
+    fill(submit, h('span', { class: 'spin', 'aria-hidden': 'true' }), 'Pairing…');
     err.textContent = '';
     try {
       const me = await redeem(c, nameInput.value.trim() || guessName());
@@ -79,11 +94,16 @@ export function pairView({ code, mode, onDone }) {
     } catch (e2) {
       err.textContent = messageFor(e2);
       submit.disabled = false;
-      submit.replaceChildren('Pair this device');
+      fill(submit, 'Pair this device');
+      if (e2.code !== 'network' && e2.code !== 'rate_limited') {
+        if (linkCode) linkCodeFailed();
+        else codeInput.select();
+        codeInput.focus();
+      }
     }
   });
 
-  root.append(
+  add(root,
     hero('Pair with Pilothouse', code
       ? 'Answer your coding agents from this device when you’re away from your desk.'
       : 'Run pilothouse pair on your computer and scan the QR code, or type the code here.'),
@@ -95,7 +115,7 @@ export function pairView({ code, mode, onDone }) {
     const st = await pushStatus().catch(() => 'unsupported');
     const next = h('button', { class: 'btn primary block', type: 'button', onclick: () => onDone(me, st === 'off' || st === 'ios-install') },
       st === 'off' || st === 'ios-install' ? 'Set up notifications' : 'Open inbox');
-    root.replaceChildren(
+    fill(root,
       h('div', { class: 'pair-hero' },
         h('div', { class: 'done-mark' }, icon('check')),
         h('h1', null, 'You’re paired'),
@@ -104,5 +124,5 @@ export function pairView({ code, mode, onDone }) {
     next.focus();
   }
 
-  return { el: root, focus: () => (codeInput || nameInput).focus() };
+  return { el: root, focus: () => (code ? nameInput : codeInput).focus() };
 }

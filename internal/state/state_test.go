@@ -223,6 +223,9 @@ func TestFromHook(t *testing.T) {
 		{adapters.HookEvent{Kind: adapters.HookNotification, NotificationType: "auth_success"}, "", "", false},
 		{adapters.HookEvent{Kind: adapters.HookNotification, NotificationType: "other"}, "", "", false},
 		{adapters.HookEvent{Kind: adapters.HookUnknown}, "", "", false},
+		// QA M1: subagent activity says nothing about the parent session.
+		{adapters.HookEvent{Kind: adapters.HookSubagentStop}, "", "", false},
+		{adapters.HookEvent{Kind: adapters.HookPreCompact}, api.StateWorking, "", true},
 	}
 	for _, tt := range tests {
 		s, k, d, ok := FromHook(tt.ev)
@@ -232,5 +235,15 @@ func TestFromHook(t *testing.T) {
 	}
 	if _, _, d, _ := FromHook(adapters.HookEvent{Kind: adapters.HookPermission, Summary: "Run: git push"}); d != "Asked to run: git push" {
 		t.Errorf("permission detail = %q", d)
+	}
+}
+
+func TestIsIdleNotification(t *testing.T) {
+	if !IsIdleNotification(adapters.HookEvent{Kind: adapters.HookNotification, NotificationType: "idle_prompt"}) {
+		t.Error("idle_prompt")
+	}
+	if IsIdleNotification(adapters.HookEvent{Kind: adapters.HookNotification, NotificationType: "permission_prompt"}) ||
+		IsIdleNotification(adapters.HookEvent{Kind: adapters.HookStop, NotificationType: "idle_prompt"}) {
+		t.Error("false positive")
 	}
 }

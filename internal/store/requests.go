@@ -72,21 +72,31 @@ func (r Reader) Requests(ctx context.Context, f RequestFilter) ([]api.Request, e
 	return queryRequests(ctx, r.q, q, args...)
 }
 
-// MatchSteppedAside finds the stepped-aside request a post_tool hook
-// completes: the one with the same tool_use_id, else the newest with the
-// same tool and summary.
-func (r Reader) MatchSteppedAside(ctx context.Context, sessionID, toolUseID, tool, summary string) (api.Request, error) {
+// MatchPending finds the pending request (open — held for devices — or
+// stepped aside) a post_tool hook completes: the one with the same
+// tool_use_id, else the newest with the same tool and summary. A held
+// request matches too: the agent's own dialog shows while devices are
+// asked, and a post_tool means the person answered it there.
+func (r Reader) MatchPending(ctx context.Context, sessionID, toolUseID, tool, summary string) (api.Request, error) {
+	in := placeholders(len(PendingStatuses))
+	args := func(more ...any) []any {
+		a := []any{sessionID}
+		for _, s := range PendingStatuses {
+			a = append(a, string(s))
+		}
+		return append(a, more...)
+	}
 	if toolUseID != "" {
 		req, err := scanRequest(r.q.QueryRowContext(ctx,
-			`SELECT data FROM requests WHERE session_id = ? AND status = ? AND tool_use_id = ?
-			 ORDER BY created_at DESC LIMIT 1`, sessionID, string(api.RequestSteppedAside), toolUseID))
+			`SELECT data FROM requests WHERE session_id = ? AND status IN (`+in+`) AND tool_use_id = ?
+			 ORDER BY created_at DESC LIMIT 1`, args(toolUseID)...))
 		if !errors.Is(err, ErrNotFound) {
 			return req, err
 		}
 	}
 	return scanRequest(r.q.QueryRowContext(ctx,
-		`SELECT data FROM requests WHERE session_id = ? AND status = ? AND tool = ? AND summary = ?
-		 ORDER BY created_at DESC LIMIT 1`, sessionID, string(api.RequestSteppedAside), tool, summary))
+		`SELECT data FROM requests WHERE session_id = ? AND status IN (`+in+`) AND tool = ? AND summary = ?
+		 ORDER BY created_at DESC LIMIT 1`, args(tool, summary)...))
 }
 
 // InsertRequest stores a new request. toolUseID is kept only for matching

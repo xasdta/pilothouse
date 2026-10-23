@@ -6,14 +6,25 @@ import (
 	"github.com/xasdta/pilothouse/internal/api"
 )
 
-// OSC 7501 is Pilothouse's status escape (layer L1): an agent, or a wrapper
-// script around one, prints
+// OSC 7501 is the Program Status Protocol (layer L1): an agent, or a
+// wrapper script around one, prints
 //
-//	ESC ] 7501 ; state=<s> [; app=<a>] [; kind=<k>] (BEL | ESC \)
+//	ESC ] 7501 ; state=<s> [:app=<a>] [:kind=<k>] [:id=<id>] … (BEL | ESC \)
 //
-// and the holder turns it into evidence for the daemon. Terminals ignore
-// OSC numbers they don't know, so the sequence is passed through to the
-// attached terminal unchanged.
+// and the holder turns it into evidence for the daemon. Fields are
+// separated by ':' (Codex, codex-rs/tui/src/terminal_program_status.rs, and
+// Claude Code) or ';' (Pilothouse's original form; both are accepted).
+// Terminals ignore OSC numbers they don't know, so the sequence is passed
+// through to the attached terminal unchanged.
+//
+// Claude Code only emits status after it has asked the terminal whether it
+// speaks the protocol: it writes the query "ESC ] 7501 ; ? ST" and treats
+// any OSC 7501 reply whose data starts with '?' as "supported" (Claude Code
+// 2.1.309: the probe sends OSC 7501 ";?" and matches
+// `e.type==="osc" && e.code===7501 && e.data.startsWith("?")`; see
+// https://code.claude.com/docs/en/terminal-config, "See session status in
+// your terminal"). The scanner reports such queries through OnQuery so the
+// holder can answer them with QueryReply.
 
 const (
 	oscNumber = "7501"
@@ -40,6 +51,10 @@ const (
 // Memory is bounded by maxOSCPayload regardless of input. Not safe for
 // concurrent use.
 type OSCScanner struct {
+	// OnQuery, when set, is called for every OSC 7501 support query
+	// ("ESC ] 7501 ; ? ST") found in the stream.
+	OnQuery func()
+
 	st      oscState
 	buf     []byte // payload of the current OSC, while it may still be 7501
 	skipped int    // bytes seen in the current OSC body
@@ -128,23 +143,38 @@ func (s *OSCScanner) finish(emit func(api.OSCBody)) {
 	if s.ignore || len(s.buf) <= len(oscNumber)+1 {
 		return
 	}
+	if s.buf[len(oscNumber)+1] == '?' {
+		if s.OnQuery != nil {
+			s.OnQuery()
+		}
+		return
+	}
 	if b, ok := ParseOSC7501(string(s.buf[len(oscNumber)+1:])); ok {
 		emit(b)
 	}
 }
+
+// QueryReply is the answer to an OSC 7501 support query: the protocol
+// number followed by "?" (what Claude Code's probe matches on), ST-terminated.
+const QueryReply = "\x1b]" + oscNumber + ";?\x1b\\"
 
 var (
 	validOSCStates = map[string]bool{"idle": true, "working": true, "blocked": true, "done": true, "error": true}
 	validOSCKinds  = map[string]bool{"permission": true, "question": true, "auth": true}
 )
 
-// ParseOSC7501 parses the key=value list after "7501;". state is
-// required and must be one of idle|working|blocked|done|error; kind, when
-// present, must be permission|question|auth. Unknown keys are ignored so
-// agents can add fields without breaking older holders.
+// ParseOSC7501 parses the key=value list after "7501;". Fields may be
+// separated by ':' or ';'. state is required and must be one of
+// idle|working|blocked|done|error, or clear (the agent withdrew its status,
+// e.g. on exit), which is reported as idle. kind, when present, must be
+// permission|question|auth. A status carrying a non-empty id= describes a
+// sub-task (Claude Code reports background tasks that way), not the
+// session, and is not reported. Unknown keys are ignored so agents can add
+// fields without breaking older holders.
 func ParseOSC7501(payload string) (api.OSCBody, bool) {
 	b := api.OSCBody{Raw: payload}
-	for _, field := range strings.Split(payload, ";") {
+	var id string
+	for _, field := range strings.FieldsFunc(payload, func(r rune) bool { return r == ';' || r == ':' }) {
 		k, v, ok := strings.Cut(field, "=")
 		if !ok {
 			continue
@@ -159,7 +189,15 @@ func ParseOSC7501(payload string) (api.OSCBody, bool) {
 			}
 		case "kind":
 			b.Kind = v
+		case "id":
+			id = v
 		}
+	}
+	if id != "" {
+		return api.OSCBody{}, false
+	}
+	if b.State == "clear" {
+		b.State, b.Kind = "idle", ""
 	}
 	if !validOSCStates[b.State] {
 		return api.OSCBody{}, false

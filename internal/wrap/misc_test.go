@@ -2,6 +2,9 @@ package wrap
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -149,5 +152,65 @@ func TestModeTracker(t *testing.T) {
 	m.Feed([]byte("\x1b[?9999h\x1b[?h\x1b[? 1049h\x1b[2J"))
 	if u := m.undo(); len(u) != 0 {
 		t.Fatalf("undo after junk = %q", u)
+	}
+}
+
+// H5: wrapped Codex runs without its shared app-server daemon, so hooks
+// inherit PILOTHOUSE_SESSION_ID. --no-daemon goes only where Codex accepts it.
+func TestCodexNoDaemonArgv(t *testing.T) {
+	const c = "/bin/codex"
+	tests := []struct {
+		in   []string
+		want []string // nil: unchanged
+	}{
+		{[]string{c}, []string{c, "--no-daemon"}},
+		{[]string{c, "fix the login bug"}, []string{c, "--no-daemon", "fix the login bug"}},
+		{[]string{c, "--no-alt-screen", "-a", "on-request"}, []string{c, "--no-daemon", "--no-alt-screen", "-a", "on-request"}},
+		{[]string{c, "-m", "resume", "hi there"}, []string{c, "--no-daemon", "-m", "resume", "hi there"}},
+		{[]string{c, "-c", "model=x", "resume", "--last"}, []string{c, "-c", "model=x", "resume", "--no-daemon", "--last"}},
+		{[]string{c, "fork", "abc"}, []string{c, "fork", "--no-daemon", "abc"}},
+		{[]string{c, "--", "exec"}, []string{c, "--no-daemon", "--", "exec"}},
+		{[]string{c, "--model=o3", "do it."}, []string{c, "--no-daemon", "--model=o3", "do it."}},
+		{[]string{c, "exec", "hi"}, nil},
+		{[]string{c, "agents"}, nil},
+		{[]string{c, "queue", "x", "y"}, nil},
+		{[]string{c, "remote-control"}, nil},
+		{[]string{c, "some-hidden-cmd"}, nil},
+		{[]string{c, "--remote", "ws://x:1"}, nil},
+		{[]string{c, "--no-daemon"}, nil},
+		{[]string{c, "--version"}, nil},
+	}
+	for _, tt := range tests {
+		got, ok := codexNoDaemonArgv(tt.in)
+		want := tt.want
+		if want == nil {
+			want = tt.in
+		}
+		if ok != (tt.want != nil) || !slices.Equal(got, want) {
+			t.Errorf("%q: got %q ok=%v, want %q", tt.in, got, ok, want)
+		}
+	}
+}
+
+// The holder adds --no-daemon only for a Codex that advertises it.
+func TestHolderCodexNoDaemon(t *testing.T) {
+	testEnv(t)
+	dir := t.TempDir()
+	for name, help := range map[string]string{"new/codex": "  --no-daemon  Run without the shared background server", "old/codex": "  --no-alt-screen"} {
+		p := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		script := "#!/bin/sh\nif [ \"$1\" = --help ]; then echo '" + help + "'; exit 0; fi\necho \"args:$*\"; read x\n"
+		if err := os.WriteFile(p, []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, want := range map[string]string{"new/codex": "args:--no-daemon -a never", "old/codex": "args:-a never"} {
+		h := startHolder(t, HolderConfig{Argv: []string{filepath.Join(dir, name), "-a", "never"}})
+		s := attachSession(t, h.sock, true)
+		s.waitOutput(want)
+		s.send("\r")
+		h.wait(t)
 	}
 }

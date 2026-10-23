@@ -1,5 +1,6 @@
 // Pilothouse web app entry: boot, routing, live updates.
 
+import { h, fill } from './dom.js';
 import { api, store, subscribe, resync, connect } from './api.js';
 import { mountShell, chrome, refreshChrome, setNavigator, toast } from './ui.js';
 import { syncPush } from './push.js';
@@ -32,7 +33,7 @@ function render(path) {
   if (!match) { history.replaceState(null, '', '/'); match = ['/']; }
   chrome(entry[2]);
   view = entry[1](match);
-  main.replaceChildren(view.el);
+  fill(main, view.el);
   scrollTo(0, 0);
   main.focus({ preventScroll: true });
 }
@@ -60,7 +61,7 @@ function showPair(code, mode) {
     code, mode,
     onDone: (me, wantsNotifications) => startApp(me, wantsNotifications ? '/settings' : '/'),
   });
-  main.replaceChildren(v.el);
+  fill(main, v.el);
   if (v.focus) v.focus();
 }
 
@@ -110,29 +111,23 @@ async function boot() {
     }
     main = main || mountShell(root);
     chrome({ tab: null, chrome: false });
-    main.replaceChildren(errorScreen(e));
+    fill(main, errorScreen(e));
     return;
   }
   startApp(me, path === '/pair' || path === '/login' ? '/' : path);
 }
 
 function errorScreen(e) {
-  const d = document.createElement('div');
-  d.className = 'view pair';
-  const box = document.createElement('div');
-  box.className = 'empty';
-  const t = document.createElement('h2');
-  t.textContent = 'Can’t reach your computer';
-  const p = document.createElement('p');
-  p.textContent = (e && e.message) || 'The Pilothouse daemon isn’t answering.';
-  const b = document.createElement('button');
-  b.className = 'btn primary block';
-  b.type = 'button';
-  b.textContent = 'Try again';
-  b.addEventListener('click', () => location.reload());
-  box.append(t, p);
-  d.append(box, b);
-  return d;
+  // Network failures already say "Can’t reach your computer"; don't repeat
+  // the heading in the body.
+  const body = e && e.message && e.code !== 'network'
+    ? e.message
+    : 'The Pilothouse daemon isn’t answering. Check that it’s running on your computer (pilothouse start), then try again.';
+  return h('div', { class: 'view pair' },
+    h('div', { class: 'empty' },
+      h('h2', null, 'Can’t reach your computer'),
+      h('p', null, body)),
+    h('button', { class: 'btn primary block', type: 'button', onclick: () => location.reload() }, 'Try again'));
 }
 
 boot();

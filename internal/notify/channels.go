@@ -12,7 +12,9 @@ import (
 	"net/url"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/xasdta/pilothouse/internal/api"
@@ -113,7 +115,13 @@ type Ntfy struct {
 	Token  string // access token (tk_…) or "user:pass"
 	Pusher Pusher // may be nil
 	Client *http.Client
+	// Backoff is the first retry delay after a 429 or 5xx (doubling, at
+	// most ntfyRetries retries, within the delivery timeout). Zero means 1 s.
+	Backoff time.Duration
 }
+
+// ntfyRetries bounds retries of a rate-limited (429) or failing (5xx) publish.
+const ntfyRetries = 3
 
 func (*Ntfy) Name() string { return "ntfy" }
 func (*Ntfy) Remote() bool { return true }
@@ -186,11 +194,35 @@ func (c *Ntfy) Send(ctx context.Context, n core.Notification) error {
 	if c.Topic == "" {
 		return errors.New("ntfy: no topic configured")
 	}
-	req, err := c.Request(ctx, n)
-	if err != nil {
-		return err
+	delay := c.Backoff
+	if delay <= 0 {
+		delay = time.Second
 	}
-	return do(c.Client, req)
+	for attempt := 0; ; attempt++ {
+		req, err := c.Request(ctx, n)
+		if err != nil {
+			return err
+		}
+		status, retryAfter, err := doStatus(c.Client, req)
+		if err == nil || !retryable(status) || attempt >= ntfyRetries {
+			return err
+		}
+		wait := delay
+		if retryAfter > wait && retryAfter <= 30*time.Second {
+			wait = retryAfter
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("%w (gave up retrying: %v)", err, ctx.Err())
+		case <-time.After(wait):
+		}
+		delay *= 2
+	}
+}
+
+// retryable: ntfy rate limits (429) and server errors are worth a retry.
+func retryable(status int) bool {
+	return status == http.StatusTooManyRequests || status >= 500
 }
 
 // headerText makes a header-safe title: ASCII as is, anything else as an
@@ -234,17 +266,28 @@ func (w *Webhook) Send(ctx context.Context, n core.Notification) error {
 }
 
 func do(hc *http.Client, req *http.Request) error {
+	_, _, err := doStatus(hc, req)
+	return err
+}
+
+// doStatus sends req and returns the HTTP status (0 when no response) and
+// any Retry-After delay the server asked for.
+func doStatus(hc *http.Client, req *http.Request) (int, time.Duration, error) {
 	if hc == nil {
 		hc = &http.Client{Timeout: defaultTimeout}
 	}
 	resp, err := hc.Do(req)
 	if err != nil {
-		return fmt.Errorf("%s: %w", req.URL.Host, err)
+		return 0, 0, fmt.Errorf("%s: %w", req.URL.Host, err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 	if resp.StatusCode/100 != 2 {
-		return fmt.Errorf("%s: %s %s", req.URL.Host, resp.Status, strings.TrimSpace(string(body)))
+		var after time.Duration
+		if secs, err := strconv.Atoi(strings.TrimSpace(resp.Header.Get("Retry-After"))); err == nil && secs > 0 {
+			after = time.Duration(secs) * time.Second
+		}
+		return resp.StatusCode, after, fmt.Errorf("%s: %s %s", req.URL.Host, resp.Status, strings.TrimSpace(string(body)))
 	}
-	return nil
+	return resp.StatusCode, 0, nil
 }

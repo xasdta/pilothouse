@@ -22,7 +22,7 @@ import (
 
 const (
 	maxBody     = 1 << 20  // JSON bodies on the local API
-	maxHookBody = 16 << 20 // hook envelopes carry up to 4 MB of stdin, escaped
+	maxHookBody = 72 << 20 // hook envelopes carry up to 64 MB of stdin, verbatim, plus process context
 	pingEvery   = 15 * time.Second
 )
 

@@ -762,3 +762,39 @@ func TestMidWriteIsRetried(t *testing.T) {
 		t.Fatalf("finished file: %+v", r)
 	}
 }
+
+// TestShellPathsNeverAllow: a shell command's paths are the files an
+// apply_patch heredoc in it names (M10). Deny and ask rules use them; an
+// allow rule must not, since the command may do anything else as well.
+func TestShellPathsNeverAllow(t *testing.T) {
+	te := newTestEnv(t)
+	writeFile(t, te.userFile(), `version: 1
+rules:
+  - {name: allow-src, match: {path: "src/**"}, action: allow}
+  - {name: allow-when-src, match: {kind: shell}, when: 'paths.all(p, glob(p, "**/src/**"))', action: allow}
+  - {name: no-env, match: {path: ".env*"}, action: deny}
+`)
+	e, _ := te.load(t)
+	patch := func(cmd string, paths ...string) Input {
+		in := shell(cmd)
+		in.Cwd, in.Paths = te.repo, paths
+		return in
+	}
+	r := e.Evaluate(patch("rm -rf / ; apply_patch <<'EOF'\n*** Begin Patch\n*** Update File: src/a.go\n*** End Patch\nEOF", "src/a.go"))
+	if r.Action != "" || len(r.Matched) != 2 || r.Matched[0].Ignored == "" || r.Matched[1].Ignored == "" {
+		t.Errorf("path allow on a shell command: %+v", r)
+	}
+	if r := e.Evaluate(patch("apply_patch <<'EOF' …", ".env.local")); r.Action != api.BehaviorDeny || r.Rule != "no-env" {
+		t.Errorf("deny on shell paths: %+v", r)
+	}
+	// Edits (Codex's own apply_patch, or the exact heredoc form) still allow.
+	in := patch("apply_patch <<'EOF' …", "src/a.go")
+	in.ToolKind = api.ToolEdit
+	if r := e.Evaluate(in); r.Action != api.BehaviorAllow || r.Rule != "allow-src" {
+		t.Errorf("edit: %+v", r)
+	}
+	// A shell command without paths is unaffected.
+	if r := e.Evaluate(patch("ls")); r.Action != api.BehaviorAllow || r.Rule != "allow-when-src" {
+		t.Errorf("plain shell: %+v", r)
+	}
+}

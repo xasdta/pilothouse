@@ -46,8 +46,14 @@ type Channel interface {
 var ErrClosed = errors.New("notifier closed")
 
 const (
-	queueSize      = 32
-	defaultTimeout = 10 * time.Second
+	// queueSize bounds each channel's low-priority lane ("waiting" and
+	// anything else that is only informative).
+	queueSize = 32
+	// urgentQueueSize bounds the priority lane (requests and blocked
+	// dialogs). It only fills if a channel is stuck for a long time; the
+	// low lane is always emptied first.
+	urgentQueueSize = 128
+	defaultTimeout  = 10 * time.Second
 )
 
 // Notifier fans notifications out to channels.
@@ -59,10 +65,106 @@ type Notifier struct {
 	wg      sync.WaitGroup
 }
 
+// worker delivers to one channel from two lanes: urgent notifications (a
+// person is needed) always go first and are never dropped to make room
+// for informative ones.
 type worker struct {
 	ch      Channel
-	q       chan core.Notification
 	timeout time.Duration
+
+	mu     sync.Mutex
+	urgent []core.Notification
+	low    []core.Notification
+	closed bool
+	wake   chan struct{} // capacity 1
+}
+
+// urgent reports whether a notification asks a person to act.
+func urgent(k core.NotificationKind) bool {
+	return k == core.NotifyRequest || k == core.NotifyBlocked || k == core.NotifyTest
+}
+
+// push queues n. It returns what it had to drop to stay bounded, if
+// anything.
+func (w *worker) push(n core.Notification) (dropped *core.Notification) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	switch {
+	case urgent(n.Kind):
+		if len(w.low) > 0 && len(w.urgent)+len(w.low) >= queueSize {
+			d := w.low[0] // make room: oldest informative one goes first
+			w.low = w.low[1:]
+			dropped = &d
+		}
+		if len(w.urgent) >= urgentQueueSize {
+			d := w.urgent[0]
+			w.urgent = w.urgent[1:]
+			dropped = &d
+		}
+		w.urgent = append(w.urgent, n)
+	default:
+		// "Finished its turn" twice for one session is one notification:
+		// replace the queued one in place.
+		if n.Kind == core.NotifyWaiting && n.Session != nil {
+			for i, q := range w.low {
+				if q.Kind == core.NotifyWaiting && q.Session != nil && q.Session.ID == n.Session.ID {
+					w.low[i] = n
+					w.signal()
+					return nil
+				}
+			}
+		}
+		if len(w.low) >= queueSize || len(w.urgent)+len(w.low) >= queueSize+urgentQueueSize {
+			if len(w.low) == 0 {
+				return &n
+			}
+			d := w.low[0]
+			w.low = w.low[1:]
+			dropped = &d
+		}
+		w.low = append(w.low, n)
+	}
+	w.signal()
+	return dropped
+}
+
+func (w *worker) signal() {
+	select {
+	case w.wake <- struct{}{}:
+	default:
+	}
+}
+
+// pop returns the next notification, urgent first; ok is false once the
+// worker is closed and drained.
+func (w *worker) pop() (core.Notification, bool) {
+	for {
+		w.mu.Lock()
+		switch {
+		case len(w.urgent) > 0:
+			n := w.urgent[0]
+			w.urgent = w.urgent[1:]
+			w.mu.Unlock()
+			return n, true
+		case len(w.low) > 0:
+			n := w.low[0]
+			w.low = w.low[1:]
+			w.mu.Unlock()
+			return n, true
+		case w.closed:
+			w.mu.Unlock()
+			return core.Notification{}, false
+		}
+		w.mu.Unlock()
+		<-w.wake
+	}
+}
+
+func (w *worker) close() {
+	w.mu.Lock()
+	w.closed = true
+	w.mu.Unlock()
+	w.signal()
 }
 
 // New returns a Notifier that fans out to every configured channel.
@@ -111,6 +213,7 @@ func isNil(p Pusher) bool {
 }
 
 // NewWith starts a Notifier over explicit channels (tests, custom setups).
+// log gets component=notify added; callers pass their base logger.
 func NewWith(log *slog.Logger, timeout time.Duration, chans ...Channel) *Notifier {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
@@ -120,7 +223,7 @@ func NewWith(log *slog.Logger, timeout time.Duration, chans ...Channel) *Notifie
 	}
 	n := &Notifier{log: log.With("component", "notify")}
 	for _, c := range chans {
-		w := &worker{ch: c, q: make(chan core.Notification, queueSize), timeout: timeout}
+		w := &worker{ch: c, timeout: timeout, wake: make(chan struct{}, 1)}
 		n.workers = append(n.workers, w)
 		n.wg.Add(1)
 		go n.run(w)
@@ -130,7 +233,11 @@ func NewWith(log *slog.Logger, timeout time.Duration, chans ...Channel) *Notifie
 
 func (n *Notifier) run(w *worker) {
 	defer n.wg.Done()
-	for note := range w.q {
+	for {
+		note, ok := w.pop()
+		if !ok {
+			return
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), w.timeout)
 		start := time.Now()
 		err := w.ch.Send(ctx, note)
@@ -155,10 +262,12 @@ func (n *Notifier) Notify(_ context.Context, note core.Notification) error {
 		if w.ch.Remote() && !note.Remote && note.Kind != core.NotifyTest {
 			continue
 		}
-		select {
-		case w.q <- note:
-		default:
-			n.log.Warn("notification dropped: queue full", "channel", w.ch.Name(), "kind", note.Kind)
+		if d := w.push(note); d != nil {
+			lvl := slog.LevelWarn
+			if urgent(d.Kind) {
+				lvl = slog.LevelError
+			}
+			n.log.Log(context.Background(), lvl, "notification dropped: queue full", "channel", w.ch.Name(), "kind", d.Kind)
 		}
 	}
 	return nil
@@ -173,7 +282,7 @@ func (n *Notifier) Close() {
 	}
 	n.closed = true
 	for _, w := range n.workers {
-		close(w.q)
+		w.close()
 	}
 	n.mu.Unlock()
 	n.wg.Wait()

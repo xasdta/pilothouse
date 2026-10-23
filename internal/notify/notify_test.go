@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -109,7 +111,7 @@ func TestNotifyNeverBlocks(t *testing.T) {
 	fast := &fakeChannel{name: "fast", remote: true}
 	n := NewWith(nil, 50*time.Millisecond, slow, fast)
 	start := time.Now()
-	for i := 0; i < queueSize*3; i++ {
+	for i := 0; i < urgentQueueSize*2; i++ {
 		_ = n.Notify(context.Background(), core.Notification{Kind: core.NotifyRequest, Request: sampleRequest(), Remote: true})
 	}
 	if el := time.Since(start); el > 200*time.Millisecond {
@@ -125,7 +127,7 @@ func TestNotifyNeverBlocks(t *testing.T) {
 	}
 	close(slow.block)
 	n.Close()
-	if slow.count() > queueSize+1 {
+	if slow.count() > urgentQueueSize+1 {
 		t.Fatalf("slow channel got %d; queue must be bounded", slow.count())
 	}
 }
@@ -349,4 +351,90 @@ func TestChannelsFromConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	n.Close()
+}
+
+func waitingFor(id, msg string) core.Notification {
+	return core.Notification{Kind: core.NotifyWaiting, Session: &api.Session{ID: id}, Body: msg, Remote: true}
+}
+
+func drain(w *worker) []core.Notification {
+	w.close()
+	var out []core.Notification
+	for {
+		n, ok := w.pop()
+		if !ok {
+			return out
+		}
+		out = append(out, n)
+	}
+}
+
+// TestRequestsNeverDroppedBehindWaiting is the QA M7 regression: a queue
+// full of "finished its turn" notifications must not drop a permission
+// request; requests are delivered first.
+func TestRequestsNeverDroppedBehindWaiting(t *testing.T) {
+	w := &worker{wake: make(chan struct{}, 1)}
+	for i := 0; i < queueSize*2; i++ {
+		w.push(waitingFor(fmt.Sprintf("s_%d", i), "done"))
+	}
+	for i := 0; i < 5; i++ {
+		if d := w.push(core.Notification{Kind: core.NotifyRequest, Request: &api.Request{ID: fmt.Sprintf("r_%d", i)}}); d != nil && d.Kind == core.NotifyRequest {
+			t.Fatalf("request dropped: %+v", d)
+		}
+	}
+	got := drain(w)
+	for i := 0; i < 5; i++ {
+		if got[i].Kind != core.NotifyRequest || got[i].Request.ID != fmt.Sprintf("r_%d", i) {
+			t.Fatalf("delivery %d = %s, want request r_%d first, in order", i, got[i].Kind, i)
+		}
+	}
+	if len(got) > queueSize {
+		t.Fatalf("delivered %d, lanes must stay bounded", len(got))
+	}
+}
+
+func TestWaitingCoalescedPerSession(t *testing.T) {
+	w := &worker{wake: make(chan struct{}, 1)}
+	for i := 0; i < 10; i++ {
+		w.push(waitingFor("s_a", fmt.Sprintf("turn %d", i)))
+	}
+	w.push(waitingFor("s_b", "other"))
+	got := drain(w)
+	if len(got) != 2 || got[0].Session.ID != "s_a" || got[0].Body != "turn 9" || got[1].Session.ID != "s_b" {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestNtfyRetries(t *testing.T) {
+	isolate(t)
+	var hits atomic.Int32
+	var failFirst atomic.Int32
+	failFirst.Store(2)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if hits.Add(1) <= failFirst.Load() {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.WriteHeader(200)
+	}))
+	t.Cleanup(ts.Close)
+	n := Render(core.Notification{Kind: core.NotifyRequest, Request: sampleRequest(), Remote: true})
+	c := &Ntfy{Server: ts.URL, Topic: "t", Client: ts.Client(), Backoff: 5 * time.Millisecond}
+	if err := c.Send(context.Background(), n); err != nil || hits.Load() != 3 {
+		t.Fatalf("429 twice then ok: err=%v hits=%d", err, hits.Load())
+	}
+
+	// Always 503: bounded attempts, then the error.
+	hits.Store(0)
+	failFirst.Store(1 << 20)
+	if err := c.Send(context.Background(), n); err == nil || hits.Load() != ntfyRetries+1 {
+		t.Fatalf("503 forever: err=%v hits=%d", err, hits.Load())
+	}
+
+	// 4xx other than 429: no retry.
+	bad, got := capture(t, 403)
+	if err := (&Ntfy{Server: bad.URL, Topic: "t", Client: bad.Client(), Backoff: time.Millisecond}).Send(context.Background(), n); err == nil || len(got()) != 1 {
+		t.Fatalf("403: err=%v attempts=%d", err, len(got()))
+	}
 }

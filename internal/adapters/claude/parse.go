@@ -54,6 +54,12 @@ func describeTool(ev *adapters.HookEvent) {
 		ev.ToolKind = api.ToolShell
 		ev.Command = field("command")
 		ev.Summary = "Run: " + hookkit.OneLine(ev.Command, 160)
+		// An apply_patch heredoc (Codex-style patch tools on PATH) names
+		// the files it edits; path rules must see them. The call stays a
+		// shell command: Claude runs it through the shell.
+		if paths, _ := hookkit.ShellPatch(ev.Command, ev.Cwd); len(paths) > 0 {
+			ev.Paths = paths
+		}
 	case "Edit", "MultiEdit", "Write", "NotebookEdit":
 		ev.ToolKind = api.ToolEdit
 		p := field("file_path")

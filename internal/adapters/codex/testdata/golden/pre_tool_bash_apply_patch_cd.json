@@ -1,0 +1,19 @@
+{
+  "kind": "pre_tool",
+  "vendor_event": "PreToolUse",
+  "agent_session_id": "01a1693f-e04d-7421-bb5e-52e5fa5f4cb0",
+  "cwd": "/private/tmp/qa6/repo",
+  "transcript_path": "/private/tmp/qa6/uhome/.codex/sessions/2026/10/23/rollout-2026-10-23T09-52-36-01a1693f-e04d-7421-bb5e-52e5fa5f4cb0.jsonl",
+  "tool_use_id": "call_patch_cd_0_1",
+  "tool": "Bash",
+  "tool_kind": "edit",
+  "command": "cd sub && apply_patch <<'EOF'\n*** Begin Patch\n*** Update File: .env\n@@\n-A=1\n+A=2\n*** End Patch\nEOF\n",
+  "paths": [
+    "/private/tmp/qa6/repo/sub/.env"
+  ],
+  "input": {
+    "command": "cd sub && apply_patch <<'EOF'\n*** Begin Patch\n*** Update File: .env\n@@\n-A=1\n+A=2\n*** End Patch\nEOF\n"
+  },
+  "summary": "Edit: sub/.env",
+  "permission_mode": "bypassPermissions"
+}

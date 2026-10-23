@@ -56,7 +56,7 @@ func TestCLIEndToEnd(t *testing.T) {
 	if id == nil || !strings.Contains(out, "pilothouse attach s_") {
 		t.Fatalf("task new output:\n%s", out)
 	}
-	wt := filepath.Join(os.Getenv("PILOTHOUSE_HOME"), "worktrees", "my-repo", "document-the-api")
+	wt := filepath.Join(os.Getenv("PILOTHOUSE_USER_HOME"), ".pilothouse-worktrees", "my-repo", "document-the-api")
 
 	// The agent commits and exits; the task becomes ready for review.
 	deadline := time.Now().Add(15 * time.Second)

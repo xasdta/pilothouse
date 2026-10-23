@@ -293,6 +293,11 @@ func ibxEnv(t *testing.T) string {
 		}
 	}
 	{
+		v := inboxShellNoise
+		save(func() { inboxShellNoise = v })
+		inboxShellNoise = func(context.Context) (string, string, error) { return "/bin/zsh", "", nil }
+	}
+	{
 		v := inboxHolders
 		save(func() { inboxHolders = v })
 		// The wrapped fixture session has a live holder.
@@ -768,6 +773,7 @@ type ibxAdapter struct {
 	installed bool // agent present on the machine
 	hooks     bool // our hooks installed
 	installs  []adapters.InstallOptions
+	path      string // settings file Status reports; default /home/dev/.claude/settings.json
 }
 
 func (a *ibxAdapter) Kind() api.AgentKind      { return a.kind }
@@ -807,7 +813,11 @@ func (a *ibxAdapter) UninstallHooks(adapters.InstallOptions) (adapters.Change, e
 func (a *ibxAdapter) Status(adapters.InstallOptions) (adapters.HookStatus, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return adapters.HookStatus{Installed: a.hooks, Current: a.hooks, Events: make([]string, 9), Path: "/home/dev/.claude/settings.json"}, nil
+	p := a.path
+	if p == "" {
+		p = "/home/dev/.claude/settings.json"
+	}
+	return adapters.HookStatus{Installed: a.hooks, Current: a.hooks, Events: make([]string, 9), Path: p}, nil
 }
 
 func TestInboxService(t *testing.T) {
@@ -899,6 +909,116 @@ func TestInboxDoctor(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &checks); err != nil || len(checks) < 8 {
 		t.Fatalf("json: %v\n%s", err, out)
 	}
+}
+
+// A shell that prints on `$SHELL -c true` corrupts Codex hook replies;
+// doctor warns when Codex is installed.
+func TestInboxDoctorShellNoise(t *testing.T) {
+	ibxStart(t)
+	codex := &ibxAdapter{kind: api.AgentCodex, name: "Codex", installed: true, hooks: true}
+	inboxAdapters = func() []adapters.Adapter { return []adapters.Adapter{codex} }
+	out, _ := ibxRun(t, "", "doctor")
+	ibxContains(t, out, "✓ shell", "/bin/zsh -c true` prints nothing")
+
+	inboxShellNoise = func(context.Context) (string, string, error) { return "/bin/zsh", "Welcome back!", nil }
+	out, _ = ibxRun(t, "", "doctor")
+	ibxContains(t, out, "! shell", `prints "Welcome back!"`, "Codex can't read hook replies", "~/.zshenv")
+
+	// Without Codex the check is skipped.
+	codex.installed = false
+	out, _ = ibxRun(t, "", "doctor")
+	if strings.Contains(out, "shell") {
+		t.Fatalf("shell check without Codex:\n%s", out)
+	}
+}
+
+// The real probe: a shell whose startup prints is caught.
+func TestShellNoiseProbe(t *testing.T) {
+	dir := t.TempDir()
+	sh := filepath.Join(dir, "noisysh")
+	if err := os.WriteFile(sh, []byte("#!/bin/sh\necho hello from zshenv\nexec /bin/sh \"$@\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SHELL", sh)
+	if _, noise, err := shellNoise(context.Background()); err != nil || noise != "hello from zshenv" {
+		t.Fatalf("noise=%q err=%v", noise, err)
+	}
+	t.Setenv("SHELL", "/bin/sh")
+	if _, noise, err := shellNoise(context.Background()); err != nil || noise != "" {
+		t.Fatalf("quiet shell: noise=%q err=%v", noise, err)
+	}
+}
+
+// Hooks that call a missing binary or a versioned Homebrew Cellar path are
+// reported as stale.
+func TestInboxDoctorStaleHooks(t *testing.T) {
+	ibxStart(t)
+	dir := t.TempDir()
+	cellar := filepath.Join(dir, "homebrew", "Cellar", "pilothouse", "0.1.1", "bin", "pilothouse")
+	if err := os.MkdirAll(filepath.Dir(cellar), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cellar, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	settings := filepath.Join(dir, "settings.json")
+	write := func(bin string) {
+		body := `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"'` + bin + `' hook claude"}]}]}}`
+		if err := os.WriteFile(settings, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	claude := &ibxAdapter{kind: api.AgentClaude, name: "Claude Code", installed: true, hooks: true, path: settings}
+	inboxAdapters = func() []adapters.Adapter { return []adapters.Adapter{claude} }
+
+	write(filepath.Join(dir, "gone", "pilothouse"))
+	out, err := ibxRun(t, "", "doctor")
+	if err == nil {
+		t.Fatalf("missing hook binary must fail doctor:\n%s", out)
+	}
+	ibxContains(t, out, "✗ hooks: Claude Code", "stale", "doesn't exist")
+
+	write(cellar)
+	out, _ = ibxRun(t, "", "doctor")
+	ibxContains(t, out, "! hooks: Claude Code", "stale", "versioned Homebrew path")
+}
+
+// Setup records the stable (unresolved) binary path, e.g. Homebrew's
+// bin/pilothouse symlink into the Cellar; doctor must not call that a
+// different binary from the one on PATH.
+func TestSamePathResolvesSymlinks(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "Cellar", "pilothouse")
+	link := filepath.Join(dir, "bin", "pilothouse")
+	for _, d := range []string{filepath.Dir(real), filepath.Dir(link)} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(real, []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(dir, "other")
+	if err := os.WriteFile(other, []byte("y"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !samePath(link, real) || !samePath(real, link) || !samePath(link, link) {
+		t.Fatal("symlink and target must be the same binary")
+	}
+	if samePath(link, other) || samePath("/opt/a/pilothouse", "/opt/b/pilothouse") {
+		t.Fatal("different binaries reported as the same")
+	}
+}
+
+// A different pilothouse first on PATH is still reported.
+func TestInboxDoctorOtherBinaryOnPath(t *testing.T) {
+	ibxStart(t)
+	inboxLookPath = func(n string) (string, error) { return "/usr/local/bin/" + n, nil }
+	out, _ := ibxRun(t, "", "doctor")
+	ibxContains(t, out, "! binary", "on your PATH is /usr/local/bin/pilothouse")
 }
 
 func TestInboxDoctorDaemonDown(t *testing.T) {
@@ -1105,4 +1225,28 @@ func ibxQueries(b []byte) string {
 		}
 	}
 	return ""
+}
+
+func TestNotifyChannelsOnlyListsWhatCanDeliver(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("PILOTHOUSE_HOME", home)
+	t.Setenv("PILOTHOUSE_USER_HOME", t.TempDir())
+	run, err := os.MkdirTemp("/tmp", "ag")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(run) })
+	t.Setenv("PILOTHOUSE_RUN_DIR", run) // no daemon: no paired devices to count
+	if err := os.WriteFile(filepath.Join(home, "config.yaml"), []byte("notify:\n  desktop: false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if ch := notifyChannels(context.Background()); len(ch) != 0 {
+		t.Fatalf("no desktop, no devices, no ntfy: want no channels, got %v", ch)
+	}
+	if err := os.WriteFile(filepath.Join(home, "config.yaml"), []byte("notify:\n  desktop: false\n  ntfy:\n    topic: t1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if ch := notifyChannels(context.Background()); len(ch) != 1 || ch[0] != "ntfy topic t1" {
+		t.Fatalf("want only ntfy, got %v", ch)
+	}
 }

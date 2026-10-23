@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -256,21 +257,75 @@ func TestShimPermissionWaits(t *testing.T) {
 }
 
 func TestReadHookStdin(t *testing.T) {
-	if b, ok := readHookStdin(strings.NewReader(`{"a":1}`), time.Second); !ok || string(b) != `{"a":1}` {
-		t.Errorf("small: %q %v", b, ok)
+	if b, err := readHookStdin(strings.NewReader(`{"a":1}`), time.Second); err != nil || string(b) != `{"a":1}` {
+		t.Errorf("small: %q %v", b, err)
 	}
-	if _, ok := readHookStdin(strings.NewReader(""), time.Second); ok {
+	if _, err := readHookStdin(strings.NewReader(""), time.Second); err == nil {
 		t.Error("empty accepted")
 	}
-	if _, ok := readHookStdin(bytes.NewReader(make([]byte, maxHookPayload+1)), time.Second); ok {
-		t.Error("oversized accepted")
+	if b, err := readHookStdin(bytes.NewReader(make([]byte, 5<<20)), 5*time.Second); err != nil || len(b) != 5<<20 {
+		t.Errorf("5 MB payload: %d bytes, %v", len(b), err)
+	}
+	if _, err := readHookStdin(bytes.NewReader(make([]byte, maxHookPayload+1)), 5*time.Second); !errors.Is(err, errHookTooLarge) {
+		t.Errorf("oversized: %v", err)
 	}
 	pr, pw := net.Pipe() // never closed: the writer hangs
 	defer pr.Close()
 	defer pw.Close()
 	start := time.Now()
-	if _, ok := readHookStdin(pr, 100*time.Millisecond); ok || time.Since(start) > time.Second {
+	if _, err := readHookStdin(pr, 100*time.Millisecond); err == nil || time.Since(start) > time.Second {
 		t.Error("hung writer not timed out")
+	}
+}
+
+// TestShimOversizedPayload is the QA M6 regression: a payload over the
+// limit is never "allowed by omission": with fail_closed a pre_tool is
+// denied, and a warning goes to stderr; a PostToolUse is left alone.
+func TestShimOversizedPayload(t *testing.T) {
+	hkEnv(t)
+	if err := os.WriteFile(paths.Config(), []byte("approvals:\n  fail_closed: true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	big := func(event string) []byte {
+		var b bytes.Buffer
+		b.WriteString(`{"session_id":"s1","hook_event_name":"` + event + `","tool_name":"Write","tool_input":{"content":"`)
+		b.Write(bytes.Repeat([]byte("a"), maxHookPayload))
+		b.WriteString(`"}}`)
+		return b.Bytes()
+	}
+	var out, errb bytes.Buffer
+	runShim([]string{"claude"}, bytes.NewReader(big("PreToolUse")), &out, &errb)
+	if !strings.Contains(out.String(), `"permissionDecision":"deny"`) || !strings.Contains(errb.String(), "not checked by policy") {
+		t.Fatalf("oversized pre_tool: stdout %q stderr %q", out.String(), errb.String())
+	}
+	out.Reset()
+	errb.Reset()
+	runShim([]string{"claude"}, bytes.NewReader(big("PostToolUse")), &out, &errb)
+	if strings.Contains(out.String(), "deny") || !strings.Contains(errb.String(), "not checked by policy") {
+		t.Fatalf("oversized post_tool: stdout %q stderr %q", out.String(), errb.String())
+	}
+}
+
+// TestShimForwardsLargePayload: a 5 MB payload (over the old 4 MB cap)
+// reaches the daemon for policy evaluation.
+func TestShimForwardsLargePayload(t *testing.T) {
+	env := hkEnv(t)
+	got := hkFakeDaemon(t, func(adapters.HookEnvelope) (adapters.HookResponse, time.Duration) {
+		return adapters.HookResponse{Stdout: `{"ok":true}`}, 0
+	})
+	payload := []byte(`{"session_id":"s1","hook_event_name":"PreToolUse","tool_name":"Write","tool_use_id":"t","cwd":"/tmp","tool_input":{"file_path":"/tmp/x","content":"` +
+		strings.Repeat("a", 5<<20) + `"}}`)
+	res := hkRunShim(t, env, payload, "claude")
+	if res.stdout != `{"ok":true}` {
+		t.Fatalf("shim: %+v", res)
+	}
+	select {
+	case e := <-got:
+		if len(e.Payload) != len(payload) {
+			t.Fatalf("forwarded %d bytes, want %d", len(e.Payload), len(payload))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("daemon never got the hook")
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -166,6 +167,10 @@ func runHooksStatus(w io.Writer, targets []adapters.Adapter, opts adapters.Insta
 		if err != nil {
 			st.Problems = append(st.Problems, err.Error())
 		}
+		if stale := StaleHookProblems(st.Path); len(stale) > 0 {
+			st.Current = false
+			st.Problems = append(st.Problems, stale...)
+		}
 		rows = append(rows, hookStatusJSON{a.Kind(), a.DisplayName(), st})
 	}
 	if asJSON {
@@ -179,6 +184,8 @@ func runHooksStatus(w io.Writer, targets []adapters.Adapter, opts adapters.Insta
 		switch {
 		case st.Current:
 			state = "installed, current"
+		case st.Installed && hasStale(st.Problems):
+			state = "installed, stale"
 		case st.Installed:
 			state = "installed, needs attention"
 		}
@@ -194,6 +201,52 @@ func runHooksStatus(w io.Writer, targets []adapters.Adapter, opts adapters.Insta
 		}
 	}
 	return nil
+}
+
+// staleMark starts every StaleHookProblems message.
+const staleMark = "stale — run `pilothouse setup`: "
+
+// shimRefs finds the binaries an agent settings file calls as
+// `<path> hook <agent>`: single-quoted (hookkit.ShellQuote) or bare.
+var shimRefs = regexp.MustCompile(`'([^']*/pilothouse)'\s+hook\s|([^\s"'\\]+/pilothouse)\s+hook\s`)
+
+// StaleHookProblems lists hooks in an agent settings file that call a
+// pilothouse binary that is gone, or that lives in a versioned Homebrew
+// Cellar directory the next `brew upgrade` deletes. `hooks status` and
+// `doctor` report them as stale.
+func StaleHookProblems(settingsPath string) []string {
+	if settingsPath == "" {
+		return nil
+	}
+	b, err := os.ReadFile(settingsPath)
+	if err != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, m := range shimRefs.FindAllStringSubmatch(string(b), -1) {
+		p := m[1] + m[2]
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		switch {
+		case !fileExists(p):
+			out = append(out, staleMark+"hooks call "+p+", which doesn't exist")
+		case versionedBrewPath(p):
+			out = append(out, staleMark+"hooks call "+p+", a versioned Homebrew path that `brew upgrade` removes")
+		}
+	}
+	return out
+}
+
+func hasStale(problems []string) bool {
+	for _, p := range problems {
+		if strings.HasPrefix(p, staleMark) {
+			return true
+		}
+	}
+	return false
 }
 
 // hookTargets resolves --agent. Without it, install targets the agents
@@ -239,7 +292,7 @@ func shimPath(warn io.Writer) (string, error) {
 // ---------------------------------------------------------------- pilothouse hook <agent>
 
 const (
-	maxHookPayload = 4 << 20         // stdin cap (BUILD-SPEC §6.1)
+	maxHookPayload = 64 << 20        // stdin cap (BUILD-SPEC §6.1); the daemon accepts this much
 	shimTimeout    = 2 * time.Second // non-blocking hook kinds
 	shimEndTimeout = 1 * time.Second // SessionEnd: Claude Code's whole budget is 1.5 s
 	maxAncestors   = 12
@@ -284,8 +337,16 @@ func runShim(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int
 		}
 	}()
 
-	payload, ok := readHookStdin(stdin, shimTimeout)
-	if !ok {
+	payload, err := readHookStdin(stdin, shimTimeout)
+	if errors.Is(err, errHookTooLarge) {
+		// Never allow by omission: a payload too big to check is answered
+		// like a down daemon for the event it most likely is (pre_tool
+		// unless its prefix names another event), honouring fail_closed.
+		kind = oversizedKind(ad, args[1:], payload)
+		fmt.Fprintf(stderr, "pilothouse: hook payload is larger than %d MB; it was not checked by policy\n", maxHookPayload>>20)
+		return writeHookResponse(stdout, stderr, ad.FailResponse(kind, failClosed(kind)))
+	}
+	if err != nil {
 		return writeHookResponse(stdout, stderr, ad.FailResponse(kind, false))
 	}
 	env := hookEnvelope(ad.Kind(), args[1:], payload)
@@ -342,12 +403,16 @@ func hookEnvelope(agent api.AgentKind, rest []string, payload []byte) adapters.H
 	return env
 }
 
+// errHookTooLarge: stdin held more than maxHookPayload bytes.
+var errHookTooLarge = errors.New("hook payload too large")
+
 // readHookStdin reads the payload: at most maxHookPayload bytes, within
-// timeout. ok is false for a terminal, an oversized or empty payload, or
-// a writer that never closes stdin.
-func readHookStdin(r io.Reader, timeout time.Duration) ([]byte, bool) {
+// timeout. It fails for a terminal, an empty payload or a writer that
+// never closes stdin; an oversized payload returns its first
+// maxHookPayload bytes with errHookTooLarge.
+func readHookStdin(r io.Reader, timeout time.Duration) ([]byte, error) {
 	if f, isFile := r.(*os.File); isFile && term.IsTerminal(int(f.Fd())) {
-		return nil, false
+		return nil, errors.New("stdin is a terminal")
 	}
 	type result struct {
 		b   []byte
@@ -366,13 +431,46 @@ func readHookStdin(r io.Reader, timeout time.Duration) ([]byte, bool) {
 	}()
 	select {
 	case res := <-done:
-		if res.err != nil || len(res.b) == 0 || len(res.b) > maxHookPayload {
-			return nil, false
+		switch {
+		case res.err != nil:
+			return nil, res.err
+		case len(res.b) == 0:
+			return nil, errors.New("empty hook payload")
+		case len(res.b) > maxHookPayload:
+			return res.b[:maxHookPayload], errHookTooLarge
 		}
-		return res.b, true
+		return res.b, nil
 	case <-time.After(timeout):
-		return nil, false
+		return nil, errors.New("timed out reading the hook payload")
 	}
+}
+
+// hookEventName finds "hook_event_name" in a (truncated) payload; agents
+// put it near the start.
+var hookEventName = regexp.MustCompile(`"hook_event_name"\s*:\s*"([A-Za-z_]+)"`)
+
+// oversizedKind guesses the hook kind of a payload too large to parse:
+// the event named in its prefix, else pre_tool (the kind where failing
+// open would skip policy).
+func oversizedKind(ad adapters.Adapter, rest []string, prefix []byte) adapters.HookKind {
+	head := prefix
+	if len(head) > 64<<10 {
+		head = head[:64<<10]
+	}
+	m := hookEventName.FindSubmatch(head)
+	if m == nil {
+		return adapters.HookPreTool
+	}
+	payload, _ := json.Marshal(map[string]string{"hook_event_name": string(m[1])})
+	env := adapters.HookEnvelope{Agent: ad.Kind(), Payload: payload}
+	if len(rest) > 0 {
+		env.Event = rest[0]
+	}
+	ev, err := ad.ParseHook(env)
+	if err != nil || ev.Kind == adapters.HookUnknown {
+		return adapters.HookPreTool
+	}
+	return ev.Kind
 }
 
 // failClosed reads approvals.fail_closed. It only matters for pre_tool, and

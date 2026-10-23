@@ -13,7 +13,14 @@ No matching rule means Pilothouse has no opinion and the agent's own permission
 settings apply, exactly as if Pilothouse weren't installed.
 
 Policy runs at the agent's pre-tool hook (Claude Code `PreToolUse`; for Codex
-see [AGENTS.md](AGENTS.md) for what its hooks support). It is a fast rules
+see [AGENTS.md](AGENTS.md) for what its hooks support).
+
+**On Codex, `ask` blocks the call.** Codex's pre-tool hook can block a call
+but cannot show a prompt, and leaving an `ask` unanswered would let the
+call run without the person the rule asks for. So Pilothouse denies it, and
+the agent is told that a person must approve it: it should ask the user to
+run the command themselves or allow it with a rule. `allow` is a no-op on
+Codex (its own approval settings decide). It is a fast rules
 engine — typically 5–30 µs per call — and it is **defense in depth, not a
 sandbox**. Read [Limits](#limits) before relying on it for anything that
 matters.
@@ -100,7 +107,7 @@ work. Files are limited to 1 MB and 1000 rules.
 | `tool` | vendor tool name: `Bash`, `Edit`, `Write`, `Read`, `WebFetch`, `mcp__github__create_pr`, Codex `shell`, `apply_patch`… | text |
 | `kind` | vendor-neutral class: `shell`, `edit`, `read`, `web`, `mcp`, `other` | text |
 | `command` | the **whole** shell command line, as the agent wrote it | text |
-| `path` | every file the tool touches; the field matches if **any** path matches | path |
+| `path` | every file the tool touches; the field matches if **any** path matches (shell commands: see below) | path |
 | `cwd` | the session's working directory | path |
 | `repo` | the git repository root (empty outside a repo) | path |
 | `branch` | the current git branch | path |
@@ -120,6 +127,15 @@ There are deliberately no `[...]` character classes, so commands such as
 
 Path conveniences:
 
+- Shell commands have no paths, except the files named in an
+  `apply_patch <<'EOF' … *** Update File: x … EOF` heredoc inside them (how
+  Codex models without an `apply_patch` tool edit files). When the heredoc is
+  the whole command (optionally after `cd dir &&`), Codex applies the patch
+  itself and the call counts as `kind: edit`. Otherwise it stays
+  `kind: shell` with those files as its paths: **deny and ask rules see
+  them, allow rules never decide on them** (an allow rule that matches on
+  `path:` or mentions `path`/`paths` in `when:` is reported as ignored),
+  because the rest of the command may do anything.
 - Tool paths are made absolute before matching: `~` is expanded and paths
   relative to the working directory are joined to it (`../x` is resolved).
 - In patterns, a leading `~/`, `$HOME/` or `${HOME}/` means your home
@@ -259,12 +275,12 @@ The daemon enforces that at the socket (an `approve` from inside an agent's
 process tree is rejected). On top of that, this built-in rule makes a person
 confirm (`ask`) any tool call that:
 
-- **runs an pilothouse admin command**: `approve`, `deny`, `policy`
+- **runs a pilothouse admin command**: `approve`, `deny`, `policy`
   (except the read-only `policy check|test|status|replay`), `pair`,
   `devices`, `remote`, `service`, `hooks`, `here`, `away`, `auto`, `stop`,
   `open`, `setup`; or
 - **writes to a protected path**: the Pilothouse home (`~/.pilothouse/**`, including
-  the database, keys, policy and trust list), the socket directory, each
+  the config, database, keys, policy and trust list), the socket directory, each
   agent's user settings files (`~/.claude/settings.json`,
   `~/.codex/config.toml`, …), project-level agent settings in **any**
   directory (`**/.claude/settings.json`, `**/.claude/settings.local.json`,
@@ -274,6 +290,17 @@ confirm (`ask`) any tool call that:
   Protected entries are either literal paths (the path and everything under
   it) or path-style globs, matched like `path:` globs in a rule (the match
   and everything under it).
+
+  Task worktrees (`pilothouse task new`) are **not** protected: they live in
+  `~/.pilothouse-worktrees/<repo>/<slug>` (or `$PILOTHOUSE_WORKTREES`),
+  outside the Pilothouse home, so a task's agent works without a prompt per
+  call. Worktrees of tasks made before that change, in
+  `~/.pilothouse/worktrees/`, are carved out of the protected home too; the
+  agent settings and `.pilothouse/` inside any worktree stay protected.
+
+  The reason names the path and what it holds, e.g. "this runs `git status`
+  in ~/.pilothouse/keys, inside ~/.pilothouse (Pilothouse's own settings,
+  keys and database)".
 
 It cannot be turned off, and because ask outranks allow, no allow rule or
 session grant silences it. A deny rule can still make it stricter.

@@ -106,6 +106,7 @@ func (p *fakePolicy) Evaluate(in policy.Input) policy.Result {
 }
 func (p *fakePolicy) Status() api.PolicyStatus { return api.PolicyStatus{Rules: len(p.rules)} }
 func (p *fakePolicy) Changed() bool            { return false }
+func (p *fakePolicy) Reload() api.PolicyStatus { return p.Status() }
 
 // recNotifier records notifications.
 type recNotifier struct {
@@ -261,8 +262,16 @@ func (h *harness) hookErr(ctx context.Context, ev adapters.HookEvent) (fakeOutco
 	return h.hookEnv(ctx, ev, nil)
 }
 
+// fakeAgentAncestors is the shim's process chain: sh under fake agent 4242.
+var fakeAgentAncestors = []adapters.Proc{{PID: 4300, PPID: 4242, Comm: "sh"}, {PID: 4242, PPID: 1, Comm: "fakeagent"}}
+
 // hookEnv is hookErr with the shim's allow-listed environment.
 func (h *harness) hookEnv(ctx context.Context, ev adapters.HookEvent, env map[string]string) (fakeOutcome, error) {
+	return h.hookFrom(ctx, ev, env, fakeAgentAncestors)
+}
+
+// hookFrom is hookEnv from an explicit process chain.
+func (h *harness) hookFrom(ctx context.Context, ev adapters.HookEvent, env map[string]string, ancestors []adapters.Proc) (fakeOutcome, error) {
 	if ev.AgentSessionID == "" {
 		ev.AgentSessionID = "vendor-1"
 	}
@@ -272,8 +281,9 @@ func (h *harness) hookEnv(ctx context.Context, ev adapters.HookEvent, env map[st
 	payload, _ := json.Marshal(ev)
 	resp, err := h.c.Hook(ctx, adapters.HookEnvelope{
 		Agent: fakeKind, Payload: payload, ShimPID: 5000, Cwd: ev.Cwd, Env: env,
-		Ancestors:  []adapters.Proc{{PID: 4300, PPID: 4242, Comm: "sh"}, {PID: 4242, PPID: 1, Comm: "fakeagent"}},
-		ReceivedAt: time.Now(),
+		PilothouseSessionID: env["PILOTHOUSE_SESSION_ID"], // as the shim forwards it
+		Ancestors:           ancestors,
+		ReceivedAt:          time.Now(),
 	})
 	if err != nil {
 		return fakeOutcome{}, err

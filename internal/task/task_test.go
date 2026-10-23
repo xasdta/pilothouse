@@ -134,7 +134,8 @@ func TestNewDiffDone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantWT := filepath.Join(paths.Home(), "worktrees", "my-repo", "add-a-greeting")
+	// Worktrees live outside the protected Pilothouse home (H2).
+	wantWT := filepath.Join(paths.UserHome(), ".pilothouse-worktrees", "my-repo", "add-a-greeting")
 	if tk.Title != "add-a-greeting" || tk.Branch != "pilothouse/add-a-greeting" || tk.Worktree != wantWT ||
 		tk.BaseRef != "main" || tk.Repo != repo || tk.SessionID != "s_fakesessn" || tk.Status != api.TaskRunning ||
 		!strings.HasPrefix(tk.ID, "t_") || tk.Agent != api.AgentGeneric {
@@ -371,6 +372,7 @@ type fakeDaemon struct {
 	mu       sync.Mutex
 	tasks    []api.Task
 	sessions []api.Session
+	osc      map[string]api.OSCBody // session id → last OSC report
 }
 
 func startFakeDaemon(t *testing.T, sessions []api.Session) *fakeDaemon {
@@ -378,7 +380,7 @@ func startFakeDaemon(t *testing.T, sessions []api.Session) *fakeDaemon {
 	if err := paths.Ensure(); err != nil {
 		t.Fatal(err)
 	}
-	fd := &fakeDaemon{sessions: sessions}
+	fd := &fakeDaemon{sessions: sessions, osc: map[string]api.OSCBody{}}
 	ln, err := net.Listen("unix", paths.Socket())
 	if err != nil {
 		t.Fatal(err)
@@ -395,6 +397,11 @@ func startFakeDaemon(t *testing.T, sessions []api.Session) *fakeDaemon {
 			_ = json.NewEncoder(w).Encode(tk)
 		case r.Method == "GET" && r.URL.Path == "/v1/sessions":
 			_ = json.NewEncoder(w).Encode(fd.sessions)
+		case r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/v1/sessions/") && strings.HasSuffix(r.URL.Path, "/osc"):
+			var b api.OSCBody
+			_ = json.NewDecoder(r.Body).Decode(&b)
+			fd.osc[strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/sessions/"), "/osc")] = b
+			w.WriteHeader(http.StatusNoContent)
 		default:
 			w.WriteHeader(404)
 			_ = json.NewEncoder(w).Encode(api.Error{Error: "not found", Code: "not_found"})
