@@ -1,0 +1,51 @@
+name: e2e-linux
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: release the installer should fetch (empty = latest)
+        required: false
+        default: ""
+  push:
+    branches: [qa/linux-e2e]
+permissions:
+  contents: read
+jobs:
+  e2e:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+        subject: [release, source]
+    runs-on: ${{ matrix.os }}
+    name: e2e (${{ matrix.os }}, ${{ matrix.subject }})
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq jq file util-linux iproute2 >/dev/null
+          # Node >= 20 (fetch + WebCrypto) ships on the runner images.
+          node --version || { sudo apt-get install -y -qq nodejs >/dev/null; node --version; }
+          jq --version; script --version; git --version
+      - name: systemd --user session
+        run: |
+          # GitHub runners have no login session; linger starts user@UID so
+          # `systemctl --user` works for the service test.
+          sudo loginctl enable-linger "$USER" || true
+          for i in $(seq 1 20); do [ -S "/run/user/$(id -u)/systemd/private" ] && break; sleep 0.5; done
+          echo "XDG_RUNTIME_DIR=/run/user/$(id -u)" >> "$GITHUB_ENV"
+          XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user is-system-running || true
+          echo "DISPLAY=${DISPLAY:-<unset>} WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-<unset>}"
+      - name: e2e
+        env:
+          PH_E2E_SUBJECT: ${{ matrix.subject }}
+          PH_E2E_BIN_DIR: ${{ runner.temp }}/phbin
+          PH_E2E_SYSTEMD: "1"
+          PH_E2E_VERSION: ${{ github.event.inputs.version }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash tests/e2e/linux/run.sh
