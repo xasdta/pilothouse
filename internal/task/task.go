@@ -379,18 +379,25 @@ func (m *Manager) Diff(ctx context.Context, ref string, stat bool, w io.Writer) 
 	if err != nil {
 		return err
 	}
+	// Page the diff when a human is watching it scroll past; anything
+	// else keeps the plain stream.
+	out, color, finish := pageWriter(ctx, w)
+	defer finish()
 	flags := []string{"diff"}
 	if stat {
 		flags = append(flags, "--stat")
 	}
+	if color {
+		flags = append(flags, "--color=always")
+	}
 	if !dirExists(t.Worktree) {
-		return gitStream(ctx, t.Repo, w, append(flags, t.BaseRef+"..."+t.Branch, "--"))
+		return gitStream(ctx, t.Repo, out, append(flags, t.BaseRef+"..."+t.Branch, "--"))
 	}
 	mb, err := gitOutput(ctx, t.Worktree, "merge-base", t.BaseRef, "HEAD")
 	if err != nil {
 		return fmt.Errorf("can't find where %s left %s: %w", t.Branch, t.BaseRef, err)
 	}
-	if err := gitStream(ctx, t.Worktree, w, append(flags, mb, "--")); err != nil {
+	if err := gitStream(ctx, t.Worktree, out, append(flags, mb, "--")); err != nil {
 		return err
 	}
 	// New files the agent has not added yet are part of its work too.
@@ -405,10 +412,14 @@ func (m *Manager) Diff(ctx context.Context, ref string, stat bool, w io.Writer) 
 			continue
 		}
 		if stat {
-			fmt.Fprintf(w, " %s | new file (untracked)\n", f)
+			fmt.Fprintf(out, " %s | new file (untracked)\n", f)
 			continue
 		}
-		if err := gitStream(ctx, t.Worktree, w, []string{"diff", "--no-index", "--", os.DevNull, f}, 1); err != nil {
+		untrackedDiff := []string{"diff", "--no-index"}
+		if color {
+			untrackedDiff = append(untrackedDiff, "--color=always")
+		}
+		if err := gitStream(ctx, t.Worktree, out, append(untrackedDiff, "--", os.DevNull, f), 1); err != nil {
 			return err
 		}
 	}
