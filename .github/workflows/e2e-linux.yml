@@ -58,7 +58,7 @@ jobs:
           PH_E2E_BIN_DIR: ${{ runner.temp }}/phbin
           PH_E2E_SYSTEMD: "1"
           PH_E2E_X11: "1"
-          PH_E2E_XORG: ${{ matrix.subject == 'release' && '1' || '0' }}
+          PH_E2E_XORG: "1"
           PH_E2E_VERSION: ${{ github.event.inputs.version }}
           GITHUB_TOKEN: ${{ github.token }}
         run: bash tests/e2e/linux/run.sh

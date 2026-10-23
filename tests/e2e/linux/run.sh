@@ -1026,20 +1026,25 @@ XEOF
 	) >"$WORK/x11.txt" 2>&1
 	sed 's/^/    | /' "$WORK/x11.txt"
 	xo=$(cat "$WORK/x11.txt")
-	pa=$(printf '%s' "$xo" | sed -n 's/^PROBE_AFTER_XPRINTIDLE=//p')
-	if [ "${pa:-0}" -lt 1500 ]; then
-		note "on this X server each xprintidle call resets the idle counter (${pa} ms, want ~2000): the daemon's 2 s poll keeps the desk 'present' forever"
+	po=$(printf '%s' "$xo" | sed -n 's/^PROBE_AFTER_OTHER_CLIENT=//p')
+	xs=$(printf '%s' "$xo" | sed -n 's/^XSERVER=//p')
+	if [ "${po:-0}" -lt 1500 ]; then
+		# Xvfb resets its idle counter whenever any X client connects, so
+		# nothing that polls it (xprintidle included) can ever see an idle desk.
+		note "$xs resets idle time on every X client connection (${po} ms after 2 s idle): not a usable idle source"
+		skip "$CUR" "$xs resets idle on any X client; run with PH_E2E_XORG=1 (Xorg + dummy driver)"
+	else
+		expect_match "doctor sees xprintidle" "$xo" "^DOCTOR_PRESENCE=ok linux_xprintidle works"
+		expect_match "present at start" "$xo" "^P0=present/os_idle$"
+		expect_match "away after idle_threshold" "$xo" "^P1=away/os_idle$"
+		expect_match "held for devices" "$xo" "^HELD=devices/open$"
+		expect_match "hook got no opinion (terminal dialog)" "$xo" "^HOOK_OUT=$"
+		expect_match "request handed back" "$xo" "^AFTER=stepped_aside$"
+		expect_match "present again" "$xo" "^P2=present/os_idle$"
+		rms=$(printf '%s' "$xo" | sed -n 's/^RELEASE_MS=//p')
+		[ -n "$rms" ] && [ "$rms" -lt 8000 ] && ok "released ${rms} ms after the request (input at ~1 s)" || bad "release took ${rms:-?} ms"
+		end
 	fi
-	expect_match "doctor sees xprintidle" "$xo" "^DOCTOR_PRESENCE=ok linux_xprintidle works"
-	expect_match "present at start" "$xo" "^P0=present/os_idle$"
-	expect_match "away after idle_threshold" "$xo" "^P1=away/os_idle$"
-	expect_match "held for devices" "$xo" "^HELD=devices/open$"
-	expect_match "hook got no opinion (terminal dialog)" "$xo" "^HOOK_OUT=$"
-	expect_match "request handed back" "$xo" "^AFTER=stepped_aside$"
-	expect_match "present again" "$xo" "^P2=present/os_idle$"
-	rms=$(printf '%s' "$xo" | sed -n 's/^RELEASE_MS=//p')
-	[ -n "$rms" ] && [ "$rms" -lt 8000 ] && ok "released ${rms} ms after the request (input at ~1 s)" || bad "release took ${rms:-?} ms"
-	end
 else
 	skip "presence: X idle → away holds, input → back releases" "needs PH_E2E_X11=1 with Xvfb, xprintidle, xdotool"
 fi
