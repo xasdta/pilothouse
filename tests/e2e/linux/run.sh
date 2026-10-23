@@ -942,15 +942,52 @@ if [ "${PH_E2E_X11:-0}" = 1 ] && command -v Xvfb >/dev/null && command -v xprint
 		mkdir -p "$PILOTHOUSE_HOME"
 		chmod 700 "$PILOTHOUSE_HOME"
 		P3=$((PORT + 1))
-		Xvfb :99 -screen 0 1024x768x24 -nolisten tcp -s 0 -dpms >"$WORK/xvfb.log" 2>&1 &
-		XPID=$!
+		XSERVER=Xvfb
+		if [ "${PH_E2E_XORG:-0}" = 1 ] && [ -x /usr/lib/xorg/Xorg ] && [ -f /usr/lib/xorg/modules/drivers/dummy_drv.so ]; then
+			# The real Xorg server with the dummy video driver: closest to a desktop.
+			cat >"$WORK/xorg-dummy.conf" <<'XEOF'
+Section "Device"
+  Identifier "d"
+  Driver "dummy"
+  VideoRam 32768
+EndSection
+Section "Screen"
+  Identifier "s"
+  Device "d"
+  DefaultDepth 24
+  SubSection "Display"
+    Depth 24
+    Modes "1024x768"
+  EndSubSection
+EndSection
+Section "ServerFlags"
+  Option "BlankTime" "0"
+  Option "StandbyTime" "0"
+  Option "SuspendTime" "0"
+  Option "OffTime" "0"
+EndSection
+XEOF
+			sudo -n /usr/lib/xorg/Xorg :99 -ac -noreset -nolisten tcp -config "$WORK/xorg-dummy.conf" -logfile "$WORK/xorg.log" >/dev/null 2>&1 &
+			XPID=$!
+			XSERVER=Xorg-dummy
+		else
+			Xvfb :99 -screen 0 1024x768x24 -nolisten tcp -s 0 -dpms >"$WORK/xvfb.log" 2>&1 &
+			XPID=$!
+		fi
+		echo "XSERVER=$XSERVER"
 		for _ in $(seq 1 25); do xdotool getmouselocation >/dev/null 2>&1 && break; sleep 0.2; done
 		command -v xset >/dev/null && xset s off -dpms 2>/dev/null
 		echo "XPRINTIDLE=$(xprintidle)"
-		# Probe whether this X server's idle counter actually grows.
+		# Probe whether this X server's idle counter actually grows, and
+		# whether merely querying it (xprintidle, or any X client) resets it.
 		sleep 3
 		XI=$(xprintidle)
 		echo "XPRINTIDLE_AFTER_3S=$XI"
+		sleep 1; xprintidle >/dev/null; sleep 1
+		echo "PROBE_AFTER_XPRINTIDLE=$(xprintidle)"
+		sleep 1; xdpyinfo >/dev/null 2>&1 || xset q >/dev/null 2>&1; sleep 1
+		echo "PROBE_AFTER_OTHER_CLIENT=$(xprintidle)"
+		echo "XPRINTIDLE_VERSION=$(dpkg-query -W -f='${Version}' xprintidle 2>/dev/null)"
 		umask 077
 		printf 'web:\n  addr: 127.0.0.1:%s\npresence:\n  idle_threshold: 6s\n  notify_after: 600s\napprovals:\n  hold_limit: 40s\nnotify:\n  desktop: false\nupdate_check: false\n' "$P3" >"$PILOTHOUSE_HOME/config.yaml"
 		xdotool mousemove 5 5
@@ -989,9 +1026,9 @@ if [ "${PH_E2E_X11:-0}" = 1 ] && command -v Xvfb >/dev/null && command -v xprint
 	) >"$WORK/x11.txt" 2>&1
 	sed 's/^/    | /' "$WORK/x11.txt"
 	xo=$(cat "$WORK/x11.txt")
-	xi=$(printf '%s' "$xo" | sed -n 's/^XPRINTIDLE_AFTER_3S=//p')
-	if [ "${xi:-0}" -lt 2000 ]; then
-		note "this Xvfb resets its idle counter (xprintidle=$xi after 3 s idle): can't simulate an idle desk here"
+	pa=$(printf '%s' "$xo" | sed -n 's/^PROBE_AFTER_XPRINTIDLE=//p')
+	if [ "${pa:-0}" -lt 1500 ]; then
+		note "on this X server each xprintidle call resets the idle counter (${pa} ms, want ~2000): the daemon's 2 s poll keeps the desk 'present' forever"
 	fi
 	expect_match "doctor sees xprintidle" "$xo" "^DOCTOR_PRESENCE=ok linux_xprintidle works"
 	expect_match "present at start" "$xo" "^P0=present/os_idle$"

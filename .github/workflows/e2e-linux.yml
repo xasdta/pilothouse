@@ -29,8 +29,8 @@ jobs:
         timeout-minutes: 8
         run: |
           need=""
-          for p in jq:jq file:file Xvfb:xvfb xprintidle:xprintidle xdotool:xdotool xset:x11-xserver-utils; do
-            command -v "${p%%:*}" >/dev/null || need="$need ${p#*:}"
+          for p in jq:jq file:file Xvfb:xvfb xprintidle:xprintidle xdotool:xdotool xset:x11-xserver-utils xdpyinfo:x11-utils /usr/lib/xorg/modules/drivers/dummy_drv.so:xserver-xorg-video-dummy; do
+            command -v "${p%%:*}" >/dev/null || [ -e "${p%%:*}" ] || need="$need ${p#*:}"
           done
           if [ -n "$need" ]; then
             for i in 1 2 3; do
@@ -58,6 +58,7 @@ jobs:
           PH_E2E_BIN_DIR: ${{ runner.temp }}/phbin
           PH_E2E_SYSTEMD: "1"
           PH_E2E_X11: "1"
+          PH_E2E_XORG: ${{ matrix.subject == 'release' && '1' || '0' }}
           PH_E2E_VERSION: ${{ github.event.inputs.version }}
           GITHUB_TOKEN: ${{ github.token }}
         run: bash tests/e2e/linux/run.sh
