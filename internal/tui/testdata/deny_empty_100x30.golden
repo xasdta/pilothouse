@@ -1,0 +1,30 @@
+ pilothouse  studio.local               ● here · auto   3 need you · 2 working · 2 waiting   ● live
+
+ NEEDS YOU 3
+▌ ● claude  pilothouse            $ git push origin feat/inbox --force-wit…    12s  held · y a n
+  ○ codex   webapp · checkout-v2  apply_patch ~/src/webapp/src/checkout/ca…  1m04s  in its terminal
+  ○ claude  api · main            Asked: Which database should the migrati…  3m20s  in its terminal
+
+ WORKING 2
+  ● claude  docs · main           Ran: npm run build                            5s  enter to attach
+  ● codex   infra · tf-upgrade    Editing modules/vpc/main.tf                  41s
+
+ WAITING 2
+  ● claude  pilothouse-site       Done. The landing page now loads in 380 …  2m05s
+  ✗ generic scratch               Reported an error                            25m  enter to attach
+
+ RECENTLY EXITED 1
+  ✓ claude  old-spike             exited (code 0)                            3h00m
+
+
+
+── r_7hq2m4 · claude · held for you · back to the terminal in 8m48s ────────────────────────────────
+  $ git push origin feat/inbox --force-with-lease
+  where  pilothouse · feat/inbox  ~/src/pilothouse
+  rule   ask-on-push · your policy asks a person for this
+  said   “Tests pass. Pushing the branch so CI can run.”
+
+
+
+
+ Deny r_7hq2m4 reason: _                                                   enter send · esc cancel

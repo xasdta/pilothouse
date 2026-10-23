@@ -286,6 +286,7 @@ func TestGoldenOtherScreens(t *testing.T) {
 	press(m, "esc")
 
 	press(m, "n")
+	golden(t, "deny_empty_100x30", m.View())
 	for _, r := range "use a PR" {
 		m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 	}

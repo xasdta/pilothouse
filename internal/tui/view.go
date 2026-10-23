@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 
 	"github.com/xasdta/pilothouse/internal/api"
 )
@@ -475,12 +476,37 @@ func (m *Model) viewFlash(w int) string {
 
 type keyHint struct{ key, desc string }
 
+func (m *Model) denyInputView() string {
+	if m.st.r.ColorProfile() != termenv.Ascii {
+		return m.input.View()
+	}
+	val := []rune(m.input.Value())
+	pos := m.input.Position()
+	if pos < 0 {
+		pos = 0
+	}
+	if pos > len(val) {
+		pos = len(val)
+	}
+	v := "_"
+	if len(val) > 0 {
+		v = string(val[:pos]) + "_" + string(val[pos:])
+	}
+	if m.input.Width > 0 {
+		vw := lipgloss.Width(v)
+		if vw < m.input.Width {
+			v += strings.Repeat(" ", m.input.Width-vw)
+		}
+	}
+	return v
+}
+
 func (m *Model) viewFooter(w int) string {
 	if m.mode == modeDeny {
 		label := m.st.warn.Render(" Deny "+shortID(m.denyID)) + m.st.dim.Render(" reason: ")
 		tail := m.st.dim.Render("  enter send · esc cancel")
 		m.input.Width = max(10, w-lipgloss.Width(label)-lipgloss.Width(tail)-2)
-		return fit(label+m.input.View()+tail, w)
+		return fit(label+m.denyInputView()+tail, w)
 	}
 	var hints []keyHint
 	switch m.mode {
