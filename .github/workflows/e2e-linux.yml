@@ -26,9 +26,19 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Tools
+        timeout-minutes: 8
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq jq file util-linux iproute2 >/dev/null
+          need=""
+          for p in jq:jq file:file Xvfb:xvfb xprintidle:xprintidle xdotool:xdotool; do
+            command -v "${p%%:*}" >/dev/null || need="$need ${p#*:}"
+          done
+          if [ -n "$need" ]; then
+            for i in 1 2 3; do
+              timeout 150 sudo apt-get update -qq -o Acquire::Retries=3 &&
+                timeout 150 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends $need >/dev/null && break
+              echo "apt attempt $i failed"
+            done
+          fi
           # Node >= 20 (fetch + WebCrypto) ships on the runner images.
           node --version || { sudo apt-get install -y -qq nodejs >/dev/null; node --version; }
           jq --version; script --version; git --version
@@ -42,10 +52,12 @@ jobs:
           XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user is-system-running || true
           echo "DISPLAY=${DISPLAY:-<unset>} WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-<unset>}"
       - name: e2e
+        timeout-minutes: 12
         env:
           PH_E2E_SUBJECT: ${{ matrix.subject }}
           PH_E2E_BIN_DIR: ${{ runner.temp }}/phbin
           PH_E2E_SYSTEMD: "1"
+          PH_E2E_X11: "1"
           PH_E2E_VERSION: ${{ github.event.inputs.version }}
           GITHUB_TOKEN: ${{ github.token }}
         run: bash tests/e2e/linux/run.sh

@@ -774,6 +774,20 @@ if [ ! -d "$WT" ]; then ok "worktree removed"; else bad "worktree still there"; 
 if git -C "$PROJ" rev-parse --verify -q "$BR" >/dev/null; then bad "branch not deleted"; else ok "branch deleted"; fi
 end
 
+# ------------------------------------------------------------------ 8b. inbox TUI
+
+section "inbox TUI"
+begin "inbox opens in a PTY, lists sessions, quits with q"
+(
+	sleep 3
+	printf 'q'
+	sleep 2
+) | TERM=xterm-256color COLUMNS=120 LINES=40 timeout 20 script -qfec "stty cols 120 rows 40; $PH; echo TUI_RC=\$?" "$WORK/tui.typescript" >/dev/null 2>&1
+tui=$(sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g' "$WORK/tui.typescript" | tr -d '\r')
+expect_match "TUI exited 0 on q" "$tui" "TUI_RC=0"
+expect_match "TUI shows a session" "$tui" "proj|fake1|fake2"
+end
+
 # ------------------------------------------------------------------ 9. fail-open
 
 section "fail-open"
@@ -916,6 +930,67 @@ if [ "${PH_E2E_SYSTEMD:-0}" = 1 ] && systemctl --user show-environment >/dev/nul
 	end
 else
 	skip "setup --yes: hooks + service + daemon in one go" "needs PH_E2E_SYSTEMD=1 and a systemd --user manager"
+fi
+
+# ------------------------------------------------------------------ 13. X11 idle presence
+
+section "presence with an X display (Xvfb + xprintidle)"
+if [ "${PH_E2E_X11:-0}" = 1 ] && command -v Xvfb >/dev/null && command -v xprintidle >/dev/null && command -v xdotool >/dev/null; then
+	begin "presence: X idle → away holds, input → back releases"
+	(
+		export DISPLAY=:99 PILOTHOUSE_HOME="$WORK/home3" PILOTHOUSE_RUN_DIR="$WORK/run3"
+		mkdir -p "$PILOTHOUSE_HOME"
+		chmod 700 "$PILOTHOUSE_HOME"
+		P3=$((PORT + 1))
+		Xvfb :99 -screen 0 1024x768x24 -nolisten tcp >"$WORK/xvfb.log" 2>&1 &
+		XPID=$!
+		for _ in $(seq 1 25); do xdotool getmouselocation >/dev/null 2>&1 && break; sleep 0.2; done
+		echo "XPRINTIDLE=$(xprintidle)"
+		umask 077
+		printf 'web:\n  addr: 127.0.0.1:%s\npresence:\n  idle_threshold: 6s\n  notify_after: 600s\napprovals:\n  hold_limit: 40s\nnotify:\n  desktop: false\nupdate_check: false\n' "$P3" >"$PILOTHOUSE_HOME/config.yaml"
+		xdotool mousemove 5 5
+		"$PH" doctor --json 2>/dev/null | jq -r '.[]|select(.name=="presence")|"DOCTOR_PRESENCE=\(.level) \(.detail)"'
+		"$PH" start >/dev/null 2>&1
+		S3="$PILOTHOUSE_RUN_DIR/pilothouse.sock"
+		p() { curl -s --unix-socket "$S3" http://x/v1/presence; }
+		echo "P0=$(p | jq -r '.state+"/"+.source')"
+		for _ in $(seq 1 40); do [ "$(p | jq -r .state)" = away ] && break; sleep 0.5; done
+		echo "P1=$(p | jq -r '.state+"/"+.source')"
+		t0=$(date +%s%3N)
+		jq -c --arg cwd "$PROJ" '.session_id="x11-sess" | .cwd=$cwd | .tool_input.command="make x11"' "$FIX_CLAUDE/permission_bash.json" |
+			"$PH" hook claude >"$WORK/x11.out" 2>&1 &
+		HP=$!
+		for _ in $(seq 1 25); do
+			rid=$(curl -s --unix-socket "$S3" 'http://x/v1/requests?status=open' | jq -r '.[0].id // empty')
+			[ -n "$rid" ] && break
+			sleep 0.2
+		done
+		echo "HELD=$(curl -s --unix-socket "$S3" "http://x/v1/requests/$rid" | jq -r '.route+"/"+.status')"
+		sleep 1
+		xdotool mousemove 300 300
+		xdotool mousemove 310 310
+		wait "$HP"
+		echo "RELEASE_MS=$(($(date +%s%3N) - t0))"
+		echo "HOOK_OUT=$(cat "$WORK/x11.out")"
+		echo "AFTER=$(curl -s --unix-socket "$S3" "http://x/v1/requests/$rid" | jq -r .status)"
+		echo "P2=$(p | jq -r '.state+"/"+.source')"
+		"$PH" stop >/dev/null 2>&1
+		kill "$XPID" 2>/dev/null
+	) >"$WORK/x11.txt" 2>&1
+	sed 's/^/    | /' "$WORK/x11.txt"
+	xo=$(cat "$WORK/x11.txt")
+	expect_match "doctor sees xprintidle" "$xo" "^DOCTOR_PRESENCE=ok linux_xprintidle works"
+	expect_match "present at start" "$xo" "^P0=present/os_idle$"
+	expect_match "away after idle_threshold" "$xo" "^P1=away/os_idle$"
+	expect_match "held for devices" "$xo" "^HELD=devices/open$"
+	expect_match "hook got no opinion (terminal dialog)" "$xo" "^HOOK_OUT=$"
+	expect_match "request handed back" "$xo" "^AFTER=stepped_aside$"
+	expect_match "present again" "$xo" "^P2=present/os_idle$"
+	rms=$(printf '%s' "$xo" | sed -n 's/^RELEASE_MS=//p')
+	[ -n "$rms" ] && [ "$rms" -lt 8000 ] && ok "released ${rms} ms after the request (input at ~1 s)" || bad "release took ${rms:-?} ms"
+	end
+else
+	skip "presence: X idle → away holds, input → back releases" "needs PH_E2E_X11=1 with Xvfb, xprintidle, xdotool"
 fi
 
 # ------------------------------------------------------------------ summary
