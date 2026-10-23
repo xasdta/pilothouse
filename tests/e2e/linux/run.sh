@@ -954,14 +954,18 @@ if [ "${PH_E2E_X11:-0}" = 1 ] && command -v Xvfb >/dev/null && command -v xprint
 		S3="$PILOTHOUSE_RUN_DIR/pilothouse.sock"
 		p() { curl -s --unix-socket "$S3" http://x/v1/presence; }
 		echo "P0=$(p | jq -r '.state+"/"+.source')"
-		for _ in $(seq 1 40); do [ "$(p | jq -r .state)" = away ] && break; sleep 0.5; done
+		for i in $(seq 1 20); do
+			echo "T$i xprintidle=$(xprintidle) presence=$(p | jq -c '{state,source,idle_secs}')"
+			[ "$(p | jq -r .state)" = away ] && break
+			sleep 1
+		done
 		echo "P1=$(p | jq -r '.state+"/"+.source')"
 		t0=$(date +%s%3N)
 		jq -c --arg cwd "$PROJ" '.session_id="x11-sess" | .cwd=$cwd | .tool_input.command="make x11"' "$FIX_CLAUDE/permission_bash.json" |
 			"$PH" hook claude >"$WORK/x11.out" 2>&1 &
 		HP=$!
 		for _ in $(seq 1 25); do
-			rid=$(curl -s --unix-socket "$S3" 'http://x/v1/requests?status=open' | jq -r '.[0].id // empty')
+			rid=$(curl -s --unix-socket "$S3" http://x/v1/snapshot | jq -r '[.requests[]? | select(.status=="open")][0].id // empty')
 			[ -n "$rid" ] && break
 			sleep 0.2
 		done
@@ -974,6 +978,7 @@ if [ "${PH_E2E_X11:-0}" = 1 ] && command -v Xvfb >/dev/null && command -v xprint
 		echo "HOOK_OUT=$(cat "$WORK/x11.out")"
 		echo "AFTER=$(curl -s --unix-socket "$S3" "http://x/v1/requests/$rid" | jq -r .status)"
 		echo "P2=$(p | jq -r '.state+"/"+.source')"
+		grep -i presence "$PILOTHOUSE_HOME/logs/daemon.log" 2>/dev/null | tail -5
 		"$PH" stop >/dev/null 2>&1
 		kill "$XPID" 2>/dev/null
 	) >"$WORK/x11.txt" 2>&1
