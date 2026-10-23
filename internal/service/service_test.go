@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 var update = flag.Bool("update", false, "rewrite golden files")
@@ -52,11 +53,12 @@ func setupFixedHome(t *testing.T) {
 
 func newTestManager(goos string, f *fakeRunner) *Manager {
 	return &Manager{
-		GOOS: goos,
-		Exe:  "/usr/local/bin/pilothouse",
-		UID:  501,
-		Run:  f.run,
-		Env:  map[string]string{"PILOTHOUSE_HOME": "/opt/pilothouse-test/home", "PATH": "/opt/homebrew/bin:/usr/bin:/bin"},
+		GOOS:  goos,
+		Exe:   "/usr/local/bin/pilothouse",
+		UID:   501,
+		Run:   f.run,
+		Env:   map[string]string{"PILOTHOUSE_HOME": "/opt/pilothouse-test/home", "PATH": "/opt/homebrew/bin:/usr/bin:/bin"},
+		Sleep: func(time.Duration) {},
 	}
 }
 
@@ -181,7 +183,8 @@ func TestLaunchdLifecycle(t *testing.T) {
 	if _, err := m.Install(ctx); err != nil {
 		t.Fatal(err)
 	}
-	wantCalls(t, f, "launchctl print gui/501/dev.pilothouse.daemon", "launchctl bootout gui/501/dev.pilothouse.daemon", "launchctl bootstrap gui/501 "+m.Path())
+	wantCalls(t, f, "launchctl print gui/501/dev.pilothouse.daemon", "launchctl bootout gui/501/dev.pilothouse.daemon",
+		"launchctl print gui/501/dev.pilothouse.daemon", "launchctl bootstrap gui/501 "+m.Path())
 
 	st, err := m.Status(ctx)
 	if err != nil {
@@ -199,7 +202,8 @@ func TestLaunchdLifecycle(t *testing.T) {
 	if err := m.Stop(ctx); err != nil {
 		t.Fatal(err)
 	}
-	wantCalls(t, f, "launchctl print gui/501/dev.pilothouse.daemon", "launchctl bootout gui/501/dev.pilothouse.daemon")
+	wantCalls(t, f, "launchctl print gui/501/dev.pilothouse.daemon", "launchctl bootout gui/501/dev.pilothouse.daemon",
+		"launchctl print gui/501/dev.pilothouse.daemon")
 	if err := m.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -376,3 +380,110 @@ const launchctlPrintSample = `gui/501/dev.pilothouse.daemon = {
 	}
 }
 `
+
+// launchd finishes a bootout asynchronously: for a moment the job is still
+// loaded and bootstrap fails with error 5. Install must wait it out.
+func TestLaunchdReloadWaitsForBootout(t *testing.T) {
+	setupHome(t)
+	loaded, lingering, failures := true, 0, 0
+	f := &fakeRunner{}
+	f.reply = func(cmd string) (string, error) {
+		switch {
+		case strings.HasPrefix(cmd, "launchctl print"):
+			if lingering > 0 {
+				lingering--
+				return launchctlPrintSample, nil
+			}
+			if !loaded {
+				return "Could not find service", errors.New("exit status 113")
+			}
+			return launchctlPrintSample, nil
+		case strings.HasPrefix(cmd, "launchctl bootout"):
+			loaded, lingering = false, 3
+		case strings.HasPrefix(cmd, "launchctl bootstrap"):
+			if lingering > 0 {
+				return "Bootstrap failed: 5: Input/output error", errors.New("exit status 5")
+			}
+			if failures > 0 {
+				failures--
+				return "Bootstrap failed: 5: Input/output error", errors.New("exit status 5")
+			}
+			loaded = true
+		}
+		return "", nil
+	}
+	m := newTestManager("darwin", f)
+	var slept time.Duration
+	m.Sleep = func(d time.Duration) { slept += d }
+	if err := os.MkdirAll(filepath.Dir(m.Path()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(m.Path(), []byte("old plist"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// The old job lingers for three polls after bootout.
+	if _, err := m.Install(context.Background()); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	if !loaded || slept == 0 {
+		t.Fatalf("loaded=%v slept=%v", loaded, slept)
+	}
+
+	// bootstrap itself fails twice with error 5, then succeeds.
+	if err := m.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	lingering, failures = 0, 2
+	if err := m.Start(context.Background()); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if !loaded || failures != 0 {
+		t.Fatalf("loaded=%v failures left=%d", loaded, failures)
+	}
+
+	// A bootstrap that keeps failing gives up with launchctl's error.
+	if err := m.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	lingering, failures = 0, 1000
+	err := m.Start(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "Input/output error") {
+		t.Fatalf("persistent failure: %v", err)
+	}
+}
+
+// PATH comes from the installing shell; another terminal's PATH must not
+// make doctor call the service stale. Anything else still does.
+func TestStatusIgnoresPathDifferences(t *testing.T) {
+	for _, goos := range []string{"darwin", "linux"} {
+		t.Run(goos, func(t *testing.T) {
+			setupHome(t)
+			f := &fakeRunner{reply: func(string) (string, error) { return "", errors.New("exit status 1") }}
+			m := newTestManager(goos, f)
+			def, err := m.Render()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Dir(m.Path()), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(m.Path(), def, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			m.Env["PATH"] = "/Users/me/.cargo/bin:/usr/bin:/bin"
+			if st, _ := m.Status(context.Background()); !st.Installed || !st.Current {
+				t.Fatalf("PATH-only difference: %+v", st)
+			}
+			m.Exe = "/opt/homebrew/Cellar/pilothouse/0.1.1/bin/pilothouse"
+			if st, _ := m.Status(context.Background()); st.Current {
+				t.Fatalf("binary change must be stale: %+v", st)
+			}
+			m.Exe = "/usr/local/bin/pilothouse"
+			m.Env["PILOTHOUSE_HOME"] = "/elsewhere"
+			if st, _ := m.Status(context.Background()); st.Current {
+				t.Fatalf("PILOTHOUSE_HOME change must be stale: %+v", st)
+			}
+		})
+	}
+}

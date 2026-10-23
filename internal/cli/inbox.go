@@ -1327,6 +1327,10 @@ func runSetup(cmd *cobra.Command, yes bool) error {
 			if err != nil {
 				fmt.Fprintf(w, "  ✗ service install failed: %v\n", err)
 				note("✗ service: " + err.Error())
+				// A reload can fail after stopping the old daemon; recheck
+				// so the fallback below starts one.
+				_, herr := client.New().Health(ctx)
+				running = herr == nil
 			} else {
 				usedService = true
 				for _, a := range res.Actions {

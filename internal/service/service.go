@@ -15,10 +15,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/xasdta/pilothouse/internal/paths"
 )
@@ -55,6 +57,8 @@ type Manager struct {
 	// with a minimal PATH, but the daemon needs git, tailscale and the
 	// notification helpers the user has installed).
 	Env map[string]string
+	// Sleep waits between launchctl retries; nil means time.Sleep.
+	Sleep func(time.Duration)
 }
 
 // New returns a Manager for this machine running exe.
@@ -304,12 +308,12 @@ func (m *Manager) Install(ctx context.Context) (Result, error) {
 		}
 		if loaded {
 			// launchd caches the plist at bootstrap time; reload it.
-			if _, err := m.run(ctx, "launchctl", "bootout", m.service()); err != nil {
+			if err := m.bootout(ctx); err != nil {
 				return res, err
 			}
 			res.Actions = append(res.Actions, "unloaded the old "+Label)
 		}
-		if _, err := m.run(ctx, "launchctl", "bootstrap", m.gui(), res.Path); err != nil {
+		if err := m.bootstrap(ctx); err != nil {
 			return res, err
 		}
 		res.Actions = append(res.Actions, "loaded "+Label+" (starts at login)")
@@ -382,6 +386,59 @@ func (m *Manager) launchdLoaded(ctx context.Context) bool {
 	return err == nil
 }
 
+// launchdSettle bounds how long bootout/bootstrap wait for launchd.
+const launchdSettle = 5 * time.Second
+
+func (m *Manager) sleep(d time.Duration) {
+	if m.Sleep != nil {
+		m.Sleep(d)
+		return
+	}
+	time.Sleep(d)
+}
+
+// bootout unloads the job and waits until launchd has finished: bootout
+// returns while the old process is still exiting, and a bootstrap in that
+// window fails with "Bootstrap failed: 5: Input/output error".
+func (m *Manager) bootout(ctx context.Context) error {
+	if _, err := m.run(ctx, "launchctl", "bootout", m.service()); err != nil {
+		return err
+	}
+	const step = 100 * time.Millisecond
+	for waited := time.Duration(0); m.launchdLoaded(ctx) && waited < launchdSettle; waited += step {
+		m.sleep(step)
+	}
+	return nil
+}
+
+// bootstrap loads the job, retrying while launchd is still tearing down a
+// previous instance (the same error 5 as above).
+func (m *Manager) bootstrap(ctx context.Context) error {
+	const step = 250 * time.Millisecond
+	var err error
+	for waited := time.Duration(0); ; waited += step {
+		if _, err = m.run(ctx, "launchctl", "bootstrap", m.gui(), m.Path()); err == nil {
+			return nil
+		}
+		if waited >= launchdSettle || ctx.Err() != nil {
+			return err
+		}
+		m.sleep(step)
+		if m.launchdLoaded(ctx) {
+			return nil // a retry raced with launchd finishing the load
+		}
+	}
+}
+
+var pathValue = regexp.MustCompile(`(<key>PATH</key>\s*<string>)[^<]*(</string>)|(?m)^(Environment="?PATH=).*$`)
+
+// withoutPath blanks the PATH value of a service definition. PATH is copied
+// from whichever shell ran the install, so a different terminal is not a
+// stale service; the binary, arguments and Pilothouse settings are.
+func withoutPath(def []byte) []byte {
+	return pathValue.ReplaceAll(def, []byte("$1$3$2"))
+}
+
 // Status reports the state of the service.
 func (m *Manager) Status(ctx context.Context) (Status, error) {
 	st := Status{Kind: m.Kind(), Path: m.Path()}
@@ -391,7 +448,7 @@ func (m *Manager) Status(ctx context.Context) (Status, error) {
 	if have, err := os.ReadFile(st.Path); err == nil {
 		st.Installed = true
 		if want, err := m.Render(); err == nil {
-			st.Current = bytes.Equal(have, want)
+			st.Current = bytes.Equal(withoutPath(have), withoutPath(want))
 		}
 	}
 	switch m.GOOS {
@@ -438,8 +495,7 @@ func (m *Manager) Start(ctx context.Context) error {
 			if _, err := os.Stat(m.Path()); err != nil {
 				return errors.New("service not installed — run `pilothouse service install`")
 			}
-			_, err := m.run(ctx, "launchctl", "bootstrap", m.gui(), m.Path())
-			return err
+			return m.bootstrap(ctx)
 		}
 		_, err := m.run(ctx, "launchctl", "kickstart", m.service())
 		return err
@@ -458,8 +514,7 @@ func (m *Manager) Stop(ctx context.Context) error {
 		if !m.launchdLoaded(ctx) {
 			return nil
 		}
-		_, err := m.run(ctx, "launchctl", "bootout", m.service())
-		return err
+		return m.bootout(ctx)
 	case "linux":
 		_, err := m.systemctl(ctx, "stop", Unit)
 		return err
