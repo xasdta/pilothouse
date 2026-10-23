@@ -313,7 +313,8 @@ expect_eq "running" "$(echo "$sj" | jq -r .running)" true
 if [ -S "$SOCK" ]; then ok "socket at $SOCK"; else bad "no socket at $SOCK ($(ls -la "$PILOTHOUSE_RUN_DIR"))"; fi
 expect_eq "socket mode" "$(stat -c %a "$SOCK" 2>/dev/null)" 600
 expect_eq "home mode" "$(stat -c %a "$PILOTHOUSE_HOME")" 700
-for f in "$PILOTHOUSE_HOME"/pilothouse.db "$PILOTHOUSE_HOME"/config.yaml; do
+# Files the product created (config.yaml above was written by this script).
+for f in "$PILOTHOUSE_HOME"/pilothouse.db $(find "$PILOTHOUSE_HOME/keys" -type f 2>/dev/null); do
 	[ -f "$f" ] && expect_match "$(basename "$f") mode" "$(stat -c %a "$f")" "^600$"
 done
 h=$(sock GET /v1/health)
@@ -535,8 +536,12 @@ expect_eq "snapshot with cookie" "$(echo "$pr" | jq -r .snapshot_cookie)" 200
 expect_match "decide without CSRF header refused" "$(echo "$pr" | jq -r .decide_nocsrf)" '^40[0-9]$'
 expect_match "CSP header" "$(echo "$pr" | jq -r .csp)" "default-src 'self'"
 expect_eq "X-Frame-Options" "$(echo "$pr" | jq -r .xfo)" DENY
-eh=$(echo "$pr" | jq -r .snapshot_evilhost)
-if [ "$eh" = -1 ]; then note "foreign Host probe not possible from node fetch"; else expect_match "foreign Host refused" "$eh" '^4[0-9][0-9]$'; fi
+# DNS-rebinding defense (node's fetch can't override Host, so use curl).
+ck=$(jq -r .cookie "$PST")
+eh=$(curl -s -o /dev/null -w '%{http_code}' -H "Host: evil.example:$PORT" -H "Cookie: $ck" "$BASE/api/snapshot")
+expect_match "foreign Host refused" "$eh" '^4[0-9][0-9]$'
+lh=$(curl -s -o /dev/null -w '%{http_code}' -H "Host: localhost:$PORT" -H "Cookie: $ck" "$BASE/api/snapshot")
+expect_eq "localhost Host accepted" "$lh" 200
 end
 
 begin "away: held request answered by a signed device decision (claude, allow)"
@@ -757,7 +762,14 @@ expect_match "task diff shows the agent's file" "$td" "TASK_NOTES.md"
 TS=$(echo "$to" | sed -n 's/^ *session: *//p')
 expect_eq "task session linked" "$(sock GET "/v1/sessions/$TS" | jq -r .task_id)" "$TID"
 ta=$("$PH" task abandon "$TID" 2>&1)
+tarc=$?
 echo "$ta" | sed 's/^/    | /'
+expect_eq "abandon refused while the agent runs" "$tarc" 1
+expect_match "actionable refusal" "$ta" "still running.*--force"
+ta=$("$PH" task abandon --force "$TID" 2>&1)
+echo "$ta" | sed 's/^/    | /'
+expect_match "abandon --force" "$ta" "abandoned"
+if wait_for 5 sh -c "! pgrep -f '__holder --id $TS' >/dev/null"; then ok "task agent stopped"; else note "task holder still running"; fi
 if [ ! -d "$WT" ]; then ok "worktree removed"; else bad "worktree still there"; fi
 if git -C "$PROJ" rev-parse --verify -q "$BR" >/dev/null; then bad "branch not deleted"; else ok "branch deleted"; fi
 end
@@ -855,6 +867,51 @@ expect_eq "hooks: Claude Code" "$(echo "$dj" | jq -r '.[]|select(.name=="hooks: 
 expect_eq "hooks: Codex" "$(echo "$dj" | jq -r '.[]|select(.name=="hooks: Codex")|.level')" ok
 "$PH" stop >/dev/null 2>&1
 end
+
+# ------------------------------------------------------------------ 12. setup --yes
+
+section "setup --yes (fresh home, real user manager)"
+if [ "${PH_E2E_SYSTEMD:-0}" = 1 ] && systemctl --user show-environment >/dev/null 2>&1; then
+	begin "setup --yes: hooks + service + daemon in one go"
+	(
+		# A fresh data dir, the runner's real (throwaway) home, default port.
+		export PILOTHOUSE_HOME="$WORK/home2" PILOTHOUSE_RUN_DIR="$WORK/run2" PILOTHOUSE_USER_HOME="$HOME"
+		mkdir -p "$HOME/.claude" "$HOME/.codex"
+		so=$("$PH" setup --yes </dev/null 2>&1)
+		src=$?
+		echo "$so" | sed 's/^/    | /'
+		[ "$src" = 0 ] && echo "RC_OK" || echo "RC=$src"
+		echo "STATUS=$("$PH" status --json | jq -r .running)"
+		echo "SERVICE=$(systemctl --user is-active pilothouse.service)"
+		echo "CLAUDE=$("$PH" hooks status --json | jq -r '.[]|select(.agent=="claude")|.status.current')"
+		echo "CODEX=$("$PH" hooks status --json | jq -r '.[]|select(.agent=="codex")|.status.current')"
+		echo "HOMEMODE=$(stat -c %a "$PILOTHOUSE_HOME")"
+		[ -f "$PILOTHOUSE_HOME/config.yaml" ] && echo "CONFMODE=$(stat -c %a "$PILOTHOUSE_HOME/config.yaml")"
+		so2=$("$PH" setup --yes </dev/null 2>&1)
+		echo "RERUN_RC=$?"
+		echo "$so2" | sed 's/^/    | (rerun) /'
+		"$PH" doctor --json 2>/dev/null | jq -r '.[] | "DOCTOR \(.name)=\(.level)"'
+		"$PH" service uninstall >/dev/null 2>&1
+		"$PH" hooks uninstall >/dev/null 2>&1
+		"$PH" stop >/dev/null 2>&1
+	) >"$WORK/setup.out" 2>&1
+	sed -n '/^    |/p' "$WORK/setup.out"
+	so=$(cat "$WORK/setup.out")
+	expect_match "setup exit" "$so" "^RC_OK$"
+	expect_match "daemon running" "$so" "^STATUS=true$"
+	expect_match "service active" "$so" "^SERVICE=active$"
+	expect_match "claude hooks current" "$so" "^CLAUDE=true$"
+	expect_match "codex hooks current" "$so" "^CODEX=true$"
+	expect_match "data dir 0700" "$so" "^HOMEMODE=700$"
+	if printf '%s' "$so" | grep -q '^CONFMODE='; then expect_match "config.yaml 0600" "$so" "^CONFMODE=600$"; fi
+	expect_match "setup is re-runnable" "$so" "^RERUN_RC=0$"
+	for c in daemon "hooks: Claude Code" "hooks: Codex" service; do
+		expect_match "doctor $c" "$so" "^DOCTOR $c=ok$"
+	done
+	end
+else
+	skip "setup --yes: hooks + service + daemon in one go" "needs PH_E2E_SYSTEMD=1 and a systemd --user manager"
+fi
 
 # ------------------------------------------------------------------ summary
 

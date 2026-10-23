@@ -138,10 +138,6 @@ async function probe() {
     body: '{}',
   });
   out.decide_nocsrf = noCsrf.status;
-  // foreign Host (DNS rebinding defense)
-  const u = new URL(base);
-  const evil = await fetch(`${base}/api/snapshot`, { headers: { Cookie: st.cookie, Host: `evil.example:${u.port}` } }).catch(() => ({ status: -1 }));
-  out.snapshot_evilhost = evil.status;
   const page = await fetch(`${base}/`);
   out.index_status = page.status;
   out.csp = page.headers.get('content-security-policy') || '';
