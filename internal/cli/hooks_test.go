@@ -158,7 +158,9 @@ func TestShimNoDaemonFailsOpen(t *testing.T) {
 		if res.code != 0 || res.stdout != "" || res.stderr != "" {
 			t.Errorf("%s: %+v", fx, res)
 		}
-		if res.took > 2*time.Second {
+		// With no daemon the dial fails at once; the bound only guards against a
+		// hang. It includes process start, which is slow under -race and load.
+		if res.took > 3*time.Second {
 			t.Errorf("%s: took %v", fx, res.took)
 		}
 	}
