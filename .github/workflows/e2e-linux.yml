@@ -29,7 +29,7 @@ jobs:
         timeout-minutes: 8
         run: |
           need=""
-          for p in jq:jq file:file Xvfb:xvfb xprintidle:xprintidle xdotool:xdotool; do
+          for p in jq:jq file:file Xvfb:xvfb xprintidle:xprintidle xdotool:xdotool xset:x11-xserver-utils; do
             command -v "${p%%:*}" >/dev/null || need="$need ${p#*:}"
           done
           if [ -n "$need" ]; then

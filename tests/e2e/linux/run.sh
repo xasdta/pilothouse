@@ -942,10 +942,15 @@ if [ "${PH_E2E_X11:-0}" = 1 ] && command -v Xvfb >/dev/null && command -v xprint
 		mkdir -p "$PILOTHOUSE_HOME"
 		chmod 700 "$PILOTHOUSE_HOME"
 		P3=$((PORT + 1))
-		Xvfb :99 -screen 0 1024x768x24 -nolisten tcp >"$WORK/xvfb.log" 2>&1 &
+		Xvfb :99 -screen 0 1024x768x24 -nolisten tcp -s 0 -dpms >"$WORK/xvfb.log" 2>&1 &
 		XPID=$!
 		for _ in $(seq 1 25); do xdotool getmouselocation >/dev/null 2>&1 && break; sleep 0.2; done
+		command -v xset >/dev/null && xset s off -dpms 2>/dev/null
 		echo "XPRINTIDLE=$(xprintidle)"
+		# Probe whether this X server's idle counter actually grows.
+		sleep 3
+		XI=$(xprintidle)
+		echo "XPRINTIDLE_AFTER_3S=$XI"
 		umask 077
 		printf 'web:\n  addr: 127.0.0.1:%s\npresence:\n  idle_threshold: 6s\n  notify_after: 600s\napprovals:\n  hold_limit: 40s\nnotify:\n  desktop: false\nupdate_check: false\n' "$P3" >"$PILOTHOUSE_HOME/config.yaml"
 		xdotool mousemove 5 5
@@ -984,6 +989,10 @@ if [ "${PH_E2E_X11:-0}" = 1 ] && command -v Xvfb >/dev/null && command -v xprint
 	) >"$WORK/x11.txt" 2>&1
 	sed 's/^/    | /' "$WORK/x11.txt"
 	xo=$(cat "$WORK/x11.txt")
+	xi=$(printf '%s' "$xo" | sed -n 's/^XPRINTIDLE_AFTER_3S=//p')
+	if [ "${xi:-0}" -lt 2000 ]; then
+		note "this Xvfb resets its idle counter (xprintidle=$xi after 3 s idle): can't simulate an idle desk here"
+	fi
 	expect_match "doctor sees xprintidle" "$xo" "^DOCTOR_PRESENCE=ok linux_xprintidle works"
 	expect_match "present at start" "$xo" "^P0=present/os_idle$"
 	expect_match "away after idle_threshold" "$xo" "^P1=away/os_idle$"
