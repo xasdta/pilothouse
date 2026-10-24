@@ -432,3 +432,26 @@ type TaskDiff struct {
 type TaskFinish struct {
 	Action string `json:"action"` // "ship" (push + open a PR) | "discard"
 }
+
+// Task setup statuses (TaskSetup.Status).
+const (
+	SetupNone    = "none"    // task.yaml has no setup commands
+	SetupRunning = "running" // setup commands are running; the agent starts after them
+	SetupOK      = "ok"
+	SetupFailed  = "failed"
+	SetupSkipped = "skipped" // the repo is not trusted, so its commands were not run
+)
+
+// TaskSetup is what a repo's .pilothouse/task.yaml did for a task's
+// worktree. The commands themselves are not included: they come from a
+// file anyone with write access to the repo can change, and may carry
+// tokens.
+type TaskSetup struct {
+	// Copied lists the repo-relative files copied from the main checkout
+	// (.env and the like). They are left out of the task's diff and of
+	// the commit a ship makes.
+	Copied   []string `json:"copied,omitempty"`
+	Commands int      `json:"commands"`      // setup commands in task.yaml
+	Status   string   `json:"status"`        // SetupNone, SetupRunning, SetupOK, SetupFailed, SetupSkipped
+	Log      string   `json:"log,omitempty"` // file with the commands' output
+}

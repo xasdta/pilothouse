@@ -284,6 +284,9 @@ const (
 	TaskReview  TaskStatus = "review" // agent finished; diff waiting for a person
 	TaskDone    TaskStatus = "done"
 	TaskAbandon TaskStatus = "abandoned"
+	// TaskFailed: the agent never started (setup failed, or the agent
+	// could not be launched). The worktree is kept for a look; discard it.
+	TaskFailed TaskStatus = "failed"
 )
 
 // Task is a prompt run by an agent in its own git worktree.
@@ -300,6 +303,17 @@ type Task struct {
 	Status    TaskStatus `json:"status"`
 	CreatedAt time.Time  `json:"created_at"`
 	UpdatedAt time.Time  `json:"updated_at"`
+	// StartedBy says who started the task, like Decision.By: "cli",
+	// "tui", "device:<id>". Empty for tasks from before 0.2.
+	StartedBy string `json:"started_by,omitempty"`
+	// Setup is what .pilothouse/task.yaml did; nil when the repo has none.
+	Setup *TaskSetup `json:"setup,omitempty"`
+	// PRURL is the pull request a ship opened.
+	PRURL string `json:"pr_url,omitempty"`
+	// Note is one person-readable sentence about the last thing that
+	// happened: why the task failed, that setup was skipped, where a
+	// shipped branch went.
+	Note string `json:"note,omitempty"`
 }
 
 // Grant is an "allow for this session" answer, applied at pre_tool.
