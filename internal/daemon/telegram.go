@@ -186,32 +186,20 @@ func (m *telegramManager) current() *telegram.Bot {
 	return m.bot
 }
 
-// paired saves the chat that completed pairing (config chat_id) and spends
-// the pairing code.
-func (m *telegramManager) paired(_ context.Context, chat telegram.Chat) error {
-	var cfg *config.Config
-	if _, err := os.Stat(paths.Config()); err == nil {
-		c, err := config.Load()
-		if err != nil {
-			return fmt.Errorf("read config: %w", err)
-		}
-		cfg = c
-	} else {
-		c := *m.d.cfg // no file yet: start from the daemon's own settings
-		cfg = &c
-	}
-	cfg.Notify.Telegram.Enabled = true
-	cfg.Notify.Telegram.ChatID = chat.ID
-	if err := cfg.Save(); err != nil {
-		return fmt.Errorf("save chat_id: %w", err)
-	}
-	k, err := telegram.LoadKeys(telegram.KeysPath())
-	if err != nil {
-		return err
-	}
-	k.PairHash, k.PairExpires = "", time.Time{}
-	if err := telegram.SaveKeys(telegram.KeysPath(), k); err != nil {
+// paired spends the pairing code and saves the chat that used it (config
+// chat_id). Both are locked read-modify-writes: `pilothouse notify
+// telegram`, setup or `remote tailscale` may be writing the same files.
+func (m *telegramManager) paired(_ context.Context, chat telegram.Chat, code string) error {
+	if err := telegram.SpendCode(telegram.KeysPath(), code, m.d.now()); err != nil {
 		return fmt.Errorf("spend pairing code: %w", err)
+	}
+	// No file yet: start from the daemon's own settings.
+	if _, err := config.Update(m.d.cfg, func(c *config.Config) error {
+		c.Notify.Telegram.Enabled = true
+		c.Notify.Telegram.ChatID = chat.ID
+		return nil
+	}); err != nil {
+		return fmt.Errorf("save chat_id: %w", err)
 	}
 	return nil
 }

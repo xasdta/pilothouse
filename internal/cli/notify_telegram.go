@@ -154,22 +154,33 @@ func runNotifyTelegram(ctx context.Context, w io.Writer, in *bufio.Reader, o tgO
 		return false, errors.New("that token doesn't belong to a bot")
 	}
 
-	k := telegram.Keys{Token: tok, BotID: me.ID, BotUsername: me.Username}
-	code := k.NewPairCode(tgNow())
-	if err := telegram.SaveKeys(path, k); err != nil {
-		return false, fmt.Errorf("save the token: %w", err)
-	}
-	cfg.Notify.Telegram.Enabled = true
-	cfg.Notify.Telegram.ChatID = 0 // the chat that opens the new link takes over
-	switch o.decisions {
-	case "on":
-		cfg.Notify.Telegram.Decisions = nil
-	case "off":
-		off := false
-		cfg.Notify.Telegram.Decisions = &off
-	}
-	if err := cfg.Save(); err != nil {
+	// Config first, then the code: by the time the daemon sees a pending
+	// code, config.yaml already says enabled with no chat, and the daemon's
+	// own update (chat_id) comes after ours. Both are locked
+	// read-modify-writes, so nothing anyone else saved meanwhile is lost.
+	cfg, err = config.Update(nil, func(c *config.Config) error {
+		c.Notify.Telegram.Enabled = true
+		c.Notify.Telegram.ChatID = 0 // the chat that opens the new link takes over
+		switch o.decisions {
+		case "on":
+			c.Notify.Telegram.Decisions = nil
+		case "off":
+			off := false
+			c.Notify.Telegram.Decisions = &off
+		}
+		return nil
+	})
+	if err != nil {
 		return false, err
+	}
+	var code string
+	k, err := telegram.UpdateKeys(path, func(k *telegram.Keys) error {
+		*k = telegram.Keys{Token: tok, BotID: me.ID, BotUsername: me.Username}
+		code = k.NewPairCode(tgNow())
+		return nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("save the token: %w", err)
 	}
 	fmt.Fprintf(w, "   ✓ @%s is ready (token saved to %s, mode 0600)\n\n", me.Username, path)
 
@@ -208,7 +219,7 @@ func runNotifyTelegram(ctx context.Context, w io.Writer, in *bufio.Reader, o tgO
 		// No daemon: pair here (only one program may read the bot's updates).
 		var ch telegram.Chat
 		if ch, err = telegram.WaitForStart(wctx, c, k, tgNow); err == nil {
-			err = tgSavePaired(ctx, c, ch)
+			err = tgSavePaired(ctx, c, ch, code)
 		}
 	}
 	switch {
@@ -244,23 +255,19 @@ func tgWaitForDaemon(ctx context.Context) (int64, error) {
 	}
 }
 
-// tgSavePaired records a chat paired by the CLI (no daemon running).
-func tgSavePaired(ctx context.Context, c *telegram.Client, ch telegram.Chat) error {
-	cfg, err := config.Load()
+// tgSavePaired records a chat paired by the CLI (no daemon running): it
+// spends the code (only if it is still the pending one), then saves the
+// chat, like the daemon does.
+func tgSavePaired(ctx context.Context, c *telegram.Client, ch telegram.Chat, code string) error {
+	if err := telegram.SpendCode(telegram.KeysPath(), code, tgNow()); err != nil {
+		return err
+	}
+	cfg, err := config.Update(nil, func(c *config.Config) error {
+		c.Notify.Telegram.Enabled = true
+		c.Notify.Telegram.ChatID = ch.ID
+		return nil
+	})
 	if err != nil {
-		return err
-	}
-	cfg.Notify.Telegram.Enabled = true
-	cfg.Notify.Telegram.ChatID = ch.ID
-	if err := cfg.Save(); err != nil {
-		return err
-	}
-	k, err := telegram.LoadKeys(telegram.KeysPath())
-	if err != nil {
-		return err
-	}
-	k.PairHash, k.PairExpires = "", time.Time{}
-	if err := telegram.SaveKeys(telegram.KeysPath(), k); err != nil {
 		return err
 	}
 	sctx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -271,17 +278,15 @@ func tgSavePaired(ctx context.Context, c *telegram.Client, ch telegram.Chat) err
 }
 
 func runTelegramOff(w io.Writer) error {
-	cfg, err := config.Load()
-	if err != nil {
-		return err
-	}
-	cfg.Notify.Telegram.Enabled = false
-	cfg.Notify.Telegram.ChatID = 0
-	if err := cfg.Save(); err != nil {
+	if _, err := config.Update(nil, func(c *config.Config) error {
+		c.Notify.Telegram.Enabled = false
+		c.Notify.Telegram.ChatID = 0
+		return nil
+	}); err != nil {
 		return err
 	}
 	path := telegram.KeysPath()
-	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := telegram.RemoveKeys(path); err != nil {
 		return err
 	}
 	fmt.Fprintf(w, "✓ Telegram is off and the bot token was deleted (%s).\n", path)
@@ -386,30 +391,29 @@ Notifications are cleared from the phone once a request is answered
 // runNotifyNtfy saves the ntfy topic and shows how to subscribe. It
 // returns the topic.
 func runNotifyNtfy(w io.Writer, server, topic string, restartHint bool) (string, error) {
-	cfg, err := config.Load()
+	if topic != "" && !ntfyTopicRE(topic) {
+		return "", errors.New("an ntfy topic is 1-64 letters, digits, - and _")
+	}
+	cfg, err := config.Update(nil, func(c *config.Config) error {
+		if server != "" {
+			c.Notify.Ntfy.Server = strings.TrimRight(server, "/")
+		}
+		switch {
+		case topic != "":
+			c.Notify.Ntfy.Topic = topic
+		case c.Notify.Ntfy.Topic == "":
+			b := make([]byte, 10)
+			if _, err := rand.Read(b); err != nil {
+				return err
+			}
+			c.Notify.Ntfy.Topic = "pilothouse-" + strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(b))
+		}
+		return nil
+	})
 	if err != nil {
 		return "", err
 	}
-	if server != "" {
-		cfg.Notify.Ntfy.Server = strings.TrimRight(server, "/")
-	}
-	if topic == "" {
-		topic = cfg.Notify.Ntfy.Topic
-	}
-	if topic == "" {
-		b := make([]byte, 10)
-		if _, err := rand.Read(b); err != nil {
-			return "", err
-		}
-		topic = "pilothouse-" + strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(b))
-	}
-	if !ntfyTopicRE(topic) {
-		return "", errors.New("an ntfy topic is 1-64 letters, digits, - and _")
-	}
-	cfg.Notify.Ntfy.Topic = topic
-	if err := cfg.Save(); err != nil {
-		return "", err
-	}
+	topic = cfg.Notify.Ntfy.Topic
 	srv := cfg.Notify.Ntfy.Server
 	if srv == "" {
 		srv = "https://ntfy.sh"

@@ -68,7 +68,7 @@ func newFixture(t *testing.T, mut ...func(*Options)) *fixture {
 	o := Options{
 		Client: f.mock.client(), DB: openDB(t), Core: f.core, ChatID: chatID, Decisions: true,
 		Keys: func() Keys { return f.keys },
-		OnPaired: func(_ context.Context, c Chat) error {
+		OnPaired: func(_ context.Context, c Chat, _ string) error {
 			f.paired = append(f.paired, c)
 			f.keys.PairHash = ""
 			return nil
@@ -636,6 +636,64 @@ func TestKeysFile(t *testing.T) {
 	}
 	if c, ok := startCode("/start@pilot_test_bot abc"); !ok || c != "abc" {
 		t.Fatal("startCode with bot name")
+	}
+
+	// SpendCode: once only, never a newer code, never an expired one.
+	if err := SpendCode(p, code, now.Add(PairTTL+time.Second)); !errors.Is(err, ErrCodeChanged) {
+		t.Fatalf("expired code spent: %v", err)
+	}
+	if err := SpendCode(p, code, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := SpendCode(p, code, now); !errors.Is(err, ErrCodeChanged) {
+		t.Fatalf("code spent twice: %v", err)
+	}
+	newer, err := UpdateKeys(p, func(k *Keys) error { k.NewPairCode(now); return nil })
+	if err != nil || newer.Token != testToken {
+		t.Fatalf("update = %+v %v", newer.BotUsername, err)
+	}
+	if err := SpendCode(p, code, now); !errors.Is(err, ErrCodeChanged) {
+		t.Fatal("an old code cleared the newer one")
+	}
+	if k, _ := LoadKeys(p); k.PairHash != newer.PairHash {
+		t.Fatal("newer code lost")
+	}
+	if err := RemoveKeys(p); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(p); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("not removed")
+	}
+	if err := RemoveKeys(filepath.Join(t.TempDir(), "none", "telegram.json")); err != nil {
+		t.Fatalf("remove missing: %v", err)
+	}
+}
+
+// The CLI rewriting the key file while the daemon spends a code never
+// loses the CLI's new token (both are locked read-modify-writes).
+func TestKeysConcurrentUpdates(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "keys", "telegram.json")
+	if err := SaveKeys(p, Keys{Token: testToken}); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := UpdateKeys(p, func(k *Keys) error {
+				k.BotID++
+				time.Sleep(time.Millisecond)
+				return nil
+			})
+			if err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	if k, _ := LoadKeys(p); k.BotID != 16 || k.Token != testToken {
+		t.Fatalf("updates lost: bot_id=%d", k.BotID)
 	}
 }
 

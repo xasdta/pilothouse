@@ -2,9 +2,11 @@ package daemon
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -13,6 +15,7 @@ import (
 	"github.com/xasdta/pilothouse/internal/api"
 	"github.com/xasdta/pilothouse/internal/config"
 	"github.com/xasdta/pilothouse/internal/notify/telegram"
+	"github.com/xasdta/pilothouse/internal/paths"
 )
 
 const tgToken = "987654321:AAdaemonTESTtokenDaemonTESTtoken"
@@ -145,6 +148,48 @@ func (m *tgMock) find(edits bool, s string) (tgSent, bool) {
 func tgPrivate(chat int64, text string) telegram.Update {
 	return telegram.Update{Message: &telegram.Message{MessageID: 1, From: &telegram.User{ID: chat}, Date: time.Now().Unix(),
 		Chat: telegram.Chat{ID: chat, Type: "private"}, Text: text}}
+}
+
+// Pairing spends exactly the code that was checked: a code replaced by a
+// newer `pilothouse notify telegram` run, or one already used, binds no
+// chat; the pending one binds its chat once, keeping the rest of config.
+func TestTelegramPairedSpendsOnlyThePendingCode(t *testing.T) {
+	h := newHarness(t)
+	mock := newTGMock(t) // whatever bot the manager starts talks to this, never to Telegram
+	h.cfg.Notify.Desktop = false
+	h.cfg.Approvals.HoldLimit = config.Duration{Duration: 10 * time.Second}
+	h.cfg.Notify.Telegram.APIBase = mock.URL
+	h.start(t)
+	if err := os.WriteFile(paths.Config(), []byte("machine: studio\nnotify:\n  desktop: false\n  telegram:\n    api_base: "+mock.URL+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	k := telegram.Keys{Token: tgToken}
+	old := k.NewPairCode(now)
+	pending := k.NewPairCode(now) // a newer run replaced the first code
+	if err := telegram.SaveKeys(telegram.KeysPath(), k); err != nil {
+		t.Fatal(err)
+	}
+	m := h.d.tg
+	if err := m.paired(bg, telegram.Chat{ID: 1}, old); !errors.Is(err, telegram.ErrCodeChanged) {
+		t.Fatalf("replaced code: %v", err)
+	}
+	if c, _ := config.Load(); c.Notify.Telegram.ChatID != 0 {
+		t.Fatal("a replaced code bound a chat")
+	}
+	if err := m.paired(bg, telegram.Chat{ID: 7}, pending); err != nil {
+		t.Fatal(err)
+	}
+	c, _ := config.Load()
+	if c.Notify.Telegram.ChatID != 7 || !c.Notify.Telegram.Enabled || c.Machine != "studio" || c.Notify.Telegram.APIBase != mock.URL {
+		t.Fatalf("config after pairing = %+v machine=%q", c.Notify.Telegram, c.Machine)
+	}
+	if err := m.paired(bg, telegram.Chat{ID: 8}, pending); !errors.Is(err, telegram.ErrCodeChanged) {
+		t.Fatalf("code used twice: %v", err)
+	}
+	if c, _ := config.Load(); c.Notify.Telegram.ChatID != 7 {
+		t.Fatal("second use rebound the chat")
+	}
 }
 
 // A real daemon with the real notifier: pairing over getUpdates writes
