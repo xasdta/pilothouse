@@ -275,6 +275,10 @@ Trust is stored in `~/.pilothouse/trusted-repos.yaml` (symlinks resolved). The
 self-protection rule makes a person confirm any agent edit to that file, to
 your user policy, and to the repo's own `.pilothouse/` directory.
 
+Trust also covers the repo's `.pilothouse/task.yaml`: its `setup` commands
+and `env` only run for tasks in trusted repos (its `copy` list applies
+everywhere). See [TASKS.md](TASKS.md#pilothousetaskyaml).
+
 ## Built-in rule: `pilothouse-self-protection`
 
 Agents must not be able to approve their own requests or loosen your rules.

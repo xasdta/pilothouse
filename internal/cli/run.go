@@ -276,7 +276,7 @@ func newTaskNewCmd() *cobra.Command {
 		attach            bool
 	)
 	cmd := &cobra.Command{
-		Use:   `new [--agent claude|codex] [--base ref] [--name slug] [-a] "<prompt>"`,
+		Use:   `new [--agent claude|codex|opencode] [--base ref] [--name slug] [-a] "<prompt>"`,
 		Short: "Start an agent on a prompt in a new worktree",
 		Example: `  pilothouse task new "add a --json flag to the export command"
   pilothouse task new --agent codex --base main -a "fix the flaky login test"`,
@@ -306,7 +306,7 @@ func newTaskNewCmd() *cobra.Command {
 			return attachTerminal(cmd.Context(), cmd.ErrOrStderr(), paths.HolderSocket(t.SessionID), true)
 		},
 	}
-	cmd.Flags().StringVar(&agent, "agent", "claude", "agent to run: claude, codex, or any command that takes the prompt as its argument")
+	cmd.Flags().StringVar(&agent, "agent", "claude", "agent to run: claude, codex, opencode, or any command that takes the prompt as its argument")
 	cmd.Flags().StringVar(&base, "base", "", "ref to branch from (default: the current branch)")
 	cmd.Flags().StringVar(&name, "name", "", "slug for the branch and worktree (default: from the prompt)")
 	cmd.Flags().BoolVarP(&attach, "attach", "a", false, "attach to the agent right away")
