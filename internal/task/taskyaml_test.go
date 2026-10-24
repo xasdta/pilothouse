@@ -223,7 +223,7 @@ func TestUntrustedSetupNotRun(t *testing.T) {
 	rs := &recStarter{}
 	var out bytes.Buffer
 	m := &Manager{Start: rs.start, Out: &out, Err: &out}
-	tk, err := m.New(context.Background(), NewOptions{Prompt: "untrusted", Agent: "true", Dir: repo, StartedBy: "cli"})
+	tk, err := m.New(context.Background(), NewOptions{Prompt: "untrusted", Agent: "true", Dir: repo, By: "cli"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +233,7 @@ func TestUntrustedSetupNotRun(t *testing.T) {
 	if tk.Setup == nil || tk.Setup.Status != api.SetupSkipped || tk.Setup.Commands != 2 || strings.Join(tk.Setup.Copied, ",") != ".env" {
 		t.Fatalf("setup %+v", tk.Setup)
 	}
-	if !strings.Contains(tk.Note, "not trusted") || !strings.Contains(tk.Note, "pilothouse policy trust") || tk.StartedBy != "cli" {
+	if !strings.Contains(tk.Note, "not trusted") || !strings.Contains(tk.Note, "pilothouse policy trust") || tk.By != "cli" {
 		t.Fatalf("task %+v", tk)
 	}
 	for _, want := range []string{"were not run", `touch "$PILOTHOUSE_TASK_REPO/pwned"`, "echo hi", "pilothouse policy trust " + repo, "env from .pilothouse/task.yaml not applied", "copied 1 file"} {

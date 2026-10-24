@@ -10,9 +10,14 @@ import (
 // stdout (or nothing): exit 2 would also block, but JSON carries the
 // reason and is the documented structured form.
 //
-//   - pre_tool:   hookSpecificOutput.permissionDecision allow | deny | ask
+//   - pre_tool:   hookSpecificOutput.permissionDecision allow | deny | ask;
+//     never allow for AskUserQuestion / ExitPlanMode, where an allow does
+//     not answer the question (or would approve the plan unseen): those
+//     are left to the permission checkpoint
 //   - permission: hookSpecificOutput.decision.behavior allow | deny ("ask"
-//     is meaningless here: no decision lets the native dialog show)
+//     is meaningless here: no decision lets the native dialog show);
+//     questions and plans are answered with decision.updatedInput
+//     (questions.go)
 //   - session_start, prompt_submit: additionalContext; prompt_submit deny
 //     uses decision:block
 //   - everything else: no output (those events have no decision control
@@ -20,8 +25,14 @@ import (
 func (Adapter) EncodeResponse(ev adapters.HookEvent, out adapters.HookOutcome) adapters.HookResponse {
 	switch ev.Kind {
 	case adapters.HookPreTool:
+		if out.Behavior == api.BehaviorAllow && asksPerson(ev.Tool) {
+			out.Behavior, out.Message = "", ""
+		}
 		return hookkit.PreToolResponse(out.Behavior, out.Message, out.Context)
 	case adapters.HookPermission:
+		if asksPerson(ev.Tool) {
+			return answerAsk(ev, out)
+		}
 		if out.Behavior == api.BehaviorAllow || out.Behavior == api.BehaviorDeny {
 			return hookkit.PermissionResponse(out.Behavior, out.Message)
 		}

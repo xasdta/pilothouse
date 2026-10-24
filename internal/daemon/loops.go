@@ -58,7 +58,8 @@ func (d *Daemon) startLoops() {
 		}
 	})
 	d.startUpdateCheck()
-	d.goBackground(d.watchTasks) // taskrun.go
+	d.startUsage()               // usage.go (workstream C)
+	d.goBackground(d.watchTasks) // taskrun.go (workstream G)
 }
 
 // ---- policy ----

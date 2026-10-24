@@ -11,9 +11,11 @@ import (
 	"net/http"
 	"net/url"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -109,6 +111,13 @@ func escapeMarkup(s string) string {
 // When the web app has a public URL, request notifications carry http
 // action buttons (Allow / Deny) backed by single-use action tokens, and a
 // click opens the request in the web app.
+//
+// Request notifications carry a sequence ID (X-Sequence-ID, ntfy server
+// 2.16+): the "waiting in the terminal" notice that follows a timeout
+// replaces the request in place, and Withdraw clears it from the phone
+// (PUT /<topic>/<sequence>/clear) once someone answered elsewhere.
+// Servers without that feature ignore the header and answer the clear
+// with 404, which is not an error.
 type Ntfy struct {
 	Server string
 	Topic  string
@@ -118,7 +127,17 @@ type Ntfy struct {
 	// Backoff is the first retry delay after a 429 or 5xx (doubling, at
 	// most ntfyRetries retries, within the delivery timeout). Zero means 1 s.
 	Backoff time.Duration
+
+	mu   sync.Mutex
+	sent map[string]time.Time // request id → published (for Withdraw)
 }
+
+// ntfySeq is the ntfy sequence ID of a request's notifications.
+func ntfySeq(requestID string) string {
+	return "req-" + seqRE.ReplaceAllString(Short(requestID, 60), "")
+}
+
+var seqRE = regexp.MustCompile(`[^A-Za-z0-9_-]`)
 
 // ntfyRetries bounds retries of a rate-limited (429) or failing (5xx) publish.
 const ntfyRetries = 3
@@ -128,17 +147,22 @@ func (*Ntfy) Remote() bool { return true }
 
 // Request builds the publish request (exported for tests and `pilothouse doctor`).
 func (c *Ntfy) Request(ctx context.Context, n core.Notification) (*http.Request, error) {
-	server := strings.TrimRight(c.Server, "/")
-	if server == "" {
-		server = "https://ntfy.sh"
+	body := Line(n)
+	if n.Request != nil {
+		if d := Details(n.Request); len(d) > 0 {
+			body += "\n" + strings.Join(d, "\n")
+		}
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, server+"/"+url.PathEscape(c.Topic), strings.NewReader(Line(n)))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.topicURL(), strings.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
 	h := req.Header
 	h.Set("Content-Type", "text/plain; charset=utf-8")
 	h.Set("Title", headerText(n.Title))
+	if n.Request != nil && n.Request.ID != "" {
+		h.Set("X-Sequence-ID", ntfySeq(n.Request.ID))
+	}
 	switch n.Kind {
 	case core.NotifyRequest:
 		h.Set("Priority", "high")
@@ -167,7 +191,10 @@ func (c *Ntfy) Request(ctx context.Context, n core.Notification) (*http.Request,
 				link = pub + n.URL
 			}
 			h.Set("Click", link)
-			if n.Kind == core.NotifyRequest && n.Request != nil && n.Request.Status == api.RequestOpen {
+			// One-tap Allow/Deny only for permissions: a question needs an
+			// answer and a plan should be read, so those open the app.
+			if n.Kind == core.NotifyRequest && n.Request != nil && n.Request.Status == api.RequestOpen &&
+				(n.Request.Checkpoint == api.CheckpointPermission || n.Request.Checkpoint == "") {
 				allow := c.Pusher.ActionURL(n.Request.ID, api.BehaviorAllow)
 				deny := c.Pusher.ActionURL(n.Request.ID, api.BehaviorDeny)
 				if allow != "" && deny != "" {
@@ -182,18 +209,73 @@ func (c *Ntfy) Request(ctx context.Context, n core.Notification) (*http.Request,
 	if len(actions) > 0 {
 		h.Set("Actions", strings.Join(actions, "; "))
 	}
+	c.auth(req)
+	return req, nil
+}
+
+func (c *Ntfy) topicURL() string {
+	server := strings.TrimRight(c.Server, "/")
+	if server == "" {
+		server = "https://ntfy.sh"
+	}
+	return server + "/" + url.PathEscape(c.Topic)
+}
+
+func (c *Ntfy) auth(req *http.Request) {
 	switch {
 	case c.Token == "":
 	case strings.Contains(c.Token, ":"):
 		u, p, _ := strings.Cut(c.Token, ":")
 		req.SetBasicAuth(u, p)
 	default:
-		h.Set("Authorization", "Bearer "+c.Token)
+		req.Header.Set("Authorization", "Bearer "+c.Token)
 	}
-	return req, nil
 }
 
 func (c *Ntfy) Send(ctx context.Context, n core.Notification) error {
+	err := c.publish(ctx, n)
+	if err == nil && n.Request != nil && (n.Kind == core.NotifyRequest || n.Kind == core.NotifyBlocked) {
+		c.mu.Lock()
+		if c.sent == nil {
+			c.sent = map[string]time.Time{}
+		}
+		if len(c.sent) >= maxRemembered {
+			for k, at := range c.sent {
+				if time.Since(at) > 24*time.Hour || len(c.sent) >= maxRemembered {
+					delete(c.sent, k)
+				}
+			}
+		}
+		c.sent[n.Request.ID] = time.Now()
+		c.mu.Unlock()
+	}
+	return err
+}
+
+// Withdraw clears a request's notification once someone answered it (or
+// it moved back to the terminal). A timed-out request is left alone: the
+// "waiting in the terminal" notice already replaced it.
+func (c *Ntfy) Withdraw(ctx context.Context, r api.Request) error {
+	c.mu.Lock()
+	_, ok := c.sent[r.ID]
+	delete(c.sent, r.ID)
+	c.mu.Unlock()
+	if !ok || r.Status == api.RequestOpen || r.Status == api.RequestExpired {
+		return nil
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.topicURL()+"/"+ntfySeq(r.ID)+"/clear", nil)
+	if err != nil {
+		return err
+	}
+	c.auth(req)
+	status, _, err := doStatus(c.Client, req)
+	if status == http.StatusNotFound || status == http.StatusMethodNotAllowed {
+		return nil // a server older than 2.16: nothing to clear
+	}
+	return err
+}
+
+func (c *Ntfy) publish(ctx context.Context, n core.Notification) error {
 	if c.Topic == "" {
 		return errors.New("ntfy: no topic configured")
 	}

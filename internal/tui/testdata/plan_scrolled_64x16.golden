@@ -1,0 +1,16 @@
+ pilothouse  studio.local   ● here · auto   4 need you   ● live
+
+── Plan r_p1a2n3 · claude · pilothouse-site · main · held for y…
+  ~/.claude/plans/oauth.md
+  ↑ 2 more lines
+  Users sign in with GitHub instead of a password.
+
+  Steps
+  1. Register the OAuth app and store the client secret in
+     Vault
+  2. Add `/auth/callback` and exchange the code for a token
+    • keep the session cookie HttpOnly
+  3. Remove the password form
+  ↓ 4 more lines
+
+ a approve   c request changes   ↑↓ scroll   esc back

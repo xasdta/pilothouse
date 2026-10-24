@@ -303,13 +303,12 @@ type Task struct {
 	Status    TaskStatus `json:"status"`
 	CreatedAt time.Time  `json:"created_at"`
 	UpdatedAt time.Time  `json:"updated_at"`
-	// StartedBy says who started the task, like Decision.By: "cli",
-	// "tui", "device:<id>". Empty for tasks from before 0.2.
-	StartedBy string `json:"started_by,omitempty"`
+	// By is who started the task, like Decision.By ("device:<id>", "cli").
+	By string `json:"by,omitempty"`
+	// PRURL is the pull request opened when the task shipped.
+	PRURL string `json:"pr_url,omitempty"`
 	// Setup is what .pilothouse/task.yaml did; nil when the repo has none.
 	Setup *TaskSetup `json:"setup,omitempty"`
-	// PRURL is the pull request a ship opened.
-	PRURL string `json:"pr_url,omitempty"`
 	// Note is one person-readable sentence about the last thing that
 	// happened: why the task failed, that setup was skipped, where a
 	// shipped branch went.

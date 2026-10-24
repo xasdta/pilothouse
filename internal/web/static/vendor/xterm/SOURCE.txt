@@ -1,0 +1,23 @@
+xterm.js for the live terminal view (js/views/terminal.js), vendored
+unmodified so the app needs no CDN (the CSP allows only 'self').
+MIT licensed: see LICENSE and LICENSE-addon-fit.
+
+@xterm/xterm 6.0.0
+  https://registry.npmjs.org/@xterm/xterm/-/xterm-6.0.0.tgz
+  sha512-TQwDdQGtwwDt+2cgKDLn0IRaSxYu1tSUjgKarSDkUM0ZNiSRXFpjxEsvc/Zgc5kq5omJ+V0a8/kIM2WD3sMOYg==
+  lib/xterm.mjs -> xterm.mjs, css/xterm.css -> xterm.css, LICENSE -> LICENSE
+
+@xterm/addon-fit 0.11.0
+  https://registry.npmjs.org/@xterm/addon-fit/-/addon-fit-0.11.0.tgz
+  sha512-jYcgT6xtVYhnhgxh3QgYDnnNMYTcf8ElbxxFzX0IZo+vabQqSPAjC3c1wJrKB5E19VwQei89QCiZZP86DCPF7g==
+  lib/addon-fit.mjs -> addon-fit.mjs, LICENSE -> LICENSE-addon-fit
+
+sha256 of the files here:
+  b336ec65a086c056d4804b3d4c2347da5663d3f23c3f25be866467bd8857ad59  xterm.mjs
+  854a7c0fb70e8b1a083c16797ab827299fb18744f5ad34f227b48337e33293c6  xterm.css
+  2d87e1bddc73be9111de8beee5370c3bb7aac9c94e18e6f245f02ca741ef1769  addon-fit.mjs
+
+Source maps are left out (the files still name them; only devtools asks).
+To update: `npm pack` both packages from the same xterm.js release, copy
+the files listed above, re-check the CSP shims in terminal.js against the
+new DOM renderer, and update this file.

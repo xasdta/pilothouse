@@ -291,7 +291,7 @@ func newTaskNewCmd() *cobra.Command {
 			m.SetupOut = cmd.ErrOrStderr() // task.yaml's setup output, as it runs
 			t, err := m.New(cmd.Context(), task.NewOptions{
 				Prompt: args[0], Agent: agent, Base: base, Name: name, Dir: cwd, Cols: cols, Rows: rows,
-				StartedBy: "cli",
+				By: "cli",
 			})
 			if err != nil {
 				return err
@@ -341,7 +341,7 @@ func newTaskLsCmd() *cobra.Command {
 				if sess == "" {
 					sess = "-"
 				}
-				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", v.ID, v.Title, v.Status, startedBy(v.StartedBy), sess, state,
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", v.ID, v.Title, v.Status, startedBy(v.By), sess, state,
 					age(v.CreatedAt), v.Worktree)
 			}
 			if shown == 0 {
@@ -359,7 +359,7 @@ func newTaskLsCmd() *cobra.Command {
 	return cmd
 }
 
-// startedBy is Task.StartedBy for `task ls`: cli, tui or device:<id>
+// startedBy is Task.By for `task ls`: cli, tui or device:<id>
 // (`pilothouse devices` names it); "-" for tasks from before 0.2.
 func startedBy(by string) string {
 	if by == "" {

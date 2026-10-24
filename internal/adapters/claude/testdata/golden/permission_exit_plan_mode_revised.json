@@ -1,0 +1,19 @@
+{
+  "kind": "permission",
+  "vendor_event": "PermissionRequest",
+  "agent_session_id": "7a5678f3-3340-4ad5-84db-4a022f56a74c",
+  "cwd": "/home/user/project",
+  "transcript_path": "/home/user/.claude/projects/-home-user-project/7a5678f3-3340-4ad5-84db-4a022f56a74c.jsonl",
+  "tool": "ExitPlanMode",
+  "tool_kind": "other",
+  "input": {
+    "plan": "# Plan\n\n1. Reply with the single word: DONE\n2. Final step: say the word: KIWI\n",
+    "planFilePath": "/home/user/.claude/plans/this-is-a-test-effervescent-moonbeam.md"
+  },
+  "summary": "Plan ready: Reply with the single word: DONE",
+  "permission_mode": "plan",
+  "plan": {
+    "markdown": "# Plan\n\n1. Reply with the single word: DONE\n2. Final step: say the word: KIWI\n",
+    "path": "/home/user/.claude/plans/this-is-a-test-effervescent-moonbeam.md"
+  }
+}

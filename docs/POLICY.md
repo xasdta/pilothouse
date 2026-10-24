@@ -248,6 +248,13 @@ event), including ones that were ignored and why.
 Session grants ("allow for this session" answers) are applied by the daemon
 after deny and ask rules, so they can never override a deny or an ask.
 
+Tools that ask the person something — Claude Code's `AskUserQuestion` and
+`ExitPlanMode`, Codex's `request_user_input` — are decided by **deny** rules
+only. An allow rule or a grant would not answer the question (or would
+approve a plan nobody read), and an ask rule adds nothing because the
+question reaches the person anyway. A deny rule (for example, "no questions
+in unattended runs") still blocks them. See [AGENTS.md](AGENTS.md#questions-and-plans).
+
 ## Repo policies and trust
 
 A repository can ship rules in `<repo>/.pilothouse/policy.yaml`, discovered

@@ -328,7 +328,7 @@ func (d *Daemon) StartTask(ctx context.Context, ts api.TaskStart, by string) (ap
 	sctx, cancel := context.WithTimeout(d.ctx, taskStartLimit)
 	defer cancel()
 	d.tasks.startMu.Lock()
-	p, err := m.Prepare(sctx, task.NewOptions{Prompt: prompt, Agent: cmd, Base: ts.Base, Name: ts.Name, Dir: repo, StartedBy: by})
+	p, err := m.Prepare(sctx, task.NewOptions{Prompt: prompt, Agent: cmd, Base: ts.Base, Name: ts.Name, Dir: repo, By: by})
 	var t api.Task
 	if err == nil {
 		t, err = m.Create(sctx, p)

@@ -260,7 +260,7 @@ func TestStartTaskLocalDiffDiscard(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if tk.StartedBy != "cli" || tk.Agent != api.AgentClaude || tk.SessionID != "s_task000001" || tk.Repo != repo ||
+	if tk.By != "cli" || tk.Agent != api.AgentClaude || tk.SessionID != "s_task000001" || tk.Repo != repo ||
 		tk.Branch != "pilothouse/add-a-greeting" || tk.BaseRef != "main" || tk.Status != api.TaskRunning {
 		t.Fatalf("task %+v", tk)
 	}
@@ -270,7 +270,7 @@ func TestStartTaskLocalDiffDiscard(t *testing.T) {
 	}
 	// Recorded where the CLI looks too.
 	local, _ := task.Load()
-	if len(local) != 1 || local[0].ID != tk.ID || local[0].SessionID != tk.SessionID || local[0].StartedBy != "cli" {
+	if len(local) != 1 || local[0].ID != tk.ID || local[0].SessionID != tk.SessionID || local[0].By != "cli" {
 		t.Fatalf("tasks.json %+v", local)
 	}
 	ts, err := h.c.Tasks(bg)
@@ -750,7 +750,7 @@ func TestTasksThroughSignedDeviceAPI(t *testing.T) {
 	if resp.StatusCode != 200 || json.Unmarshal(body, &tk) != nil {
 		t.Fatalf("start: %d %s", resp.StatusCode, body)
 	}
-	if !strings.HasPrefix(tk.StartedBy, "device:d_") || tk.SessionID == "" || tk.Prompt != "Fix the login bug" {
+	if !strings.HasPrefix(tk.By, "device:d_") || tk.SessionID == "" || tk.Prompt != "Fix the login bug" {
 		t.Fatalf("task %+v", tk)
 	}
 	if resp, body := p.post("/api/tasks", good); resp.StatusCode != 403 || errCodeOf(body) != "replayed" {
@@ -762,7 +762,7 @@ func TestTasksThroughSignedDeviceAPI(t *testing.T) {
 
 	resp, body = p.do("GET", "/api/tasks", nil)
 	var ts []api.Task
-	if resp.StatusCode != 200 || json.Unmarshal(body, &ts) != nil || len(ts) != 1 || ts[0].StartedBy != tk.StartedBy {
+	if resp.StatusCode != 200 || json.Unmarshal(body, &ts) != nil || len(ts) != 1 || ts[0].By != tk.By {
 		t.Fatalf("tasks: %d %s", resp.StatusCode, body)
 	}
 	resp, body = p.do("GET", "/api/tasks/"+tk.ID+"/diff", nil)

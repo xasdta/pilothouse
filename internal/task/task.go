@@ -131,8 +131,8 @@ type NewOptions struct {
 	Dir    string // where the command runs; must be inside a git repo
 	Cols   uint16 // initial terminal size for the agent
 	Rows   uint16
-	// StartedBy is recorded on the task: "cli", "tui", "device:<id>".
-	StartedBy string
+	// By is recorded on the task (Task.By): "cli", "tui", "device:<id>".
+	By string
 }
 
 // Bounds on what starts a task.
@@ -288,7 +288,7 @@ func (m *Manager) Create(ctx context.Context, p *Prepared) (t api.Task, err erro
 		Branch:    BranchPrefix + slug,
 		BaseRef:   p.base,
 		Status:    api.TaskRunning,
-		StartedBy: o.StartedBy,
+		By:        o.By,
 		CreatedAt: now,
 		UpdatedAt: now,
 	}

@@ -1,0 +1,49 @@
+{
+  "kind": "pre_tool",
+  "vendor_event": "PreToolUse",
+  "agent_session_id": "019a3b2c-7d4e-7f10-9a1b-2c3d4e5f6a7b",
+  "cwd": "/home/user/project",
+  "transcript_path": "/home/user/.codex/sessions/2026/10/22/rollout-2026-10-22T10-00-00-019a3b2c-7d4e-7f10-9a1b-2c3d4e5f6a7b.jsonl",
+  "tool_use_id": "call_rui1",
+  "tool": "request_user_input",
+  "tool_kind": "other",
+  "input": {
+    "questions": [
+      {
+        "id": "db",
+        "header": "Database",
+        "question": "Which database should the migration target?",
+        "options": [
+          {
+            "label": "Postgres 16 (Recommended)",
+            "description": "Matches production today."
+          },
+          {
+            "label": "Postgres 17",
+            "description": "Newer; needs a staging run first."
+          }
+        ]
+      }
+    ]
+  },
+  "summary": "Asks: Which database should the migration target?",
+  "permission_mode": "default",
+  "questions": [
+    {
+      "id": "db",
+      "header": "Database",
+      "question": "Which database should the migration target?",
+      "options": [
+        {
+          "label": "Postgres 16 (Recommended)",
+          "description": "Matches production today."
+        },
+        {
+          "label": "Postgres 17",
+          "description": "Newer; needs a staging run first."
+        }
+      ],
+      "allow_other": false
+    }
+  ]
+}
