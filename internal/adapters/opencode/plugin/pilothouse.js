@@ -508,13 +508,25 @@ async function runCommand(cmd) {
   } catch {}
 }
 
+// announced lists the sessions this process has open (subagents report
+// through their parent), so a restarted daemon learns where their replies
+// go before their next hook.
+function announced() {
+  const out = [];
+  for (const id of sessions.keys()) {
+    if (!parents.has(id)) out.push(id);
+  }
+  return out.slice(-200);
+}
+
 // pollLoop keeps the command channel open: one long poll at a time,
 // backing off while the daemon is down.
 async function pollLoop() {
   let backoff = 500;
   while (polling) {
     try {
-      const r = await call("GET", "/v1/plugin/commands?wait=" + POLL_WAIT, undefined, {
+      const body = JSON.stringify({ sessions: announced(), wait: POLL_WAIT });
+      const r = await call("POST", "/v1/plugin/commands", body, {
         timeout: (POLL_WAIT + 10) * 1000,
         signal: pollCtrl.signal,
       });

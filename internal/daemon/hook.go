@@ -51,6 +51,9 @@ type permissionPlan struct {
 	wait      <-chan api.Request // nil when routed to the terminal
 	pol       policy.Result      // verdict at the permission checkpoint
 	granted   bool               // a session grant answered it; nobody is asked
+	// mustHold: the agent has no dialog for it (HookEvent.Hold), so it is
+	// held for a person at the desk too and never answered by a grant.
+	mustHold bool
 }
 
 // Hook routes one hook call (BUILD-SPEC §5) and returns what the shim must
@@ -308,7 +311,7 @@ func policyVerdict(ev adapters.HookEvent, pol policy.Result) (adapters.HookOutco
 // permission checkpoint after an "ask" (which Codex can't express at
 // pre_tool) must still reach a person.
 func (d *Daemon) grantPermission(ctx context.Context, tx *store.Tx, p *permissionPlan) error {
-	if p.pol.Action == api.BehaviorDeny || p.pol.Action == api.BehaviorAsk {
+	if p.pol.Action == api.BehaviorDeny || p.pol.Action == api.BehaviorAsk || p.mustHold {
 		return nil
 	}
 	grants, err := tx.Grants(ctx, p.req.SessionID)
@@ -337,7 +340,7 @@ func (d *Daemon) planPermission(h *hookCall, pol policy.Result) *permissionPlan 
 		hold = max
 	}
 	ev := h.ev
-	p := &permissionPlan{toolUseID: ev.ToolUseID, hold: hold, pol: pol}
+	p := &permissionPlan{toolUseID: ev.ToolUseID, hold: hold, pol: pol, mustHold: ev.Hold}
 	p.req = api.Request{
 		ID: newID("r_"), Agent: h.env.Agent, Checkpoint: api.CheckpointPermission,
 		Tool: ev.Tool, ToolKind: ev.ToolKind, Command: ev.Command, Paths: ev.Paths, Input: ev.Input,
@@ -345,12 +348,15 @@ func (d *Daemon) planPermission(h *hookCall, pol policy.Result) *permissionPlan 
 		Route: api.RouteTerminal, Status: api.RequestSteppedAside,
 		CreatedAt: now, ExpiresAt: now.Add(max(hold, 0)),
 	}
+	if len(ev.Questions) > 0 {
+		p.req.Checkpoint, p.req.Questions = api.CheckpointQuestion, ev.Questions
+	}
 	if pol.Action != "" {
 		p.req.PolicyRule = pol.Rule
 	}
 	d.enrichRequest(&p.req, h)
 	away := d.Presence().State == api.PresenceAway
-	if hold > 0 && (d.cfg.Approvals.AlwaysHold || away) {
+	if hold > 0 && (d.cfg.Approvals.AlwaysHold || away || p.mustHold) {
 		if ch, ok := d.waiters.add(p.req.ID); ok {
 			p.wait = ch
 			p.req.Route, p.req.Status = api.RouteDevices, api.RequestOpen
@@ -389,7 +395,7 @@ func (d *Daemon) holdPermission(ctx context.Context, p *permissionPlan, sess api
 	switch final.Status {
 	case api.RequestDecided:
 		if dec := final.Decision; dec != nil {
-			return adapters.HookOutcome{Behavior: dec.Behavior, Message: decisionMessage(dec)}
+			return adapters.HookOutcome{Behavior: dec.Behavior, Message: decisionMessage(dec), Answers: dec.Answers}
 		}
 	case api.RequestExpired:
 		// The person is still away: tell their devices to use the terminal.
