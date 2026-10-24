@@ -134,6 +134,18 @@ lingering with stale buttons. In Telegram, requests arrive with buttons
 changes), and replying to a "finished" message sends that agent a follow-up.
 See [docs/NOTIFICATIONS.md](docs/NOTIFICATIONS.md).
 
+Open a session in the app to see what the agent is doing: its activity turn by
+turn (prompts, tool calls with their output, subagents, errors), the files it
+changed, its tokens and estimated cost, and a *Catch me up* summary of what
+happened since you last looked. Where the agent supports it you can reply,
+interrupt, or open its live terminal (sessions started with `pilothouse run`),
+with a key row for Esc, Ctrl-C, arrows, Enter, y and n. *Tasks* starts an agent
+on a prompt in its own worktree; you review the diff and ship it as a pull
+request or discard it. *Insights* shows usage and cost over 7, 30 or 90 days,
+what your rules allowed, asked and blocked, and today's budget. Replies,
+terminal typing (one signature unlocks it for 10 minutes), and starting or
+finishing tasks are signed by the device like approvals.
+
 ### Rules
 
 ```yaml

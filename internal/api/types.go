@@ -300,6 +300,10 @@ type Task struct {
 	Status    TaskStatus `json:"status"`
 	CreatedAt time.Time  `json:"created_at"`
 	UpdatedAt time.Time  `json:"updated_at"`
+	// By is who started the task, like Decision.By ("device:<id>", "cli").
+	By string `json:"by,omitempty"`
+	// PRURL is the pull request opened when the task shipped.
+	PRURL string `json:"pr_url,omitempty"`
 }
 
 // Grant is an "allow for this session" answer, applied at pre_tool.
