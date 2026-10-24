@@ -245,15 +245,11 @@ func TestNotifyTelegramWaitsForDaemon(t *testing.T) {
 	if k.PairHash == "" {
 		t.Fatal("no pending code for the daemon")
 	}
-	// The daemon pairs (simulated): it records chat_id.
 	cfg, _ := config.Load()
 	if cfg.TelegramDecisions() || !cfg.Notify.Telegram.Enabled {
 		t.Fatalf("--notify-only not saved: %+v", cfg.Notify.Telegram)
 	}
-	cfg.Notify.Telegram.ChatID = 4242
-	if err := cfg.Save(); err != nil {
-		t.Fatal(err)
-	}
+	f2DaemonPairs(t, 4242) // the daemon pairs (simulated)
 	if err := a.wait(t); err != nil {
 		t.Fatal(err)
 	}
@@ -493,22 +489,86 @@ func TestSetupTelegramInline(t *testing.T) {
 	saved := tgPollInterval
 	tgPollInterval = 10 * time.Millisecond
 	t.Cleanup(func() { tgPollInterval = saved })
-	go func() { // the daemon: pairs once the link exists
-		for i := 0; i < 500; i++ {
+	// The daemon (simulated): pairs as soon as a code is pending, however
+	// the scheduler interleaves it with setup.
+	stop, paired := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(paired)
+		for {
 			if k, _ := telegram.LoadKeys(telegram.KeysPath()); k.PairHash != "" {
-				cfg, _ := config.Load()
-				cfg.Notify.Telegram.ChatID = 4242
-				_ = cfg.Save()
+				f2DaemonPairs(t, 4242)
 				return
 			}
-			time.Sleep(10 * time.Millisecond)
+			select {
+			case <-stop:
+				return
+			case <-time.After(time.Millisecond):
+			}
 		}
 	}()
 	out, err := ibxRun(t, "y\nn\n", "setup")
+	close(stop)
+	<-paired
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	ibxContains(t, out, "@BotFather", "@cli_test_bot is ready", "✓ Telegram connected", "test notification sent", "Telegram @cli_test_bot")
+	if cfg, _ := config.Load(); !cfg.Notify.Telegram.Enabled || cfg.Notify.Telegram.ChatID != 4242 || cfg.Notify.Telegram.APIBase != bot.URL {
+		t.Fatalf("telegram config after setup = %+v", cfg.Notify.Telegram)
+	}
+}
+
+// f2DaemonPairs does what the daemon does when a chat opens the link: it
+// spends the pending code and records chat_id, each as a locked
+// read-modify-write (daemon/telegram.go paired).
+func f2DaemonPairs(t *testing.T, chat int64) {
+	t.Helper()
+	if _, err := telegram.UpdateKeys(telegram.KeysPath(), func(k *telegram.Keys) error {
+		k.PairHash, k.PairExpires = "", time.Time{}
+		return nil
+	}); err != nil {
+		t.Error(err)
+	}
+	if _, err := config.Update(nil, func(c *config.Config) error {
+		c.Notify.Telegram.Enabled, c.Notify.Telegram.ChatID = true, chat
+		return nil
+	}); err != nil {
+		t.Error(err)
+	}
+}
+
+// A config change saved while a command holds an older copy (here the
+// daemon pairing Telegram while `tailscale serve` runs) survives that
+// command's own save.
+func TestRemoteTailscaleKeepsConcurrentChanges(t *testing.T) {
+	ibxEnv(t)
+	f2Config(t, func(c *config.Config) { c.Notify.Telegram.Enabled = true })
+	f := &rmtFakeTS{installed: true, status: rmtGoodStatus}
+	ts := f.exec()
+	serve := ts.interactive
+	ts.interactive = func(ctx context.Context, name string, args ...string) error {
+		f2DaemonPairs(t, 4242) // a chat pairs while serve runs
+		return serve(ctx, name, args...)
+	}
+	rmtTailscale = ts
+	if out, err := ibxRun(t, "", "remote", "tailscale"); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	cfg, _ := config.Load()
+	if cfg.Web.PublicURL != "https://mac.tail1.ts.net" || cfg.Notify.Telegram.ChatID != 4242 {
+		t.Fatalf("lost update: public_url=%q chat_id=%d", cfg.Web.PublicURL, cfg.Notify.Telegram.ChatID)
+	}
+	ts.interactive = func(context.Context, string, ...string) error {
+		_, err := config.Update(nil, func(c *config.Config) error { c.Machine = "studio"; return nil })
+		return err
+	}
+	rmtTailscale = ts
+	if _, err := ibxRun(t, "", "remote", "off"); err != nil {
+		t.Fatal(err)
+	}
+	if cfg, _ := config.Load(); cfg.Web.PublicURL != "" || cfg.Machine != "studio" || cfg.Notify.Telegram.ChatID != 4242 {
+		t.Fatalf("remote off lost an update: %+v %q %d", cfg.Web, cfg.Machine, cfg.Notify.Telegram.ChatID)
+	}
 }
 
 // The demo serves the real web app from a sandbox and cleans up on Ctrl-C.

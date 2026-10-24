@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xasdta/pilothouse/internal/config"
 	"github.com/xasdta/pilothouse/internal/paths"
 )
 
@@ -53,11 +54,69 @@ func LoadKeys(path string) (Keys, error) {
 	return k, nil
 }
 
-// SaveKeys writes the keys file atomically with mode 0600.
+// SaveKeys writes the keys file atomically with mode 0600. Prefer
+// UpdateKeys when the keys were read earlier: the CLI and the daemon both
+// write this file.
 func SaveKeys(path string, k Keys) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
+	return config.WithFileLock(path, func() error { return saveKeys(path, k) })
+}
+
+// UpdateKeys changes the keys file as one locked read-modify-write (see
+// config.Update). fn returning an error saves nothing.
+func UpdateKeys(path string, fn func(*Keys) error) (Keys, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return Keys{}, err
+	}
+	var out Keys
+	err := config.WithFileLock(path, func() error {
+		k, err := LoadKeys(path)
+		if err != nil {
+			return err
+		}
+		if err := fn(&k); err != nil {
+			return err
+		}
+		out = k
+		return saveKeys(path, k)
+	})
+	return out, err
+}
+
+// RemoveKeys deletes the keys file (under the same lock).
+func RemoveKeys(path string) error {
+	if _, err := os.Stat(filepath.Dir(path)); errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return config.WithFileLock(path, func() error {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		return nil
+	})
+}
+
+// ErrCodeChanged: the pairing code was used, replaced or expired between
+// checking it and spending it.
+var ErrCodeChanged = errors.New("the pairing code is no longer pending")
+
+// SpendCode clears the pending pairing code if it is still code: the check
+// and the spend are one locked step, so a code is used at most once and a
+// newer code (`pilothouse notify telegram` run again) is never cleared.
+func SpendCode(path, code string, now time.Time) error {
+	_, err := UpdateKeys(path, func(k *Keys) error {
+		if !k.CheckCode(code, now) {
+			return ErrCodeChanged
+		}
+		k.PairHash, k.PairExpires = "", time.Time{}
+		return nil
+	})
+	return err
+}
+
+func saveKeys(path string, k Keys) error {
 	b, _ := json.MarshalIndent(k, "", "  ")
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, b, 0o600); err != nil {

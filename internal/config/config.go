@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/sys/unix"
 	"gopkg.in/yaml.v3"
 
 	"github.com/xasdta/pilothouse/internal/paths"
@@ -207,13 +208,20 @@ func (c *Config) UpdateCheckEnabled() bool {
 	return c.UpdateCheck == nil || *c.UpdateCheck
 }
 
-// Save writes the config atomically with 0600 permissions.
+// Save writes the config atomically with 0600 permissions. It replaces the
+// whole file with c: when c was loaded a while ago, or another process
+// (the daemon saves notify.telegram.chat_id when a chat pairs) may have
+// written since, use Update instead so neither change is lost.
 func (c *Config) Save() error {
-	b, err := yaml.Marshal(c)
-	if err != nil {
+	if err := paths.Ensure(); err != nil {
 		return err
 	}
-	if err := paths.Ensure(); err != nil {
+	return WithFileLock(paths.Config(), c.save)
+}
+
+func (c *Config) save() error {
+	b, err := yaml.Marshal(c)
+	if err != nil {
 		return err
 	}
 	tmp := paths.Config() + ".tmp"
@@ -221,6 +229,73 @@ func (c *Config) Save() error {
 		return err
 	}
 	return os.Rename(tmp, paths.Config())
+}
+
+// Update changes config.yaml as one locked read-modify-write: under an
+// exclusive lock it reads the file as it is now, applies fn and saves the
+// result, so concurrent writers (CLI commands, setup, the daemon) each
+// keep the others' changes. When the file doesn't exist yet, fn starts
+// from a copy of base (nil: the defaults). A file that doesn't load is an
+// error and is left alone. fn returning an error saves nothing. Update
+// returns the saved config.
+func Update(base *Config, fn func(*Config) error) (*Config, error) {
+	if err := paths.Ensure(); err != nil {
+		return nil, err
+	}
+	var out *Config
+	err := WithFileLock(paths.Config(), func() error {
+		c, err := current(base)
+		if err != nil {
+			return err
+		}
+		if err := fn(c); err != nil {
+			return err
+		}
+		if err := c.save(); err != nil {
+			return err
+		}
+		out = c
+		return nil
+	})
+	return out, err
+}
+
+// current reads config.yaml, or copies base when there is no file.
+func current(base *Config) (*Config, error) {
+	if _, err := os.Stat(paths.Config()); err == nil || base == nil {
+		return Load()
+	}
+	b, err := yaml.Marshal(base) // a deep copy: fn must not change base
+	if err != nil {
+		return nil, err
+	}
+	c := Default()
+	if err := yaml.Unmarshal(b, c); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+// WithFileLock runs fn holding an exclusive lock on path+".lock" (flock,
+// so the kernel drops it if the process dies). Locks are per process and
+// file: fn must not take the same lock again.
+func WithFileLock(path string, fn func() error) error {
+	f, err := os.OpenFile(path+".lock", os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return fmt.Errorf("lock %s: %w", path, err)
+	}
+	defer f.Close()
+	for {
+		err = unix.Flock(int(f.Fd()), unix.LOCK_EX)
+		if !errors.Is(err, unix.EINTR) {
+			break
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("lock %s: %w", path, err)
+	}
+	defer func() { _ = unix.Flock(int(f.Fd()), unix.LOCK_UN) }()
+	return fn()
 }
 
 // MachineName is the name shown in the inbox, the web app and notifications:

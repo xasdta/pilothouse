@@ -50,9 +50,10 @@ type Options struct {
 	Decisions bool
 	// Keys returns the current keys (for the pending pairing code).
 	Keys func() Keys
-	// OnPaired persists a newly paired chat (config chat_id) and spends
-	// the pairing code. Required for pairing.
-	OnPaired func(ctx context.Context, chat Chat) error
+	// OnPaired spends the pairing code (SpendCode: it fails if the code
+	// changed since it was checked) and persists the newly paired chat
+	// (config chat_id). Required for pairing.
+	OnPaired func(ctx context.Context, chat Chat, code string) error
 	Machine  string
 	// PublicURL is the web app's https URL for "Open in the app" links, or "".
 	PublicURL func() string
@@ -397,7 +398,7 @@ func (b *Bot) maybePair(ctx context.Context, m *Message) {
 		b.log.Info("telegram: ignored /start with an unknown or expired pairing code")
 		return
 	}
-	if err := b.o.OnPaired(ctx, m.Chat); err != nil {
+	if err := b.o.OnPaired(ctx, m.Chat, code); err != nil {
 		b.log.Error("telegram: pairing failed", "err", err)
 		return
 	}
