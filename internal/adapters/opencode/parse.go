@@ -175,7 +175,7 @@ func (Adapter) ParseHook(env adapters.HookEnvelope) (adapters.HookEvent, error) 
 		// No tool: the request is matched by its id only, never by a
 		// tool and summary that another pending request might share.
 		ev.ToolUseID = p.RequestID
-		ev.Summary = "Answered in OpenCode"
+		ev.Summary = "OpenCode dialog answered"
 		if r := strings.TrimSpace(p.Reply); r != "" {
 			ev.Summary += " (" + hookkit.OneLine(r, 20) + ")"
 		}
