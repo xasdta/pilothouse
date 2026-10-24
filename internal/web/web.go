@@ -89,6 +89,9 @@ type Server struct {
 	pubURL     string
 	pubMtime   time.Time
 	pubChecked time.Time
+
+	pushMu sync.Mutex
+	pushed map[string]pushedRequest // request id → devices its push reached (push.go)
 }
 
 // New migrates web_* tables and loads/creates VAPID keys.

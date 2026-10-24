@@ -6,8 +6,12 @@
 // a timeout. Failures are logged, never returned.
 //
 // Routing: desktop notifications are always sent (when enabled); the
-// remote channels (Web Push, ntfy, webhooks) only when n.Remote is true —
-// the person is away — or for a test notification.
+// remote channels (Web Push, ntfy, webhooks, Telegram) only when n.Remote
+// is true — the person is away — or for a test notification.
+//
+// Withdrawal: when a request closes, the daemon calls Notifier.Withdraw and
+// every remote channel that notified the request takes it back (see
+// Withdrawer), so a phone stops offering Allow/Deny for an answered request.
 package notify
 
 import (
@@ -42,6 +46,23 @@ type Channel interface {
 	Send(ctx context.Context, n core.Notification) error
 }
 
+// Withdrawer is a Channel that can take back what it sent about a request
+// once the request closes, so a phone never keeps offering buttons for a
+// question that was already answered: Web Push replaces the notification
+// (same tag, never a silent push), ntfy clears it, Telegram edits the
+// message to say how it ended. Withdraw must do nothing for requests the
+// channel never notified.
+type Withdrawer interface {
+	Withdraw(ctx context.Context, r api.Request) error
+}
+
+// kindWithdraw marks a queued withdrawal. It never leaves this package:
+// channels receive withdrawals through Withdrawer.
+const kindWithdraw core.NotificationKind = "withdraw"
+
+// maxRemembered bounds the requests remembered as sent to remote channels.
+const maxRemembered = 4096
+
 // ErrClosed is returned by Notify after Close.
 var ErrClosed = errors.New("notifier closed")
 
@@ -63,6 +84,11 @@ type Notifier struct {
 	closed  bool
 	workers []*worker
 	wg      sync.WaitGroup
+
+	// sent remembers requests notified on remote channels, so Withdraw
+	// only queues work for requests someone may still see on a phone.
+	sentMu sync.Mutex
+	sent   map[string]time.Time
 }
 
 // worker delivers to one channel from two lanes: urgent notifications (a
@@ -167,13 +193,14 @@ func (w *worker) close() {
 	w.signal()
 }
 
-// New returns a Notifier that fans out to every configured channel.
+// New returns a Notifier that fans out to every configured channel plus
+// extra (the daemon adds Telegram, which lives in its own package).
 // p may be nil (no Web Push).
-func New(cfg *config.Config, p Pusher, log *slog.Logger) core.Notifier {
+func New(cfg *config.Config, p Pusher, log *slog.Logger, extra ...Channel) core.Notifier {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	return NewWith(log, defaultTimeout, Channels(cfg, p, log)...)
+	return NewWith(log, defaultTimeout, append(Channels(cfg, p, log), extra...)...)
 }
 
 // Channels builds the channels enabled in cfg.
@@ -221,7 +248,7 @@ func NewWith(log *slog.Logger, timeout time.Duration, chans ...Channel) *Notifie
 	if timeout <= 0 {
 		timeout = defaultTimeout
 	}
-	n := &Notifier{log: log.With("component", "notify")}
+	n := &Notifier{log: log.With("component", "notify"), sent: map[string]time.Time{}}
 	for _, c := range chans {
 		w := &worker{ch: c, timeout: timeout, wake: make(chan struct{}, 1)}
 		n.workers = append(n.workers, w)
@@ -240,7 +267,12 @@ func (n *Notifier) run(w *worker) {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), w.timeout)
 		start := time.Now()
-		err := w.ch.Send(ctx, note)
+		var err error
+		if note.Kind == kindWithdraw {
+			err = w.ch.(Withdrawer).Withdraw(ctx, *note.Request)
+		} else {
+			err = w.ch.Send(ctx, note)
+		}
 		cancel()
 		if err != nil {
 			n.log.Warn("notification failed", "channel", w.ch.Name(), "kind", note.Kind, "err", err)
@@ -258,19 +290,77 @@ func (n *Notifier) Notify(_ context.Context, note core.Notification) error {
 	if n.closed {
 		return ErrClosed
 	}
+	if note.Remote && note.Request != nil && (note.Kind == core.NotifyRequest || note.Kind == core.NotifyBlocked) {
+		n.remember(note.Request.ID)
+	}
 	for _, w := range n.workers {
 		if w.ch.Remote() && !note.Remote && note.Kind != core.NotifyTest {
 			continue
 		}
-		if d := w.push(note); d != nil {
-			lvl := slog.LevelWarn
-			if urgent(d.Kind) {
-				lvl = slog.LevelError
-			}
-			n.log.Log(context.Background(), lvl, "notification dropped: queue full", "channel", w.ch.Name(), "kind", d.Kind)
+		n.enqueue(w, note)
+	}
+	return nil
+}
+
+func (n *Notifier) enqueue(w *worker, note core.Notification) {
+	if d := w.push(note); d != nil {
+		lvl := slog.LevelWarn
+		if urgent(d.Kind) {
+			lvl = slog.LevelError
+		}
+		n.log.Log(context.Background(), lvl, "notification dropped: queue full", "channel", w.ch.Name(), "kind", d.Kind)
+	}
+}
+
+// Withdraw takes back the remote notifications sent about r now that it is
+// closed (see Withdrawer). It returns at once; requests that never reached
+// a remote channel cost nothing.
+func (n *Notifier) Withdraw(_ context.Context, r api.Request) error {
+	if r.ID == "" || r.Status == api.RequestOpen || !n.forget(r.ID) {
+		return nil
+	}
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	if n.closed {
+		return ErrClosed
+	}
+	note := core.Notification{Kind: kindWithdraw, Request: &r, Remote: true}
+	for _, w := range n.workers {
+		if _, ok := w.ch.(Withdrawer); ok && w.ch.Remote() {
+			n.enqueue(w, note)
 		}
 	}
 	return nil
+}
+
+// remember records that a request was sent to the remote channels.
+func (n *Notifier) remember(id string) {
+	n.sentMu.Lock()
+	defer n.sentMu.Unlock()
+	now := time.Now()
+	if len(n.sent) >= maxRemembered {
+		for k, at := range n.sent {
+			if now.Sub(at) > 24*time.Hour {
+				delete(n.sent, k)
+			}
+		}
+		for k := range n.sent { // still full: forget any one
+			if len(n.sent) < maxRemembered {
+				break
+			}
+			delete(n.sent, k)
+		}
+	}
+	n.sent[id] = now
+}
+
+// forget reports whether id was remembered, and forgets it.
+func (n *Notifier) forget(id string) bool {
+	n.sentMu.Lock()
+	defer n.sentMu.Unlock()
+	_, ok := n.sent[id]
+	delete(n.sent, id)
+	return ok
 }
 
 // Close stops accepting notifications and waits for queued deliveries.
@@ -295,4 +385,13 @@ func (pushChannel) Name() string { return "webpush" }
 func (pushChannel) Remote() bool { return true }
 func (c pushChannel) Send(ctx context.Context, n core.Notification) error {
 	return c.p.Push(ctx, n)
+}
+
+// Withdraw replaces the request's notification on the devices that got it
+// when the Pusher supports that (*web.Server does).
+func (c pushChannel) Withdraw(ctx context.Context, r api.Request) error {
+	if w, ok := c.p.(Withdrawer); ok {
+		return w.Withdraw(ctx, r)
+	}
+	return nil
 }
