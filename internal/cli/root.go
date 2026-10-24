@@ -48,6 +48,7 @@ the terminal at your desk, or your phone when you're away.`,
 	}
 	// inbox.go (workstream F)
 	add("start", newSetupCmd(), newDoctorCmd())
+	add("start", newDemoCmd()) // demo.go (workstream F, 0.2)
 	add("work", newInboxCmd(), newLsCmd(), newApproveCmd(), newDenyCmd(), newLogCmd(), newExplainCmd())
 	add("work", newPresenceCmds()...)
 	add("admin", newServiceCmd(), newNotifyCmd(), newVersionCmd())
