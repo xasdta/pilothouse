@@ -239,13 +239,13 @@ func TestParseShell(t *testing.T) {
 	if strings.Join(c0.words, "|") != "A=1|echo|a b|c d|e f" {
 		t.Errorf("words = %q", c0.words)
 	}
-	if len(c0.redirs) != 2 || c0.redirs[0] != (shRedir{">", "out"}) || c0.redirs[1] != (shRedir{">>", "err"}) {
+	if len(c0.redirs) != 2 || c0.redirs[0] != (shRedir{op: ">", target: "out"}) || c0.redirs[1] != (shRedir{op: ">>", target: "err"}) {
 		t.Errorf("redirs = %+v", c0.redirs)
 	}
 	if !p.cmds[1].pipedIn || p.cmds[2].pipedIn {
 		t.Errorf("pipes: %+v", p.cmds)
 	}
-	if p.cmds[2].redirs[0] != (shRedir{"<<<", "here"}) {
+	if p.cmds[2].redirs[0] != (shRedir{op: "<<<", target: "here"}) {
 		t.Errorf("here-string: %+v", p.cmds[2].redirs)
 	}
 	if len(p.subs) != 1 || p.subs[0] != "id" {

@@ -86,6 +86,10 @@ type rule struct {
 	match       []fieldMatch    // AND-ed
 	when        cel.Program     // nil = no `when:`
 	whenSrc     string
+	matchSrc    map[string][]string // the match: block as written, for listings
+	// shellAware rules (managed and preset) match `command:` per simple
+	// command (shellmatch.go).
+	shellAware bool
 	// check replaces match/when for built-in rules implemented in Go.
 	check func(*evalCtx) (bool, string)
 }
@@ -272,7 +276,7 @@ func (p *parser) rule(n *yaml.Node, idx int) *rule {
 		p.errf(n, "%s: needs `match:` and/or `when:` (to match every call use `match: {tool: \"*\"}`)", label)
 	}
 	if matchNode != nil {
-		r.match = p.match(matchNode, label)
+		r.match, r.matchSrc = p.match(matchNode, label)
 	}
 	if whenNode != nil {
 		src := p.str(whenNode, "when")
@@ -290,21 +294,23 @@ func (p *parser) rule(n *yaml.Node, idx int) *rule {
 	return r
 }
 
-func (p *parser) match(n *yaml.Node, label string) []fieldMatch {
+func (p *parser) match(n *yaml.Node, label string) ([]fieldMatch, map[string][]string) {
 	if n.Kind != yaml.MappingNode {
 		p.errf(n, "%s: `match:` must be a mapping, e.g. {tool: Bash, command: \"git push*\"}", label)
-		return nil
+		return nil, nil
 	}
 	if len(n.Content) == 0 {
 		p.errf(n, "%s: `match:` is empty", label)
-		return nil
+		return nil, nil
 	}
 	var out []fieldMatch
+	src := map[string][]string{}
 	p.eachKey(n, matchKeys, label+" match", func(k string, kn, v *yaml.Node) {
 		f := matchFieldNames[k]
 		fm := fieldMatch{field: f}
 		for _, s := range p.strList(v, "match."+k) {
 			pat := s.Value
+			src[k] = append(src[k], pat)
 			mode := globText
 			switch f {
 			case fKind:
@@ -333,7 +339,7 @@ func (p *parser) match(n *yaml.Node, label string) []fieldMatch {
 			out = append(out, fm)
 		}
 	})
-	return out
+	return out, src
 }
 
 // str reads a scalar. Non-scalars are reported, returning "".

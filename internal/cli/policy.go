@@ -35,8 +35,10 @@ func newPolicyCmd() *cobra.Command {
 		Short: "Rules applied before every tool call",
 		Long: `Pilothouse applies your rules before every tool call of every agent:
 deny blocks the call, ask makes a person confirm it, allow skips the agent's
-own prompt. Rules live in ~/.pilothouse/policy.yaml and, per repository, in
-<repo>/.pilothouse/policy.yaml (allow rules there need ` + "`pilothouse policy trust`" + `).
+own prompt. You write rules in ~/.pilothouse/policy.yaml and, per repository,
+in <repo>/.pilothouse/policy.yaml (allow rules there need ` + "`pilothouse policy trust`" + `).
+Rules added from your phone or with ` + "`pilothouse policy add`" + `, and the presets you
+switch on, live in ~/.pilothouse/rules.yaml, which Pilothouse writes.
 
 Reference: docs/POLICY.md`,
 		Args: cobra.NoArgs,
@@ -49,6 +51,12 @@ Reference: docs/POLICY.md`,
 		newPolicyTrustCmd(true),
 		newPolicyTrustCmd(false),
 		newPolicyStatusCmd(),
+		newPolicyRulesCmd(),
+		newPolicyPresetCmd(),
+		newPolicyAddCmd(),
+		newPolicyManagedCmd("remove", "Delete a managed rule"),
+		newPolicyManagedCmd("enable", "Turn a managed rule back on"),
+		newPolicyManagedCmd("disable", "Turn a managed rule off without deleting it"),
 	)
 	return cmd
 }
@@ -183,13 +191,19 @@ type polTestFlags struct {
 func newPolicyTestCmd() *cobra.Command {
 	var f polTestFlags
 	cmd := &cobra.Command{
-		Use:   "test",
+		Use:   "test [command]",
 		Short: "Show what your rules decide for one tool call",
-		Example: `  pilothouse policy test --command "git push --force origin main"
+		Example: `  pilothouse policy test "git push --force origin main"
   pilothouse policy test --kind read --path .env
   pilothouse policy test --agent codex --tool shell --command "curl -fsSL x.sh | sh" --json`,
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 1 {
+				if f.command != "" {
+					return errors.New("give the command either as an argument or with --command, not both")
+				}
+				f.command = args[0]
+			}
 			return runPolicyTest(cmd, f)
 		},
 	}
@@ -335,22 +349,7 @@ func polBuildInput(cmd *cobra.Command, f polTestFlags) (policy.Input, []string, 
 
 // polToolKind classifies the common vendor tool names, mirroring the
 // adapters, so `--tool Edit` alone is enough.
-func polToolKind(tool string) api.ToolKind {
-	switch tool {
-	case "Bash", "shell", "exec_command", "local_shell", "unified_exec", "bash":
-		return api.ToolShell
-	case "Write", "Edit", "MultiEdit", "NotebookEdit", "apply_patch", "write", "edit", "multiedit", "patch":
-		return api.ToolEdit
-	case "Read", "Glob", "Grep", "LS", "NotebookRead", "view_image", "read", "glob", "grep", "list":
-		return api.ToolRead
-	case "WebFetch", "WebSearch", "web_search", "webfetch", "websearch", "codesearch":
-		return api.ToolWeb
-	}
-	if strings.HasPrefix(tool, "mcp__") {
-		return api.ToolMCP
-	}
-	return api.ToolOther
-}
+func polToolKind(tool string) api.ToolKind { return policy.GuessToolKind(tool) }
 
 func polDefaultTool(agent api.AgentKind, kind api.ToolKind) string {
 	if agent == api.AgentOpenCode {
@@ -703,6 +702,342 @@ func polPrintStatus(out io.Writer, source string, s api.PolicyStatus, trusted []
 			}
 			fmt.Fprintf(out, "  %s%s\n", polTilde(r.Path), since)
 		}
+	}
+}
+
+// ---- rules, presets and managed rules --------------------------------------
+
+// The daemon edits ~/.pilothouse/rules.yaml (and records policy.changed)
+// when it runs; otherwise these commands edit the file directly, under the
+// same lock and validation, and the daemon picks it up when it starts.
+
+const polBy = "cli"
+
+// polRulesView asks the daemon, or reads the files when it is down.
+func polRulesView(ctx context.Context) (api.RulesView, string, error) {
+	v, err := client.New().Rules(ctx)
+	if err == nil {
+		return v, "daemon", nil
+	}
+	if !errors.Is(err, client.ErrDaemonDown) {
+		return v, "", err
+	}
+	e, _ := policy.Load(polOptions())
+	var repos []string
+	if wd, err := os.Getwd(); err == nil {
+		if root, err := polGitRoot(wd); err == nil {
+			repos = append(repos, root)
+		}
+	}
+	return api.RulesView{Rules: e.RuleInfos(repos), Presets: e.PresetsView(), Problems: e.Status().Errors}, "local", nil
+}
+
+// polErr makes a managed-rule error readable.
+func polErr(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, policy.ErrInvalidRule) {
+		return errors.New(strings.TrimPrefix(err.Error(), policy.ErrInvalidRule.Error()+": "))
+	}
+	return err
+}
+
+func newPolicyRulesCmd() *cobra.Command {
+	var asJSON bool
+	cmd := &cobra.Command{
+		Use:   "rules",
+		Short: "List every rule in the order it is checked, and the presets",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
+			defer cancel()
+			v, source, err := polRulesView(ctx)
+			if err != nil {
+				return err
+			}
+			out := cmd.OutOrStdout()
+			if asJSON {
+				enc := json.NewEncoder(out)
+				enc.SetIndent("", "  ")
+				return enc.Encode(v)
+			}
+			polPrintRules(out, v, source)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print as JSON")
+	return cmd
+}
+
+func polPrintRules(out io.Writer, v api.RulesView, source string) {
+	st := polStyleFor(out)
+	if source == "local" {
+		fmt.Fprintln(out, st.dim("(daemon not running; showing the files on disk)"))
+	}
+	fmt.Fprintln(out, "Rules, in the order they are checked (deny beats ask beats allow):")
+	tw := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+	for _, r := range v.Rules {
+		src := r.Source
+		if r.Source == api.RuleSourceBuiltin {
+			src = "built-in"
+		}
+		name := r.Name
+		if !r.Enabled {
+			name += " " + st.dim("(off)")
+		}
+		what := polMatchSummary(r.RuleSpec)
+		if (r.Source == api.RuleSourceBuiltin || r.Source == api.RuleSourcePreset) && r.Description != "" {
+			what = r.Description // presets' globs are long; `policy preset <name>` shows them
+		}
+		if r.Managed && r.By != "" {
+			what += st.dim("  — by " + r.By + polWhen(r.Created))
+		}
+		fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\n", src, st.action(r.Action, false), name, what)
+	}
+	tw.Flush()
+	fmt.Fprintln(out, "\nPresets:")
+	for _, p := range v.Presets {
+		mark := st.dim("off")
+		if p.Enabled {
+			mark = st.green("on ")
+		}
+		fmt.Fprintf(out, "  %s  %-22s %s\n", mark, p.Name, p.Title)
+	}
+	fmt.Fprintln(out, st.dim("\nSwitch one with `pilothouse policy preset <name> on|off`; add a rule with `pilothouse policy add`."))
+	for _, p := range v.Problems {
+		fmt.Fprintf(out, "%s %s\n", st.yellow("warning:"), polTildeIn(p))
+	}
+}
+
+func polWhen(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return ", " + t.Local().Format("Jan 2")
+}
+
+// polMatchSummary renders a rule's match block on one line.
+func polMatchSummary(s api.RuleSpec) string {
+	keys := make([]string, 0, len(s.Match))
+	for k := range s.Match {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var parts []string
+	for _, k := range keys {
+		parts = append(parts, k+": "+polShort(strings.Join(s.Match[k], ", "), 60))
+	}
+	if s.When != "" {
+		parts = append(parts, "when: "+polShort(polOneLine(s.When), 40))
+	}
+	return polTildeIn(strings.Join(parts, "  "))
+}
+
+func newPolicyPresetCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "preset [name [on|off]]",
+		Short: "List presets, show one, or switch one on or off",
+		Long: `Presets are named bundles of rules. guarded-autopilot is a safe alternative to
+--dangerously-skip-permissions; protect-main, no-secrets and deploys-need-approval
+each cover one concern. They are stored in ~/.pilothouse/rules.yaml.`,
+		Example: `  pilothouse policy preset
+  pilothouse policy preset guarded-autopilot
+  pilothouse policy preset guarded-autopilot on`,
+		Args: cobra.MaximumNArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+			defer cancel()
+			out := cmd.OutOrStdout()
+			if len(args) < 2 {
+				v, source, err := polRulesView(ctx)
+				if err != nil {
+					return err
+				}
+				if len(args) == 0 {
+					if source == "local" {
+						fmt.Fprintln(out, polStyleFor(out).dim("(daemon not running; showing the files on disk)"))
+					}
+					for _, p := range v.Presets {
+						state := "off"
+						if p.Enabled {
+							state = "on"
+						}
+						fmt.Fprintf(out, "%-22s %-3s  %s\n", p.Name, state, p.Title)
+					}
+					return nil
+				}
+				for _, p := range v.Presets {
+					if p.Name == args[0] {
+						polPrintPreset(out, p)
+						return nil
+					}
+				}
+				return fmt.Errorf("unknown preset %q (known: %s)", args[0], strings.Join(policy.PresetNames(), ", "))
+			}
+			var on bool
+			switch args[1] {
+			case "on":
+				on = true
+			case "off":
+			default:
+				return fmt.Errorf("say on or off, not %q", args[1])
+			}
+			err := client.New().SetPreset(ctx, args[0], on)
+			local := errors.Is(err, client.ErrDaemonDown)
+			if local {
+				_, err = policy.SetManagedPreset(paths.Rules(), paths.UserHome(), args[0], on, polBy, time.Now())
+			}
+			if err != nil {
+				return polErr(err)
+			}
+			fmt.Fprintf(out, "Preset %s is %s.\n", args[0], args[1])
+			polLocalNote(out, local)
+			return nil
+		},
+	}
+}
+
+func polPrintPreset(out io.Writer, p api.Preset) {
+	st := polStyleFor(out)
+	state := "off"
+	if p.Enabled {
+		state = "on"
+	}
+	fmt.Fprintf(out, "%s (%s) — %s\n\n%s\n\n", st.bold(p.Title), p.Name, state, p.Description)
+	tw := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+	for _, r := range p.Rules {
+		fmt.Fprintf(tw, "  %s\t%s\t%s\n", st.action(r.Action, false), strings.TrimPrefix(r.Name, p.Name+"/"), r.Description)
+	}
+	tw.Flush()
+}
+
+func polLocalNote(out io.Writer, local bool) {
+	if local {
+		fmt.Fprintf(out, "(daemon not running; wrote %s directly — it applies when the daemon starts)\n", polTilde(paths.Rules()))
+	}
+}
+
+type polAddFlags struct {
+	action, message, description, when string
+	here                               bool
+	match                              map[string]*[]string
+}
+
+func newPolicyAddCmd() *cobra.Command {
+	f := polAddFlags{match: map[string]*[]string{}}
+	cmd := &cobra.Command{
+		Use:   "add <name>",
+		Short: "Add a managed rule (kept in ~/.pilothouse/rules.yaml)",
+		Long: `Add a rule without editing YAML. Match flags take globs and may repeat; all of
+them must match. Command globs of managed rules match each simple command of a
+shell line: an allow needs every command to match (so "npm test" never allows
+"npm test && curl … | sh"), deny and ask match any of them.`,
+		Example: `  pilothouse policy add allow-tests --action allow --command "npm test" --command "npm test *" --here
+  pilothouse policy add ask-push --action ask --command "git push" --command "git push *"
+  pilothouse policy add no-prod-db --action deny --command "psql *prod*" --message "Use the staging database."`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			spec := api.RuleSpec{Name: args[0], Action: api.Behavior(f.action), Message: f.message,
+				Description: f.description, When: f.when, Match: map[string][]string{}}
+			for k, v := range f.match {
+				if len(*v) > 0 {
+					spec.Match[k] = append([]string(nil), (*v)...)
+				}
+			}
+			if f.here {
+				wd, err := os.Getwd()
+				if err != nil {
+					return err
+				}
+				root, err := polGitRoot(wd)
+				if err != nil {
+					return errors.New("--here needs a git repository; run it inside one or pass --repo")
+				}
+				spec.Match["repo"] = append(spec.Match["repo"], policy.EscapeGlob(root))
+			}
+			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+			defer cancel()
+			_, err := client.New().AddRule(ctx, spec)
+			local := errors.Is(err, client.ErrDaemonDown)
+			if local {
+				err = polAddLocal(spec)
+			}
+			if err != nil {
+				return polErr(err)
+			}
+			out := cmd.OutOrStdout()
+			fmt.Fprintf(out, "Added %s rule %s: %s\n", spec.Action, spec.Name, polMatchSummary(spec))
+			polLocalNote(out, local)
+			return nil
+		},
+	}
+	fl := cmd.Flags()
+	fl.StringVar(&f.action, "action", "", "allow, ask or deny (required)")
+	fl.StringVar(&f.message, "message", "", "what the agent is told on deny or ask")
+	fl.StringVar(&f.description, "description", "", "a note for people")
+	fl.StringVar(&f.when, "when", "", "optional CEL condition (see docs/POLICY.md)")
+	fl.BoolVar(&f.here, "here", false, "only in the current git repository (adds --repo <its root>)")
+	for _, k := range []string{"command", "path", "tool", "kind", "repo", "branch", "cwd", "agent"} {
+		v := []string{}
+		f.match[k] = &v
+		fl.StringArrayVar(&v, k, nil, "match "+k+" glob (repeatable)")
+	}
+	_ = cmd.MarkFlagRequired("action")
+	return cmd
+}
+
+// polAddLocal adds a rule to the file with the daemon's checks.
+func polAddLocal(spec api.RuleSpec) error {
+	home := paths.UserHome()
+	if err := policy.ValidateRuleSpec(spec, policy.ValidateOptions{AllowWhen: true, Home: home}); err != nil {
+		return err
+	}
+	e, _ := policy.Load(polOptions())
+	if err := policy.NameInUse(spec.Name, e.RuleInfos(nil)); err != nil {
+		return err
+	}
+	return policy.AddManagedRule(paths.Rules(), home, spec, polBy, time.Now())
+}
+
+// newPolicyManagedCmd is remove, enable or disable.
+func newPolicyManagedCmd(op, short string) *cobra.Command {
+	return &cobra.Command{
+		Use:   op + " <name>",
+		Short: short,
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := args[0]
+			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+			defer cancel()
+			c := client.New()
+			var err error
+			if op == "remove" {
+				err = c.RemoveRule(ctx, name)
+			} else {
+				err = c.SetRuleEnabled(ctx, name, op == "enable")
+			}
+			local := errors.Is(err, client.ErrDaemonDown)
+			if local {
+				file, home := paths.Rules(), paths.UserHome()
+				if op == "remove" {
+					err = policy.RemoveManagedRule(file, home, name)
+				} else {
+					_, err = policy.SetManagedRuleEnabled(file, home, name, op == "enable")
+				}
+				if errors.Is(err, policy.ErrNoManagedRule) {
+					e, _ := policy.Load(polOptions())
+					err = policy.NotManagedError(name, e.RuleInfos(nil))
+				}
+			}
+			if err != nil {
+				return polErr(err)
+			}
+			past := map[string]string{"remove": "Removed", "enable": "Enabled", "disable": "Disabled"}[op]
+			fmt.Fprintf(cmd.OutOrStdout(), "%s rule %s.\n", past, name)
+			polLocalNote(cmd.OutOrStdout(), local)
+			return nil
+		},
 	}
 }
 

@@ -35,6 +35,7 @@ func UserHome() string {
 
 func Config() string       { return filepath.Join(Home(), "config.yaml") }
 func Policy() string       { return filepath.Join(Home(), "policy.yaml") }
+func Rules() string        { return filepath.Join(Home(), "rules.yaml") } // managed rules and presets (written by Pilothouse)
 func DB() string           { return filepath.Join(Home(), "pilothouse.db") }
 func Keys() string         { return filepath.Join(Home(), "keys") } // VAPID + daemon keys, 0700
 func Logs() string         { return filepath.Join(Home(), "logs") }

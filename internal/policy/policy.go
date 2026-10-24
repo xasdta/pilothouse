@@ -1,11 +1,14 @@
 // Package policy evaluates user, repo and built-in rules at the pre_tool
 // checkpoint.
 //
-// Rules come from three places, evaluated in this order:
+// Rules come from these places, evaluated in this order:
 //
 //  1. Built-in rules (pilothouse-self-protection), always on.
 //  2. The user file, ~/.pilothouse/policy.yaml.
-//  3. The repo file, <repo>/.pilothouse/policy.yaml, discovered from
+//  3. Managed rules, ~/.pilothouse/rules.yaml (written by Pilothouse: rules
+//     from the inbox and `pilothouse policy add`), then the rules of each
+//     preset it switches on (managed.go, presets.go).
+//  4. The repo file, <repo>/.pilothouse/policy.yaml, discovered from
 //     Input.Repo at evaluation time. Repos not listed in
 //     trusted-repos.yaml may only add deny and ask rules: an agent can
 //     write to the repo it works in, so an untrusted repo file must not
@@ -77,6 +80,7 @@ type Match struct {
 // Options locates the policy inputs.
 type Options struct {
 	UserFile         string   // paths.Policy()
+	ManagedFile      string   // paths.Rules(); "" = no managed rules or presets
 	TrustedReposFile string   // paths.TrustedRepos()
 	ProtectedPaths   []string // from every adapter + paths.Home()
 	// Unprotected are directories inside a protected path that agents
@@ -107,6 +111,7 @@ func DefaultOptions(extraProtected ...string) Options {
 	}
 	return Options{
 		UserFile:         paths.Policy(),
+		ManagedFile:      paths.Rules(),
 		TrustedReposFile: paths.TrustedRepos(),
 		ProtectedPaths:   prot,
 		Unprotected:      unprot,
@@ -116,10 +121,13 @@ func DefaultOptions(extraProtected ...string) Options {
 
 // File labels used in Result.File and api.PolicyFile.Scope.
 const (
-	BuiltinFile = "builtin"
-	ScopeUser   = "user"
-	ScopeRepo   = "repo"
-	ScopeBuilt  = "builtin"
+	BuiltinFile   = "builtin"
+	ScopeUser     = "user"
+	ScopeRepo     = "repo"
+	ScopeBuilt    = "builtin"
+	ScopeManaged  = "managed"
+	ScopePreset   = "preset"
+	PresetFilePfx = "preset:" // Result.File of a preset rule: "preset:<name>"
 )
 
 // RepoPolicyFile is the repo policy location relative to the repo root.
@@ -138,6 +146,7 @@ type Engine struct {
 	protected      *protectedSet // folded absolute roots (symlinks resolved too) and globs
 	builtin        []*rule
 	user           *slot[[]*rule]
+	managed        *slot[*managedSet]
 	trust          *slot[trustSet]
 
 	reposMu sync.RWMutex
@@ -181,6 +190,10 @@ func Load(opts Options) (*Engine, api.PolicyStatus) {
 		check:       selfProtection,
 	}}
 	e.user = newPolicySlot(opts.UserFile, e.compileFile)
+	e.managed = newSlot(opts.ManagedFile, func(path string, data []byte) (*managedSet, error) {
+		return compileManaged(path, data, e.home)
+	})
+	e.managed.emptyErr = emptyPolicyMsg
 	e.trust = newSlot(opts.TrustedReposFile, parseTrustSet)
 	return e, e.Reload()
 }
@@ -190,6 +203,7 @@ func Load(opts Options) (*Engine, api.PolicyStatus) {
 func (e *Engine) Reload() api.PolicyStatus {
 	now := e.clock().UnixNano()
 	e.user.get(now, true)
+	e.managed.get(now, true)
 	e.trust.get(now, true)
 	e.reposMu.RLock()
 	repos := make([]*repoState, 0, len(e.repos))
@@ -207,7 +221,7 @@ func (e *Engine) Reload() api.PolicyStatus {
 // on disk since they were last loaded. Repo files are re-checked by
 // Evaluate itself.
 func (e *Engine) Changed() bool {
-	return e.user.changed() || e.trust.changed()
+	return e.user.changed() || e.managed.changed() || e.trust.changed()
 }
 
 // Status describes the loaded files.
@@ -231,6 +245,28 @@ func (e *Engine) Status() api.PolicyStatus {
 		st.Files = append(st.Files, pf)
 	}
 	add(api.PolicyFile{Path: e.opts.UserFile, Scope: ScopeUser, Trusted: true}, e.user.cur.Load())
+	if e.opts.ManagedFile != "" {
+		pf := api.PolicyFile{Path: e.opts.ManagedFile, Scope: ScopeManaged, Trusted: true}
+		var presets []compiledPreset
+		if snap := e.managed.cur.Load(); snap != nil {
+			if snap.val != nil {
+				pf.Rules, presets = len(snap.val.rules), snap.val.presets
+			}
+			if snap.err != nil {
+				pf.Error = snap.err.Error()
+				st.Errors = append(st.Errors, errorLines(snap.err)...)
+				if snap.hadGood {
+					st.Errors = append(st.Errors, fmt.Sprintf("%s: still using its last valid version (%d rules) until this is fixed", pf.Path, pf.Rules))
+				}
+			}
+		}
+		st.Rules += pf.Rules
+		st.Files = append(st.Files, pf)
+		for _, p := range presets {
+			st.Rules += len(p.rules)
+			st.Files = append(st.Files, api.PolicyFile{Path: PresetFilePfx + p.name, Scope: ScopePreset, Rules: len(p.rules), Trusted: true})
+		}
+	}
 	if ts := e.trust.cur.Load(); ts != nil && ts.err != nil {
 		st.Errors = append(st.Errors, errorLines(ts.err)...)
 	}
@@ -285,6 +321,12 @@ func (e *Engine) Evaluate(in Input) Result {
 	d.apply(&c, e.builtin, BuiltinFile, true)
 	if u := e.user.get(nanos, false); len(u.val) > 0 {
 		d.apply(&c, u.val, e.opts.UserFile, true)
+	}
+	if m := e.managed.get(nanos, false); m.val != nil {
+		d.apply(&c, m.val.rules, e.opts.ManagedFile, true)
+		for _, p := range m.val.presets {
+			d.apply(&c, p.rules, PresetFilePfx+p.name, true)
+		}
 	}
 	if c.repo != "" {
 		rs := e.repoState(c.repo, nanos)
@@ -388,7 +430,19 @@ func (r *rule) eval(c *evalCtx) (ok bool, msg string, err error) {
 		return false, "", nil
 	}
 	for i := range r.match {
-		if !c.matchField(&r.match[i]) {
+		fm := &r.match[i]
+		var ok bool
+		switch {
+		case fm.field == fCommand && r.shellAware && c.in.ToolKind == api.ToolShell && c.in.Command != "":
+			if r.action == api.BehaviorAllow {
+				ok = c.allowCommand(fm.globs)
+			} else {
+				ok = c.strictCommand(fm)
+			}
+		default:
+			ok = c.matchField(fm)
+		}
+		if !ok {
 			return false, "", nil
 		}
 	}
@@ -431,6 +485,7 @@ type evalCtx struct {
 	inputVal  ref.Val
 	roots     *protectedSet
 	rootsDone bool
+	segs      *shellSegs // shell-aware rules' view of the command, on first use
 }
 
 // celPaths and celInput convert once per call: several rules may read

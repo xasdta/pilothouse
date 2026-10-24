@@ -178,11 +178,46 @@ rules:
     action: deny
 ```
 
-`pilothouse policy test --tool Bash --command "git push -f origin main"` shows
-which rule decides, and `pilothouse policy replay --since 7d` shows what your
-current rules would have done to last week's tool calls. A repo can ship its own
+`pilothouse policy test "git push -f origin main"` shows which rule decides,
+and `pilothouse policy replay --since 7d` shows what your current rules would
+have done to last week's tool calls. A repo can ship its own
 `.pilothouse/policy.yaml`. Until you `pilothouse policy trust` that repo, its
 rules can only make things stricter. See [docs/POLICY.md](docs/POLICY.md).
+
+#### Rules without YAML
+
+Every approval card shows what the call would do: a diff for file edits
+(Claude's Edit/Write, Codex's apply_patch, OpenCode's edit/write), risk labels
+such as *Force-pushes to main*, *Deploys*, *Reads .env* or *Runs a script
+downloaded from get.example.com*, the rule that fired and the agent's last
+words before it asked. Under it are one-tap rules: *Always allow `npm test` in
+api-server*, *Always ask before `git push`*, *Never allow force-pushes*, *Allow
+edits under `src/**` in api-server*. The ones that match what you approved
+again and again this week come first ("You allowed this 5 times this week").
+
+Presets bundle rules for a common need:
+
+```sh
+pilothouse policy preset guarded-autopilot on   # a safe alternative to --dangerously-skip-permissions
+pilothouse policy preset protect-main on        # pushes/commits to main need you; force-pushes are blocked
+pilothouse policy preset no-secrets on          # no .env, keys or credential dumps
+pilothouse policy preset deploys-need-approval on
+pilothouse policy add ask-push --action ask --command "git push" --command "git push *"
+pilothouse policy rules                         # everything, in the order it is checked
+```
+
+Guarded autopilot lets routine work in a repo run without prompts (reading,
+editing files inside the repo, tests, builds, linters, read-only git), blocks
+destructive commands (`rm -rf ~`, `git reset --hard`, force-pushes, `DROP
+TABLE`) and asks before pushes, deploys, secrets and sudo. On Codex only its
+deny rules take effect (Codex's hooks can't skip its own approvals).
+
+Rules from your phone, `policy add` and presets live in
+`~/.pilothouse/rules.yaml`, which Pilothouse writes; your `policy.yaml` stays
+yours. They match shell commands one command at a time, so allowing
+`npm test` never allows `npm test && curl … | sh`. Adding a rule from a device
+is a signed action, and a device can't add `when:` expressions or touch
+built-in, hand-written or repo rules.
 
 ### Wrap mode and tasks
 
