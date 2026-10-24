@@ -44,6 +44,11 @@ func TestResolve(t *testing.T) {
 			state: api.StateBlocked, kind: api.BlockPermission, rule: RulePermission, fresh: []bool{true},
 		},
 		{
+			name:  "pending question blocks on a question",
+			in:    Input{PendingPermission: true, PendingKind: api.BlockQuestion, PermissionDetail: "Asks: Which database?", HasHooks: true, Evidence: []Evidence{hook(0, api.StateWorking, "")}},
+			state: api.StateBlocked, kind: api.BlockQuestion, rule: RulePermission, fresh: []bool{true},
+		},
+		{
 			name: "latest hook wins",
 			in: Input{HasHooks: true, Evidence: []Evidence{
 				hook(10*time.Second, api.StateWorking, ""), hook(time.Second, api.StateWaiting, ""),
@@ -211,6 +216,9 @@ func TestFromHook(t *testing.T) {
 		ok    bool
 	}{
 		{adapters.HookEvent{Kind: adapters.HookPreTool, Summary: "Run: ls"}, api.StateWorking, "", true},
+		// A question tool about to wait for a person (Codex request_user_input
+		// has no permission hook to show it otherwise).
+		{adapters.HookEvent{Kind: adapters.HookPreTool, Summary: "Asks: Which database?", Questions: []api.Question{{Text: "Which database?", AllowOther: true}}}, api.StateBlocked, api.BlockQuestion, true},
 		{adapters.HookEvent{Kind: adapters.HookPostTool}, api.StateWorking, "", true},
 		{adapters.HookEvent{Kind: adapters.HookPromptSubmit}, api.StateWorking, "", true},
 		{adapters.HookEvent{Kind: adapters.HookStop}, api.StateWaiting, "", true},

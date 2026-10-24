@@ -51,10 +51,13 @@ type ibxDaemon struct {
 	decides  []ibxDecideCall
 	presence []string // mode|header
 	notified int
-	refuse   bool // simulate an agent caller (403)
+	refuse   bool   // simulate an agent caller (403)
+	invalid  string // answer decisions with 400 invalid and this message
 	policy   api.PolicyStatus
 	devices  []api.Device
 	explain  api.Explain
+	pairs    int         // POST /v1/pair calls
+	pairAdds *api.Device // added to devices by POST /v1/pair
 }
 
 func ibxError(w http.ResponseWriter, status int, code, msg string) {
@@ -128,6 +131,10 @@ func (d *ibxDaemon) handler() http.Handler {
 			ibxError(w, 403, "agent_caller", "decisions are not accepted from agent processes")
 			return
 		}
+		if d.invalid != "" {
+			ibxError(w, 400, "invalid", d.invalid)
+			return
+		}
 		req, st := d.findRequest(r.PathValue("id"))
 		if st != 200 {
 			ibxError(w, 404, "not_found", "request not found")
@@ -138,7 +145,7 @@ func (d *ibxDaemon) handler() http.Handler {
 			return
 		}
 		req.Status = api.RequestDecided
-		req.Decision = &api.Decision{RequestID: req.ID, Behavior: b.Behavior, Scope: b.Scope, Message: b.Message, By: r.Header.Get(client.ClientHeader)}
+		req.Decision = &api.Decision{RequestID: req.ID, Behavior: b.Behavior, Scope: b.Scope, Message: b.Message, Answers: b.Answers, By: r.Header.Get(client.ClientHeader)}
 		ibxJSON(w, req)
 	})
 	mux.HandleFunc("GET /v1/sessions/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -233,6 +240,16 @@ func (d *ibxDaemon) handler() http.Handler {
 		defer d.mu.Unlock()
 		ibxJSON(w, d.devices)
 	})
+	mux.HandleFunc("POST /v1/pair", func(w http.ResponseWriter, r *http.Request) {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		d.pairs++
+		if d.pairAdds != nil { // the phone pairs while setup waits
+			d.devices = append(d.devices, *d.pairAdds)
+		}
+		ibxJSON(w, api.PairStart{Code: "K7QF-M2XA-P9TT", URL: "https://mac.tail1.ts.net/pair#K7QF-M2XA-P9TT",
+			ExpiresAt: time.Now().Add(10 * time.Minute), Remote: true})
+	})
 	return mux
 }
 
@@ -296,6 +313,15 @@ func ibxEnv(t *testing.T) string {
 		v := inboxShellNoise
 		save(func() { inboxShellNoise = v })
 		inboxShellNoise = func(context.Context) (string, string, error) { return "/bin/zsh", "", nil }
+	}
+	{
+		// Setup and demo look for Tailscale and may open a browser: never
+		// the real ones in tests.
+		v1, v2, v3 := rmtTailscale, rmtOpenBrowser, tgReadSecret
+		save(func() { rmtTailscale, rmtOpenBrowser, tgReadSecret = v1, v2, v3 })
+		rmtTailscale = (&rmtFakeTS{}).exec()
+		rmtOpenBrowser = func(string) error { return errors.New("no browser in tests") }
+		tgReadSecret = func() (string, error) { return "", errors.New("no terminal in tests") }
 	}
 	{
 		v := inboxHolders

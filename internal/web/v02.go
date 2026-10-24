@@ -24,6 +24,8 @@ func (s *Server) routesV02(mux *http.ServeMux, a func(http.HandlerFunc) http.Han
 	for _, p := range clientRoutesV02 {
 		mux.HandleFunc(p, s.serveIndex)
 	}
+	// Third-party code the app loads on demand (xterm.js for the terminal).
+	mux.HandleFunc("GET /vendor/", s.serveStatic)
 	// F1: answers, plans (and every decision from 0.2 clients).
 	mux.HandleFunc("POST /api/requests/{id}/respond", a(csrf(s.handleRespond)))
 	// F2/F3: replies, activity, terminal.

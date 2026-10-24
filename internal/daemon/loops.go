@@ -58,6 +58,7 @@ func (d *Daemon) startLoops() {
 		}
 	})
 	d.startUpdateCheck()
+	d.startUsage() // usage.go (workstream C)
 }
 
 // ---- policy ----

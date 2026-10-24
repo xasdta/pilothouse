@@ -8,6 +8,9 @@ sys.path.insert(0, HERE)
 from ptyterm import Term  # noqa: E402
 
 ROOT = os.environ.get("E2E_ROOT", "/tmp/qa1")
+# The daemon's socket lives in the run dir; macOS caps socket paths at 104
+# bytes, so a deep E2E_ROOT needs a short E2E_RUN_DIR (e.g. mktemp -d /tmp/ph.XXXX).
+RUN = os.environ.get("E2E_RUN_DIR", os.path.join(ROOT, "run"))
 PH = os.path.join(ROOT, "pilothouse")
 DETACH = os.path.join(HERE, "detach.py")
 SETTINGS = os.path.join(ROOT, "uhome/.claude/settings.json")
@@ -20,7 +23,7 @@ STRIP = ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_MESSAGING_SOCKET",
 def env():
     e = {k: v for k, v in os.environ.items() if k not in STRIP}
     e.update(PILOTHOUSE_HOME=f"{ROOT}/home", PILOTHOUSE_USER_HOME=f"{ROOT}/uhome",
-             PILOTHOUSE_RUN_DIR=f"{ROOT}/run", PILOTHOUSE_NO_UPDATE_CHECK="1",
+             PILOTHOUSE_RUN_DIR=RUN, PILOTHOUSE_NO_UPDATE_CHECK="1",
              TERM="xterm-256color")
     e["PATH"] = ROOT + ":" + e["PATH"]
     return e
@@ -48,7 +51,7 @@ def requests(status=""):
 
 
 def ph_get(path):
-    r = subprocess.run(["curl", "-s", "--unix-socket", f"{ROOT}/run/pilothouse.sock", f"http://x{path}"],
+    r = subprocess.run(["curl", "-s", "--unix-socket", f"{RUN}/pilothouse.sock", f"http://x{path}"],
                        capture_output=True, text=True)
     return r.stdout
 
@@ -64,12 +67,12 @@ def wait_until(fn, timeout=60, every=0.5, what="condition"):
     raise TimeoutError(f"timeout waiting for {what}; last={last!r}")
 
 
-def claude(cwd, *extra, log=None):
+def claude(cwd, *extra, log=None, mode="default"):
     # --setting-sources leaves out the user's own ~/.claude/settings.json:
     # with Pilothouse installed there, its hooks would also fire and report
     # these test sessions to the user's real daemon.
     argv = ["claude", "--setting-sources", "project,local", "--settings", SETTINGS,
-            "--model", "haiku", "--permission-mode", "default", *extra]
+            "--model", "haiku", "--permission-mode", mode, *extra]
     return Term(argv, env=env(), cwd=cwd, log=log)
 
 

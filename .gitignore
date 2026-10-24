@@ -4,3 +4,8 @@
 *.out
 .DS_Store
 node_modules/
+
+# Agent worktrees
+.claude/worktrees/
+__pycache__/
+*.pyc

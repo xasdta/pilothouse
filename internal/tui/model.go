@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -33,6 +34,10 @@ type Backend interface {
 	SetPresence(ctx context.Context, m api.PresenceMode) (api.Presence, error)
 	Explain(ctx context.Context, id string) (api.Explain, error)
 	MarkSeen(ctx context.Context, id string) error
+	// 0.2: replies and activity answer 501 "unsupported" until the daemon
+	// (or the session's agent) can do them; the inbox degrades quietly.
+	Reply(ctx context.Context, sessionID string, r api.Reply) (api.ReplyResult, error)
+	Activity(ctx context.Context, sessionID string, q api.ActivityQuery) (api.Activity, error)
 }
 
 // Options configures the inbox.
@@ -64,6 +69,11 @@ const (
 	modeDeny
 	modeHelp
 	modeExplain
+	modeQuestion // answer panel of a held question (ask.go)
+	modePlan     // plan view
+	modeReply    // reply box
+	modeChanges  // plan feedback input
+	modeOther    // own-words answer input
 )
 
 type flashKind int
@@ -142,6 +152,12 @@ type Model struct {
 	explainErr    error
 	flash         flash
 	pending       map[string]bool
+	// questions, plans, replies, activity (ask.go)
+	ask         askState
+	replyID     string
+	decideTexts map[string]string // flash text of a pending decision, by request id
+	activity    map[string]activity
+	activityOff time.Time // activity unsupported until then
 }
 
 // New returns an inbox model.
@@ -160,13 +176,15 @@ func New(opts Options) *Model {
 	ti.CharLimit = 500
 	ti.Prompt = ""
 	m := &Model{
-		opts:     opts,
-		st:       newStyles(opts.Renderer),
-		sessions: map[string]api.Session{},
-		requests: map[string]api.Request{},
-		pending:  map[string]bool{},
-		input:    ti,
-		now:      opts.Now(),
+		opts:        opts,
+		st:          newStyles(opts.Renderer),
+		sessions:    map[string]api.Session{},
+		requests:    map[string]api.Request{},
+		pending:     map[string]bool{},
+		input:       ti,
+		activity:    map[string]activity{},
+		decideTexts: map[string]string{},
+		now:         opts.Now(),
 	}
 	return m
 }
@@ -333,7 +351,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.flash = flash{}
 		}
 		m.pruneExited()
-		return m, tick()
+		return m, tea.Batch(tick(), m.selectedActivity())
 
 	case snapshotMsg:
 		return m, m.onSnapshot(msg)
@@ -344,7 +362,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.apply(msg.ev)
 		m.rebuild()
-		return m, m.relisten()
+		m.checkAskGone()
+		cmd := m.relisten()
+		// A session update for the one on screen refreshes its activity.
+		if s := m.selectedSession(); s != nil && msg.ev.SessionID == s.ID && msg.ev.Type == api.EventSessionUpdated &&
+			m.opts.Now().Sub(m.activity[s.ID].at) > activityOnEvent {
+			cmd = tea.Batch(cmd, m.fetchActivity(s.ID, true))
+		}
+		return m, cmd
 
 	case streamEndMsg:
 		if msg.gen != m.gen {
@@ -364,6 +389,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case decideMsg:
 		return m, m.onDecided(msg)
+
+	case replyMsg:
+		return m, m.onReplied(msg)
+
+	case activityMsg:
+		m.onActivity(msg)
+		return m, nil
 
 	case requestMsg:
 		if msg.err == nil {
@@ -402,7 +434,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		return m.onKey(msg)
 	}
-	if m.mode == modeDeny {
+	if m.typing() {
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)
 		return m, cmd
@@ -677,7 +709,7 @@ func (m *Model) move(delta int) tea.Cmd {
 	m.selKey = m.rows[m.cursor].key
 	m.expanded = false
 	m.clampScroll()
-	return m.markSeen()
+	return tea.Batch(m.markSeen(), m.selectedActivity())
 }
 
 // markSeen clears the unseen dot of the session under the cursor: the
@@ -705,7 +737,7 @@ func (m *Model) markSeen() tea.Cmd {
 func (m *Model) onKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Keys typed faster than the terminal is read arrive as one message
 	// ("jj"); outside text entry each rune is its own command.
-	if k.Type == tea.KeyRunes && len(k.Runes) > 1 && !k.Paste && m.mode != modeDeny {
+	if k.Type == tea.KeyRunes && len(k.Runes) > 1 && !k.Paste && !m.typing() {
 		var cmds []tea.Cmd
 		for _, r := range k.Runes {
 			_, cmd := m.onKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}, Alt: k.Alt})
@@ -718,23 +750,12 @@ func (m *Model) onKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 	switch m.mode {
-	case modeDeny:
-		switch k.Type {
-		case tea.KeyEsc:
-			m.mode = modeList
-			m.input.Blur()
-			m.setFlash(flashInfo, "Deny cancelled")
-			return m, nil
-		case tea.KeyEnter:
-			id := m.denyID
-			msg := m.input.Value()
-			m.mode = modeList
-			m.input.Blur()
-			return m, m.decide(id, api.DecideBody{Behavior: api.BehaviorDeny, Message: msg}, "Denied")
-		}
-		var cmd tea.Cmd
-		m.input, cmd = m.input.Update(k)
-		return m, cmd
+	case modeDeny, modeReply, modeChanges, modeOther:
+		return m.onInputKey(k)
+	case modeQuestion:
+		return m.onQuestionKey(k)
+	case modePlan:
+		return m.onPlanKey(k)
 	case modeHelp, modeExplain:
 		switch k.String() {
 		case "q":
@@ -767,6 +788,8 @@ func (m *Model) onKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = modeHelp
 		return m, nil
 	case "r":
+		return m, m.startReply()
+	case "R", "ctrl+r":
 		m.setFlash(flashInfo, "Refreshing…")
 		return m, m.loadSnapshot()
 	case "p":
@@ -784,6 +807,11 @@ func (m *Model) onKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		m.expanded = false
 		return m, nil
+	}
+	if d, err := strconv.Atoi(k.String()); err == nil && d >= 1 && d <= 9 {
+		if r := m.selected(); r != nil && r.req != nil && r.req.Checkpoint == api.CheckpointQuestion {
+			return m, m.openAsk(r.req, d)
+		}
 	}
 	return m, nil
 }
@@ -827,10 +855,29 @@ func (m *Model) answer(b api.Behavior, scope api.Scope) tea.Cmd {
 		m.setFlash(flashWarn, why)
 		return nil
 	}
+	switch req.Checkpoint {
+	case api.CheckpointQuestion:
+		if b == api.BehaviorAllow {
+			m.setFlash(flashWarn, "Pick an answer: enter opens the question (or press its number)")
+			return nil
+		}
+	case api.CheckpointPlan:
+		switch {
+		case b == api.BehaviorDeny:
+			m.ask = askState{id: req.ID, fromList: true}
+			return m.startChanges()
+		case scope == api.ScopeSession:
+			m.setFlash(flashWarn, "A plan is approved once: y approves it (enter reads it first)")
+			return nil
+		}
+		return m.decideText(req.ID, api.DecideBody{Behavior: api.BehaviorAllow}, "✓ Approved the plan: "+planTitle(*req))
+	}
 	if b == api.BehaviorDeny {
 		m.mode = modeDeny
 		m.denyID = req.ID
 		m.input.Reset()
+		m.input.Placeholder = "reason shown to the agent (optional)"
+		m.input.CharLimit = 500
 		return m.input.Focus()
 	}
 	label := "Allowed once"
@@ -854,6 +901,18 @@ func (m *Model) decide(id string, body api.DecideBody, label string) tea.Cmd {
 
 func (m *Model) onDecided(msg decideMsg) tea.Cmd {
 	delete(m.pending, msg.id)
+	text := m.decideTexts[msg.id]
+	delete(m.decideTexts, msg.id)
+	if msg.err == nil && text != "" {
+		if msg.req.ID != "" {
+			m.upsertRequest(msg.req)
+		} else {
+			delete(m.requests, msg.id)
+		}
+		m.setFlash(flashOK, text)
+		m.rebuild()
+		return nil
+	}
 	if msg.err == nil {
 		if msg.req.ID != "" {
 			m.upsertRequest(msg.req)
@@ -889,10 +948,22 @@ func (m *Model) onDecided(msg decideMsg) tea.Cmd {
 		delete(m.requests, msg.id)
 		m.rebuild()
 		m.setFlash(flashWarn, "That request is gone (answered or expired)")
+	case client.IsCode(msg.err, "invalid"):
+		// The daemon says why the answer doesn't fit the question.
+		m.setFlash(flashErr, "Not sent: "+apiMessage(msg.err))
 	default:
 		m.setFlash(flashErr, describeErr(msg.err, "answer"))
 	}
 	return nil
+}
+
+// apiMessage is the daemon's own sentence for an API error.
+func apiMessage(err error) string {
+	var ae *client.APIError
+	if errors.As(err, &ae) && ae.Msg != "" {
+		return ae.Msg
+	}
+	return err.Error()
 }
 
 func (m *Model) findRequest(id string) (api.Request, bool) {
@@ -960,6 +1031,11 @@ func (m *Model) enter() tea.Cmd {
 	r := m.selected()
 	if r == nil {
 		return nil
+	}
+	if asks(r.req) && (r.req.Status == api.RequestOpen || r.req.Checkpoint == api.CheckpointPlan && !attachable(r.sess)) {
+		// A held question or plan opens here; a plan in the agent's own
+		// dialog can still be read here.
+		return m.openAsk(r.req, 0)
 	}
 	if attachable(r.sess) {
 		m.stopStream()

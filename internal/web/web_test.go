@@ -1114,7 +1114,7 @@ func TestPushDeliveryAndCleanup(t *testing.T) {
 	}
 	for _, h := range hits {
 		if !strings.HasPrefix(h.headers.Get("Authorization"), "vapid t=") || h.headers.Get("Content-Encoding") != "aes128gcm" ||
-			h.headers.Get("Urgency") != "high" || h.headers.Get("Topic") != "r_push000001" || h.headers.Get("TTL") == "0" || h.size == 0 {
+			h.headers.Get("Urgency") != "high" || h.headers.Get("Topic") != "req-r_push000001" || h.headers.Get("TTL") == "0" || h.size == 0 {
 			t.Errorf("push request %s: %v", h.path, h.headers)
 		}
 	}
