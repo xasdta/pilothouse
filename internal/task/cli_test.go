@@ -70,7 +70,8 @@ func TestCLIEndToEnd(t *testing.T) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	if !strings.Contains(out, id[1]) || !strings.Contains(out, wt) {
+	if !strings.Contains(out, id[1]) || !strings.Contains(out, wt) || !regexp.MustCompile(`(?m)^ID +TASK +STATUS +BY +SESSION`).MatchString(out) ||
+		!regexp.MustCompile(`review +cli +s_`).MatchString(out) {
 		t.Fatalf("task ls:\n%s", out)
 	}
 	if out = mustRun("task", "diff", "document-the-api", "--stat"); !strings.Contains(out, "README.md") {

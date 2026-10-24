@@ -519,9 +519,10 @@ its sessions with its first poll. The text of a reply is in the event log
   forwards `PILOTHOUSE_SESSION_ID`, so its hooks join the wrapped session
   (one session, not a second observed one); replies to it go through the
   plugin.
-- `pilothouse task new --agent opencode` does not work yet: tasks pass the
-  prompt as the first argument, which OpenCode reads as a project path (it
-  takes a prompt with `--prompt`).
+- Tasks (`pilothouse task new --agent opencode`, or from the phone) pass
+  the prompt with `--prompt`: OpenCode reads a bare first argument as a
+  project path. From the phone, OpenCode is found on the daemon's PATH or
+  in `~/.opencode/bin`, and only once the plugin is installed.
 - An `opencode serve` shared by several clients is one process: its
   sessions share a PID and are expired after `session_idle_expiry` of
   silence rather than by process liveness.

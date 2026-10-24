@@ -312,7 +312,7 @@ func (d *Daemon) handlePutPresence(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *Daemon) handleTasks(w http.ResponseWriter, r *http.Request) {
-	ts, err := d.db.Tasks(r.Context(), time.Time{})
+	ts, err := d.Tasks(r.Context()) // taskrun.go: tasks.json and the database, with live status
 	reply(w, ts, err)
 }
 

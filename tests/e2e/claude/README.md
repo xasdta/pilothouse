@@ -73,3 +73,24 @@ so the real `~/.claude/settings.json` is neither modified nor loaded (if
 Pilothouse is installed for real, its user-level hooks would otherwise also
 fire and report test sessions to the real daemon) (Claude Code still records the
 folder-trust answer and transcripts under the real `~/.claude*`, as any run does).
+
+## s7: a task started from the phone (self-contained)
+
+`s7_phone_task.py` sets up its own isolated daemon, repo (with a
+`.pilothouse/task.yaml`), `claude` wrapper and paired phone, then starts a
+Claude task through the signed device API (`phone_task.mjs`: repos, start,
+tasks, diff, finish — signed exactly like `keystore.js`), approves its
+permission request from the phone, checks "Ready for review" through a local
+webhook, reads the diff and discards the task. One short haiku session.
+
+```sh
+R=$(mktemp -d)                 # homes, repo, phone state
+RUN=$(mktemp -d /tmp/ph.XXXX)  # sockets: Unix socket paths must stay short
+go build -o $R/pilothouse ./cmd/pilothouse
+python3 -m venv $R/venv && $R/venv/bin/pip install pyte
+cd tests/e2e/claude && E2E_ROOT=$R E2E_RUN=$RUN $R/venv/bin/python s7_phone_task.py
+```
+
+It picks a free web port (set `E2E_PORT` to choose one) and prints
+`[e2e] RESULTS {...}` and PASS/FAIL. `CLAUDE_BIN` overrides the real
+`claude` it wraps.

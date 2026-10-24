@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/xasdta/pilothouse/internal/api"
 	"github.com/xasdta/pilothouse/internal/paths"
@@ -107,4 +108,36 @@ func deleteTask(id string) error {
 		}
 		return out, nil
 	})
+}
+
+// Load returns every recorded task, oldest first.
+func Load() ([]api.Task, error) { return loadTasks() }
+
+// Save inserts or replaces one task in the local record.
+func Save(t api.Task) error { return saveTask(t) }
+
+// SetOpenStatus moves a task that is still open (running or review) to
+// status, under the store lock, so a status derived from the agent's
+// session never overwrites a task someone just finished. It returns the
+// task as stored and whether it changed; a task that is not open, or not
+// recorded here, is left alone.
+func SetOpenStatus(id string, status api.TaskStatus, now time.Time) (api.Task, bool, error) {
+	var (
+		out     api.Task
+		changed bool
+	)
+	err := updateTasks(func(ts []api.Task) ([]api.Task, error) {
+		for i := range ts {
+			if ts[i].ID != id {
+				continue
+			}
+			if (ts[i].Status == api.TaskRunning || ts[i].Status == api.TaskReview) && ts[i].Status != status {
+				ts[i].Status, ts[i].UpdatedAt = status, now
+				changed = true
+			}
+			out = ts[i]
+		}
+		return ts, nil
+	})
+	return out, changed, err
 }

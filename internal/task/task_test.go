@@ -89,7 +89,11 @@ func syncStarter(t *testing.T) Starter {
 	return func(ctx context.Context, s StartSpec) (string, error) {
 		cmd := exec.CommandContext(ctx, s.Argv[0], s.Argv[1:]...)
 		cmd.Dir = s.Dir
-		cmd.Env = append(os.Environ(), "PILOTHOUSE_TASK_ID="+s.TaskID)
+		env := s.Env
+		if env == nil {
+			env = os.Environ()
+		}
+		cmd.Env = append(env, "PILOTHOUSE_TASK_ID="+s.TaskID)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("fake agent: %v\n%s", err, out)
 		}

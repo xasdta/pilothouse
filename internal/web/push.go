@@ -265,6 +265,9 @@ func payloadFor(n core.Notification, now time.Time) (pushPayload, int, webpush.U
 	case n.Session != nil:
 		p.SessionID, p.Tag, p.URL = n.Session.ID, n.Session.ID, "/s/"+n.Session.ID
 	}
+	if len(n.URL) > 1 && n.URL[0] == '/' && n.URL[1] != '/' { // the sender's deep link (a task: /t/<id>)
+		p.URL = n.URL
+	}
 	return p, ttl, urgency
 }
 

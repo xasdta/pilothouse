@@ -230,6 +230,11 @@ pilothouse task diff t_8d1x
 pilothouse task done t_8d1x --pr          # push and open a PR with gh
 ```
 
+A repo's `.pilothouse/task.yaml` copies files such as `.env` into each new
+worktree and runs setup commands (`npm ci`) before the agent starts — setup
+only in repos you trust. Tasks started from the phone go through the same
+steps. See [docs/TASKS.md](docs/TASKS.md).
+
 ## Security model
 
 - The daemon listens on a Unix socket (mode 0600) and on `127.0.0.1` for the

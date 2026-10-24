@@ -251,10 +251,15 @@ func newTaskCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "task",
 		Short: "Run a prompt in its own git worktree and branch, then review and ship it",
-		Long: `Tasks give each agent run its own git worktree (under ~/.pilothouse/worktrees)
+		Long: `Tasks give each agent run its own git worktree (under ~/.pilothouse-worktrees)
 and branch (pilothouse/<slug>), so several agents can work on one repo without
 touching your checkout. Tasks are recorded in ~/.pilothouse/tasks.json and
-mirrored to the daemon when it is running.`,
+mirrored to the daemon when it is running; the web app can start, review and
+ship them too.
+
+A repo's .pilothouse/task.yaml can copy untracked files (.env) into each new
+worktree and run setup commands (npm ci) before the agent starts. Setup
+commands and env only run in repos you trust: pilothouse policy trust.`,
 		Args: cobra.NoArgs,
 	}
 	cmd.AddCommand(newTaskNewCmd(), newTaskLsCmd(), newTaskDiffCmd(), newTaskDoneCmd(), newTaskAbandonCmd())
@@ -271,7 +276,7 @@ func newTaskNewCmd() *cobra.Command {
 		attach            bool
 	)
 	cmd := &cobra.Command{
-		Use:   `new [--agent claude|codex] [--base ref] [--name slug] [-a] "<prompt>"`,
+		Use:   `new [--agent claude|codex|opencode] [--base ref] [--name slug] [-a] "<prompt>"`,
 		Short: "Start an agent on a prompt in a new worktree",
 		Example: `  pilothouse task new "add a --json flag to the export command"
   pilothouse task new --agent codex --base main -a "fix the flaky login test"`,
@@ -283,8 +288,10 @@ func newTaskNewCmd() *cobra.Command {
 			}
 			cols, rows := terminalSize()
 			m := newTaskManager(cmd)
+			m.SetupOut = cmd.ErrOrStderr() // task.yaml's setup output, as it runs
 			t, err := m.New(cmd.Context(), task.NewOptions{
 				Prompt: args[0], Agent: agent, Base: base, Name: name, Dir: cwd, Cols: cols, Rows: rows,
+				By: "cli",
 			})
 			if err != nil {
 				return err
@@ -299,7 +306,7 @@ func newTaskNewCmd() *cobra.Command {
 			return attachTerminal(cmd.Context(), cmd.ErrOrStderr(), paths.HolderSocket(t.SessionID), true)
 		},
 	}
-	cmd.Flags().StringVar(&agent, "agent", "claude", "agent to run: claude, codex, or any command that takes the prompt as its argument")
+	cmd.Flags().StringVar(&agent, "agent", "claude", "agent to run: claude, codex, opencode, or any command that takes the prompt as its argument")
 	cmd.Flags().StringVar(&base, "base", "", "ref to branch from (default: the current branch)")
 	cmd.Flags().StringVar(&name, "name", "", "slug for the branch and worktree (default: from the prompt)")
 	cmd.Flags().BoolVarP(&attach, "attach", "a", false, "attach to the agent right away")
@@ -320,7 +327,7 @@ func newTaskLsCmd() *cobra.Command {
 			out := cmd.OutOrStdout()
 			shown := 0
 			tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(tw, "ID\tTASK\tSTATUS\tSESSION\tSTATE\tAGE\tWORKTREE")
+			fmt.Fprintln(tw, "ID\tTASK\tSTATUS\tBY\tSESSION\tSTATE\tAGE\tWORKTREE")
 			for _, v := range views {
 				if !all && (v.Status == api.TaskDone || v.Status == api.TaskAbandon) {
 					continue
@@ -334,7 +341,7 @@ func newTaskLsCmd() *cobra.Command {
 				if sess == "" {
 					sess = "-"
 				}
-				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", v.ID, v.Title, v.Status, sess, state,
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", v.ID, v.Title, v.Status, startedBy(v.By), sess, state,
 					age(v.CreatedAt), v.Worktree)
 			}
 			if shown == 0 {
@@ -350,6 +357,15 @@ func newTaskLsCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&all, "all", false, "include done and abandoned tasks")
 	return cmd
+}
+
+// startedBy is Task.By for `task ls`: cli, tui or device:<id>
+// (`pilothouse devices` names it); "-" for tasks from before 0.2.
+func startedBy(by string) string {
+	if by == "" {
+		return "-"
+	}
+	return by
 }
 
 func age(t time.Time) string {
