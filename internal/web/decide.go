@@ -88,32 +88,10 @@ func (s *Server) handleDecide(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", "nonce must be 16-64 base64url characters")
 		return
 	}
+	if !s.verifyDeviceSig(w, r, d, CanonicalDecision(id, b.Behavior, b.Scope, b.TS, b.Nonce), b.Sig, b.TS, b.Nonce) {
+		return
+	}
 	now := s.now()
-	skew := now.Sub(time.UnixMilli(b.TS))
-	if skew > MaxClockSkew || skew < -MaxClockSkew {
-		writeErr(w, http.StatusForbidden, "stale_signature", "signature timestamp is too far from the computer's clock — check the time on this device")
-		return
-	}
-	pub, err := parsePublicKey(d.PublicKey)
-	if err != nil {
-		writeErr(w, http.StatusForbidden, "bad_signature", "device key is invalid; pair this device again")
-		return
-	}
-	sig, err := decodeB64(b.Sig)
-	if err != nil || !VerifyP1363(pub, []byte(CanonicalDecision(id, b.Behavior, b.Scope, b.TS, b.Nonce)), sig) {
-		writeErr(w, http.StatusForbidden, "bad_signature", "signature does not match this device's key")
-		return
-	}
-	// The nonce outlives the whole acceptance window on both sides.
-	fresh, err := s.useNonce(r.Context(), d.ID, b.Nonce, time.UnixMilli(b.TS).Add(2*MaxClockSkew+time.Minute))
-	if err != nil {
-		s.writeCoreErr(w, err)
-		return
-	}
-	if !fresh {
-		writeErr(w, http.StatusForbidden, "replayed", "this signed decision was already used")
-		return
-	}
 	req, err := s.d.Core.Decide(r.Context(), api.Decision{
 		RequestID: id,
 		Behavior:  b.Behavior,

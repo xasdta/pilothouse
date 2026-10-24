@@ -14,9 +14,10 @@ type Health struct {
 }
 
 type DecideBody struct {
-	Behavior Behavior `json:"behavior"` // allow | deny
-	Scope    Scope    `json:"scope,omitempty"`
-	Message  string   `json:"message,omitempty"`
+	Behavior Behavior          `json:"behavior"` // allow | deny
+	Scope    Scope             `json:"scope,omitempty"`
+	Message  string            `json:"message,omitempty"`
+	Answers  map[string]string `json:"answers,omitempty"` // question requests: Question.Key() → answer
 }
 
 // WrappedSessionBody registers a session started by `pilothouse run`.

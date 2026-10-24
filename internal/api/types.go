@@ -86,6 +86,12 @@ type Session struct {
 	UpdatedAt      time.Time  `json:"updated_at"`
 	ExitedAt       *time.Time `json:"exited_at,omitempty"`
 	ExitCode       *int       `json:"exit_code,omitempty"`
+	// Caps says what a person can do with this session beyond answering
+	// its requests (reply, interrupt, watch the terminal, read activity).
+	Caps SessionCaps `json:"caps"`
+	// Usage is the latest token/cost estimate from the agent's transcript;
+	// nil until the activity reader has seen one.
+	Usage *Usage `json:"usage,omitempty"`
 }
 
 // Checkpoint is where in the agent's flow a request was raised.
@@ -94,7 +100,8 @@ type Checkpoint string
 const (
 	CheckpointPreTool    Checkpoint = "pre_tool"   // before every tool call: policy only
 	CheckpointPermission Checkpoint = "permission" // agent wants a person to approve
-	CheckpointQuestion   Checkpoint = "question"   // agent asked a free-form question
+	CheckpointQuestion   Checkpoint = "question"   // agent asked a question (see Request.Questions)
+	CheckpointPlan       Checkpoint = "plan"       // agent wants a plan approved (see Request.Plan)
 )
 
 // RequestStatus is the lifecycle of a Request.
@@ -144,6 +151,11 @@ type Request struct {
 	Status     RequestStatus   `json:"status"`
 	Route      Route           `json:"route,omitempty"`
 	PolicyRule string          `json:"policy_rule,omitempty"` // rule that matched, if any
+	Questions  []Question      `json:"questions,omitempty"`   // checkpoint question
+	Plan       *Plan           `json:"plan,omitempty"`        // checkpoint plan
+	Risk       []RiskLabel     `json:"risk,omitempty"`        // most severe first
+	Preview    *Preview        `json:"preview,omitempty"`     // file changes the tool call would make
+	Context    string          `json:"context,omitempty"`     // the agent's last words before asking, trimmed
 	Decision   *Decision       `json:"decision,omitempty"`
 	CreatedAt  time.Time       `json:"created_at"`
 	ExpiresAt  time.Time       `json:"expires_at"`
@@ -169,12 +181,16 @@ const (
 
 // Decision answers a Request. The first decision wins (compare-and-set).
 type Decision struct {
-	RequestID string    `json:"request_id"`
-	Behavior  Behavior  `json:"behavior"`
-	Scope     Scope     `json:"scope,omitempty"`
-	Message   string    `json:"message,omitempty"` // shown to the agent on deny
-	By        string    `json:"by"`                // "policy:<rule>", "grant:<id>", "cli", "tui", "device:<id>"
-	At        time.Time `json:"at"`
+	RequestID string   `json:"request_id"`
+	Behavior  Behavior `json:"behavior"`
+	Scope     Scope    `json:"scope,omitempty"`
+	Message   string   `json:"message,omitempty"` // shown to the agent on deny; plan feedback
+	// Answers answers a question request: Question.Key() → answer. A
+	// multi-select answer is the chosen labels joined with ", ". Free text
+	// is allowed when the question allows "other".
+	Answers map[string]string `json:"answers,omitempty"`
+	By      string            `json:"by"` // "policy:<rule>", "grant:<id>", "cli", "tui", "device:<id>", "telegram:<chat>"
+	At      time.Time         `json:"at"`
 }
 
 // EventType names an entry in the append-only event log.
@@ -190,7 +206,9 @@ const (
 	EventPresenceChanged EventType = "presence.changed"
 	EventDeviceChanged   EventType = "device.changed"
 	EventTaskUpdated     EventType = "task.updated"
-	EventHook            EventType = "hook" // raw normalized hook, kept for `pilothouse explain`
+	EventSessionReply    EventType = "session.reply"  // a person sent a follow-up prompt or interrupt (Data: ReplyRecord)
+	EventPolicyChanged   EventType = "policy.changed" // rules were added, removed, enabled or disabled (Data: RuleChange)
+	EventHook            EventType = "hook"           // raw normalized hook, kept for `pilothouse explain`
 )
 
 // Event is one entry in the append-only log. Seq is strictly increasing.

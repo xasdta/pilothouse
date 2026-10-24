@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/xasdta/pilothouse/internal/adapters"
@@ -65,6 +66,8 @@ func (d *Daemon) routes() http.Handler {
 	mux.HandleFunc("GET /v1/policy/status", d.handlePolicyStatus)
 	mux.Handle("POST /v1/policy/reload", guarded(d.handlePolicyReload))
 	mux.HandleFunc("POST /v1/notify/test", d.handleNotifyTest)
+
+	d.routesV02(mux, guarded)
 
 	if d.web != nil {
 		d.web.RegisterLocal(mux) // guarded by web.Deps.LocalGuard = d.requireHuman
@@ -287,7 +290,7 @@ func (d *Daemon) handleDecide(w http.ResponseWriter, r *http.Request) {
 		by = "tui"
 	}
 	req, err := d.Decide(r.Context(), api.Decision{RequestID: r.PathValue("id"), Behavior: b.Behavior,
-		Scope: b.Scope, Message: b.Message, By: by})
+		Scope: b.Scope, Message: b.Message, Answers: b.Answers, By: by})
 	reply(w, req, err)
 }
 
@@ -402,6 +405,10 @@ func writeErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "already_decided", "this request was already answered or handed back")
 	case errors.Is(err, core.ErrForbidden):
 		writeError(w, http.StatusForbidden, "agent_caller", err.Error())
+	case errors.Is(err, core.ErrUnsupported):
+		writeError(w, http.StatusNotImplemented, "unsupported", strings.TrimPrefix(err.Error(), core.ErrUnsupported.Error()+": "))
+	case errors.Is(err, core.ErrInvalid):
+		writeError(w, http.StatusBadRequest, "invalid", strings.TrimPrefix(err.Error(), core.ErrInvalid.Error()+": "))
 	case errors.Is(err, context.Canceled):
 		writeError(w, http.StatusServiceUnavailable, "internal", "request cancelled")
 	default:

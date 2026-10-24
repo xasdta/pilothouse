@@ -105,5 +105,71 @@
     });
   }
 
-  g.PilothouseKeys = { load: load, create: create, clear: clear, canonical: canonical, decide: decide };
+  /** The exact string the daemon verifies for 0.2 actions (internal/web CanonicalAction). */
+  function canonicalAction(action, target, payloadHash, ts, nonce) {
+    return ['pilothouse-action:v2', action, target, payloadHash, String(ts), nonce].join('\n');
+  }
+
+  function sha256b64url(text) {
+    return g.crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)).then(b64url);
+  }
+
+  /**
+   * Signs an action. payload is any JSON value; it is sent as the exact
+   * JSON text that was hashed. Resolves to the request body
+   * {payload, ts, nonce, sig}; rejects with code 'no_key' when unpaired.
+   */
+  function signAction(action, target, payload) {
+    var text = JSON.stringify(payload === undefined ? {} : payload);
+    return load().then(function (rec) {
+      if (!rec || !rec.privateKey) {
+        var e = new Error('This device has no signing key. Pair it again.');
+        e.code = 'no_key';
+        throw e;
+      }
+      var ts = Date.now();
+      var nonce = randomNonce();
+      return sha256b64url(text).then(function (h) {
+        var msg = new TextEncoder().encode(canonicalAction(action, target, h, ts, nonce));
+        return g.crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, rec.privateKey, msg);
+      }).then(function (sig) {
+        return { payload: text, ts: ts, nonce: nonce, sig: b64url(sig) };
+      });
+    });
+  }
+
+  /**
+   * Signs an action and POSTs it to path. Resolves to {ok, status, data};
+   * never rejects, so callers can roll back optimistic UI.
+   */
+  function postSigned(path, action, target, payload) {
+    return signAction(action, target, payload).then(function (body) {
+      return g.fetch(path, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'X-Pilothouse': '1' },
+        body: JSON.stringify(body)
+      }).then(function (res) {
+        if (res.status === 204) return { ok: true, status: 204, data: null };
+        return res.json().catch(function () { return {}; }).then(function (data) {
+          return { ok: res.ok, status: res.status, data: data };
+        });
+      });
+    }).catch(function (err) {
+      return { ok: false, status: 0, data: { code: (err && err.code) || 'network', error: (err && err.message) || 'Network error' } };
+    });
+  }
+
+  /**
+   * Answers a request (0.2): behavior, optional scope, message and answers
+   * ({questionKey: answer}). Same result shape as decide().
+   */
+  function respond(id, body) {
+    return postSigned('/api/requests/' + encodeURIComponent(id) + '/respond', 'decide', id, body);
+  }
+
+  g.PilothouseKeys = {
+    load: load, create: create, clear: clear, canonical: canonical, decide: decide,
+    canonicalAction: canonicalAction, signAction: signAction, postSigned: postSigned, respond: respond
+  };
 })(self);

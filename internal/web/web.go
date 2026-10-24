@@ -332,6 +332,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /api/push/test", a(csrf(s.handlePushTest)))
 	mux.HandleFunc("PATCH /api/device", a(csrf(s.handleRename)))
 	mux.HandleFunc("POST /api/logout", a(csrf(s.handleLogout)))
+	s.routesV02(mux, a)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "not_found", "no such endpoint")
 	})
@@ -358,6 +359,10 @@ func (s *Server) writeCoreErr(w http.ResponseWriter, err error) {
 		writeErr(w, http.StatusConflict, "already_decided", "already answered")
 	case errors.Is(err, core.ErrForbidden):
 		writeErr(w, http.StatusForbidden, "forbidden", "forbidden")
+	case errors.Is(err, core.ErrUnsupported):
+		writeUnsupported(w, strings.TrimPrefix(err.Error(), core.ErrUnsupported.Error()+": "))
+	case errors.Is(err, core.ErrInvalid):
+		writeErr(w, http.StatusBadRequest, "invalid", strings.TrimPrefix(err.Error(), core.ErrInvalid.Error()+": "))
 	default:
 		s.log.Error("core call failed", "err", err)
 		writeErr(w, http.StatusInternalServerError, "internal", "internal error")

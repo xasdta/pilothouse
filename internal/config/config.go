@@ -49,7 +49,41 @@ type Config struct {
 			Token  string `yaml:"token"`
 		} `yaml:"ntfy"`
 		Webhooks []string `yaml:"webhooks"` // Slack/Discord-compatible incoming webhook URLs
+		// Telegram is a two-way channel: requests arrive with buttons and
+		// a reply to a message prompts the agent. Set up with
+		// `pilothouse notify telegram`; the bot token lives in
+		// ~/.pilothouse/keys/telegram.json, not here.
+		Telegram struct {
+			Enabled bool  `yaml:"enabled"`
+			ChatID  int64 `yaml:"chat_id"` // bound by the pairing code; 0 = not paired
+			// Decisions lets the buttons answer requests (default true).
+			// Off: Telegram only notifies.
+			Decisions *bool `yaml:"decisions"`
+			// APIBase overrides https://api.telegram.org (tests, proxies).
+			APIBase string `yaml:"api_base"`
+		} `yaml:"telegram"`
 	} `yaml:"notify"`
+
+	// Usage configures cost estimates and budget alerts.
+	Usage struct {
+		// DailyBudgetUSD sends a notification at 80 % and 100 % of this
+		// estimated daily spend. 0 = no budget.
+		DailyBudgetUSD float64 `yaml:"daily_budget_usd"`
+		// Prices overrides or adds per-model list prices in USD per million
+		// tokens, keyed by model id prefix (e.g. "claude-sonnet-5").
+		Prices map[string]ModelPrice `yaml:"prices"`
+	} `yaml:"usage"`
+
+	// KeepAwake stops the computer from sleeping while agents work:
+	// "working" (default) while any session is working or blocked,
+	// "off" never.
+	KeepAwake string `yaml:"keep_awake"`
+
+	Tasks struct {
+		// Repos are repository roots tasks may be started in from a device,
+		// in addition to repos Pilothouse has seen sessions in.
+		Repos []string `yaml:"repos"`
+	} `yaml:"tasks"`
 
 	// Retention is how long closed requests and raw hook events are kept.
 	Retention Duration `yaml:"retention"` // default 30 days
@@ -68,6 +102,25 @@ type Config struct {
 
 	// UpdateCheck sends {version, os, arch, monthly-rotating id} once a day.
 	UpdateCheck *bool `yaml:"update_check"` // default true
+}
+
+// ModelPrice is a list price in USD per million tokens.
+type ModelPrice struct {
+	Input      float64 `yaml:"input"`
+	Output     float64 `yaml:"output"`
+	CacheRead  float64 `yaml:"cache_read"`
+	CacheWrite float64 `yaml:"cache_write"`
+}
+
+// Keep-awake modes.
+const (
+	KeepAwakeWorking = "working"
+	KeepAwakeOff     = "off"
+)
+
+// TelegramDecisions reports whether Telegram buttons may answer requests.
+func (c *Config) TelegramDecisions() bool {
+	return c.Notify.Telegram.Decisions == nil || *c.Notify.Telegram.Decisions
 }
 
 // Duration is a time.Duration that reads "45s" / "9m" in YAML.
@@ -105,6 +158,7 @@ func Default() *Config {
 	c.Notify.Ntfy.Server = "https://ntfy.sh"
 	c.Retention = Duration{30 * 24 * time.Hour}
 	c.SessionIdleExpiry = Duration{DefaultSessionIdleExpiry}
+	c.KeepAwake = KeepAwakeWorking
 	return c
 }
 
@@ -133,6 +187,14 @@ func (c *Config) Validate() error {
 	}
 	if d := c.SessionIdleExpiry.Duration; d != 0 && d < time.Minute {
 		return errors.New("session_idle_expiry must be at least 1m (or 0s to turn it off)")
+	}
+	switch c.KeepAwake {
+	case "", KeepAwakeWorking, KeepAwakeOff:
+	default:
+		return fmt.Errorf("keep_awake must be %q or %q, got %q", KeepAwakeWorking, KeepAwakeOff, c.KeepAwake)
+	}
+	if c.Usage.DailyBudgetUSD < 0 {
+		return errors.New("usage.daily_budget_usd must not be negative")
 	}
 	return nil
 }

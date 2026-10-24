@@ -1,0 +1,10 @@
+{
+  "action": "decide",
+  "target": "r_fixture002",
+  "payload": "{\"behavior\":\"allow\",\"answers\":{\"Which color?\":\"Blue, Green\"}}",
+  "ts": 1767225600000,
+  "nonce": "bm9uY2UtYWN0aW9uLXYyLTE",
+  "public_key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE3EKXbqM77xnss6lXF1PSksKy8CXRof1V5_KJaD0mMKMAQ8f8qn2hKqJOmhk1ZMajZzNGDEnbi-Fb8eYh0ezLNQ",
+  "canonical": "pilothouse-action:v2\ndecide\nr_fixture002\nbtbahTYX6p99TjIsvUL-yKhOEFb2lumno9vcuPJBLJs\n1767225600000\nbm9uY2UtYWN0aW9uLXYyLTE",
+  "sig": "4-mJ6NVccCLmZY2m1BTgfsztOt9j2Bs3mRxqWnfKzBdCFqASC53TJoOuKp2qEcpZU1YrmVjWy8qB98NeaJzr7w"
+}
