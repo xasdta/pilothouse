@@ -84,28 +84,24 @@ func (d *Daemon) Rules(ctx context.Context) (api.RulesView, error) {
 // TUI over the guarded Unix socket) rather than a paired device.
 func localCaller(by string) bool { return by == "cli" || by == "tui" }
 
-// errNoChange ends an edit that would change nothing.
-var errNoChange = errors.New("no change")
-
-// editManaged runs fn on the managed file and maps validation errors to
-// core.ErrInvalid. changed is false when fn returned errNoChange.
-func (d *Daemon) editManaged(re ruleEngine, fn func(*policy.ManagedFile) error) (changed bool, err error) {
-	err = policy.EditManaged(re.ManagedFile(), re.Home(), fn)
+// ruleErr maps a managed-file error for the API: validation problems and
+// rules that aren't managed are core.ErrInvalid with a readable message,
+// unknown rules core.ErrNotFound.
+func ruleErr(re ruleEngine, err error) error {
 	switch {
-	case errors.Is(err, errNoChange):
-		return false, nil
+	case err == nil:
+		return nil
 	case errors.Is(err, policy.ErrInvalidRule):
-		return false, core.Invalid("%s", strings.TrimPrefix(err.Error(), policy.ErrInvalidRule.Error()+": "))
-	case errors.Is(err, core.ErrInvalid), errors.Is(err, core.ErrNotFound):
-		return false, err
-	case err != nil:
-		return false, fmt.Errorf("updating %s: %w", re.ManagedFile(), err)
+		return core.Invalid("%s", strings.TrimPrefix(err.Error(), policy.ErrInvalidRule.Error()+": "))
+	case errors.Is(err, policy.ErrNoManagedRule):
+		return fmt.Errorf("%w: %v", core.ErrNotFound, err)
 	}
-	d.reloadPolicy()
-	return true, nil
+	return fmt.Errorf("updating %s: %w", re.ManagedFile(), err)
 }
 
-func (d *Daemon) emitRuleChange(ctx context.Context, op, name, by string) {
+// changed reloads the engine and records a rule change.
+func (d *Daemon) changed(ctx context.Context, op, name, by string) {
+	d.reloadPolicy()
 	ch := api.RuleChange{Op: op, Name: name, By: by, At: d.now()}
 	if _, err := d.Emit(ctx, api.EventPolicyChanged, "", "", ch); err != nil {
 		d.log.Warn("policy.changed event not recorded", "op", op, "rule", name, "err", err)
@@ -129,44 +125,26 @@ func (d *Daemon) AddRule(ctx context.Context, spec api.RuleSpec, by string) (api
 	spec.Message = strings.TrimSpace(spec.Message)
 	spec.When = strings.TrimSpace(spec.When)
 	if err := policy.ValidateRuleSpec(spec, policy.ValidateOptions{AllowWhen: localCaller(by), Home: re.Home()}); err != nil {
-		return api.RuleInfo{}, core.Invalid("%s", strings.TrimPrefix(err.Error(), policy.ErrInvalidRule.Error()+": "))
+		return api.RuleInfo{}, ruleErr(re, err)
 	}
-	for _, ri := range re.RuleInfos(d.liveRepos(ctx)) {
-		if ri.Name == spec.Name {
-			return api.RuleInfo{}, core.Invalid("a rule named %q already exists (%s); pick another name", spec.Name, ri.Source)
-		}
+	if err := policy.NameInUse(spec.Name, re.RuleInfos(d.liveRepos(ctx))); err != nil {
+		return api.RuleInfo{}, ruleErr(re, err)
 	}
 	now := d.now()
-	if _, err := d.editManaged(re, func(mf *policy.ManagedFile) error {
-		if _, dup := mf.Rule(spec.Name); dup {
-			return core.Invalid("a rule named %q already exists; pick another name", spec.Name)
-		}
-		mf.Rules = append(mf.Rules, policy.NewManagedRule(spec, by, now))
-		return nil
-	}); err != nil {
-		return api.RuleInfo{}, err
+	if err := policy.AddManagedRule(re.ManagedFile(), re.Home(), spec, by, now); err != nil {
+		return api.RuleInfo{}, ruleErr(re, err)
 	}
-	d.emitRuleChange(ctx, "add", spec.Name, by)
+	d.changed(ctx, "add", spec.Name, by)
 	return api.RuleInfo{RuleSpec: spec, Source: api.RuleSourceManaged, File: re.ManagedFile(), Enabled: true,
 		Managed: true, Created: now.Truncate(time.Second), By: by}, nil
 }
 
-// notManaged explains why a rule can't be changed from the inbox.
-func (d *Daemon) notManaged(ctx context.Context, re ruleEngine, name string) error {
-	for _, ri := range re.RuleInfos(d.liveRepos(ctx)) {
-		if ri.Name != name {
-			continue
-		}
-		switch ri.Source {
-		case api.RuleSourceBuiltin:
-			return core.Invalid("%q is built in and always on", name)
-		case api.RuleSourcePreset:
-			return core.Invalid("%q belongs to the %s preset; switch the preset off instead", name, ri.Preset)
-		default:
-			return core.Invalid("%q is in %s; edit that file to change it", name, ri.File)
-		}
+// notManaged explains a name the managed file doesn't have.
+func (d *Daemon) notManaged(ctx context.Context, re ruleEngine, name string, err error) error {
+	if errors.Is(err, policy.ErrNoManagedRule) {
+		err = policy.NotManagedError(name, re.RuleInfos(d.liveRepos(ctx)))
 	}
-	return fmt.Errorf("rule %q: %w", name, core.ErrNotFound)
+	return ruleErr(re, err)
 }
 
 // SetRuleEnabled turns a managed rule on or off.
@@ -175,25 +153,15 @@ func (d *Daemon) SetRuleEnabled(ctx context.Context, name string, enabled bool, 
 	if err != nil {
 		return err
 	}
-	changed, err := d.editManaged(re, func(mf *policy.ManagedFile) error {
-		i, ok := mf.Rule(name)
-		if !ok {
-			return d.notManaged(ctx, re, name)
-		}
-		if mf.Rules[i].On() == enabled {
-			return errNoChange
-		}
-		mf.Rules[i].Enabled = &enabled
-		return nil
-	})
+	changed, err := policy.SetManagedRuleEnabled(re.ManagedFile(), re.Home(), name, enabled)
 	if err != nil || !changed {
-		return err
+		return d.notManaged(ctx, re, name, err)
 	}
 	op := "disable"
 	if enabled {
 		op = "enable"
 	}
-	d.emitRuleChange(ctx, op, name, by)
+	d.changed(ctx, op, name, by)
 	return nil
 }
 
@@ -203,17 +171,10 @@ func (d *Daemon) RemoveRule(ctx context.Context, name string, by string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := d.editManaged(re, func(mf *policy.ManagedFile) error {
-		i, ok := mf.Rule(name)
-		if !ok {
-			return d.notManaged(ctx, re, name)
-		}
-		mf.Rules = append(mf.Rules[:i], mf.Rules[i+1:]...)
-		return nil
-	}); err != nil {
-		return err
+	if err := policy.RemoveManagedRule(re.ManagedFile(), re.Home(), name); err != nil {
+		return d.notManaged(ctx, re, name, err)
 	}
-	d.emitRuleChange(ctx, "remove", name, by)
+	d.changed(ctx, "remove", name, by)
 	return nil
 }
 
@@ -223,46 +184,16 @@ func (d *Daemon) SetPreset(ctx context.Context, name string, enabled bool, by st
 	if err != nil {
 		return err
 	}
-	known := policy.PresetNames()
-	if !contains(known, name) {
-		return core.Invalid("unknown preset %q (known: %s)", name, strings.Join(known, ", "))
-	}
-	changed, err := d.editManaged(re, func(mf *policy.ManagedFile) error {
-		on := mf.PresetOn(name)
-		switch {
-		case on == enabled:
-			return errNoChange
-		case enabled:
-			mf.Presets = append(mf.Presets, policy.ManagedPreset{Name: name, By: by, At: d.now().Truncate(time.Second)})
-		default:
-			out := mf.Presets[:0]
-			for _, p := range mf.Presets {
-				if p.Name != name {
-					out = append(out, p)
-				}
-			}
-			mf.Presets = out
-		}
-		return nil
-	})
+	changed, err := policy.SetManagedPreset(re.ManagedFile(), re.Home(), name, enabled, by, d.now())
 	if err != nil || !changed {
-		return err
+		return ruleErr(re, err)
 	}
 	op := "preset_off"
 	if enabled {
 		op = "preset_on"
 	}
-	d.emitRuleChange(ctx, op, name, by)
+	d.changed(ctx, op, name, by)
 	return nil
-}
-
-func contains(list []string, s string) bool {
-	for _, x := range list {
-		if x == s {
-			return true
-		}
-	}
-	return false
 }
 
 // Limits on a hypothetical call.

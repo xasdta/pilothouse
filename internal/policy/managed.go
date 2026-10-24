@@ -295,11 +295,17 @@ func MarshalManaged(mf *ManagedFile) ([]byte, error) {
 	if mf.Rules == nil {
 		mf.Rules = []ManagedRule{}
 	}
-	body, err := yaml.Marshal(mf)
-	if err != nil {
+	var b bytes.Buffer
+	b.WriteString(managedHeader)
+	enc := yaml.NewEncoder(&b)
+	enc.SetIndent(2)
+	if err := enc.Encode(mf); err != nil {
 		return nil, err
 	}
-	return append([]byte(managedHeader), body...), nil
+	if err := enc.Close(); err != nil {
+		return nil, err
+	}
+	return b.Bytes(), nil
 }
 
 // managedLockTimeout bounds the wait for another writer of rules.yaml.
@@ -341,6 +347,114 @@ func EditManaged(file, home string, fn func(*ManagedFile) error) error {
 		return fmt.Errorf("%w: %s", ErrInvalidRule, errorText(err))
 	}
 	return writeFileAtomic(file, data, 0o600)
+}
+
+// ErrNoManagedRule: the name is not a rule of the managed file.
+var ErrNoManagedRule = errors.New("no such managed rule")
+
+// errUnchanged ends an edit that would change nothing.
+var errUnchanged = errors.New("unchanged")
+
+func editChanged(err error) (bool, error) {
+	if errors.Is(err, errUnchanged) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// NameInUse rejects a new rule name that a loaded rule (built-in, user,
+// managed, preset or repo) already has, so names stay unambiguous.
+func NameInUse(name string, infos []api.RuleInfo) error {
+	for _, ri := range infos {
+		if ri.Name == name {
+			return invalidf("a rule named %q already exists (%s); pick another name", name, ri.Source)
+		}
+	}
+	return nil
+}
+
+// NotManagedError explains why a rule can't be changed from the inbox or
+// the CLI's managed commands; it wraps ErrNoManagedRule when no loaded
+// rule has the name.
+func NotManagedError(name string, infos []api.RuleInfo) error {
+	for _, ri := range infos {
+		if ri.Name != name {
+			continue
+		}
+		switch ri.Source {
+		case api.RuleSourceBuiltin:
+			return invalidf("%q is built in and always on", name)
+		case api.RuleSourcePreset:
+			return invalidf("%q belongs to the %s preset; switch the preset off instead", name, ri.Preset)
+		default:
+			return invalidf("%q is in %s; edit that file to change it", name, ri.File)
+		}
+	}
+	return fmt.Errorf("%w: %q", ErrNoManagedRule, name)
+}
+
+// AddManagedRule appends a rule (validate it with ValidateRuleSpec first).
+func AddManagedRule(file, home string, spec api.RuleSpec, by string, now time.Time) error {
+	return EditManaged(file, home, func(mf *ManagedFile) error {
+		if _, dup := mf.Rule(spec.Name); dup {
+			return invalidf("a rule named %q already exists; pick another name", spec.Name)
+		}
+		mf.Rules = append(mf.Rules, NewManagedRule(spec, by, now))
+		return nil
+	})
+}
+
+// SetManagedRuleEnabled turns a managed rule on or off; changed is false
+// when it already was. ErrNoManagedRule when there is no such rule.
+func SetManagedRuleEnabled(file, home, name string, enabled bool) (bool, error) {
+	return editChanged(EditManaged(file, home, func(mf *ManagedFile) error {
+		i, ok := mf.Rule(name)
+		switch {
+		case !ok:
+			return ErrNoManagedRule
+		case mf.Rules[i].On() == enabled:
+			return errUnchanged
+		}
+		mf.Rules[i].Enabled = &enabled
+		return nil
+	}))
+}
+
+// RemoveManagedRule deletes a managed rule (ErrNoManagedRule if absent).
+func RemoveManagedRule(file, home, name string) error {
+	return EditManaged(file, home, func(mf *ManagedFile) error {
+		i, ok := mf.Rule(name)
+		if !ok {
+			return ErrNoManagedRule
+		}
+		mf.Rules = append(mf.Rules[:i], mf.Rules[i+1:]...)
+		return nil
+	})
+}
+
+// SetManagedPreset switches a preset on or off; changed is false when it
+// already was.
+func SetManagedPreset(file, home, name string, on bool, by string, now time.Time) (bool, error) {
+	if _, ok := presetByName(name); !ok {
+		return false, invalidf("unknown preset %q (known: %s)", name, strings.Join(PresetNames(), ", "))
+	}
+	return editChanged(EditManaged(file, home, func(mf *ManagedFile) error {
+		switch {
+		case mf.PresetOn(name) == on:
+			return errUnchanged
+		case on:
+			mf.Presets = append(mf.Presets, ManagedPreset{Name: name, By: by, At: now.UTC().Truncate(time.Second)})
+		default:
+			out := mf.Presets[:0]
+			for _, p := range mf.Presets {
+				if p.Name != name {
+					out = append(out, p)
+				}
+			}
+			mf.Presets = out
+		}
+		return nil
+	}))
 }
 
 // errorText joins a FileErrors' messages without the file name prefix.
