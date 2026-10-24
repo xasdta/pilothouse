@@ -61,6 +61,8 @@ the terminal at your desk, or your phone when you're away.`,
 	add("run", newRunCmd(), newAttachCmd(), newHolderCmd(), newTaskCmd())
 	// remote.go (workstream E)
 	add("remote", newPairCmd(), newDevicesCmd(), newRemoteCmd(), newOpenCmd())
+	// reply.go (0.2 workstream B)
+	add("work", newReplyCmd())
 	return root
 }
 
