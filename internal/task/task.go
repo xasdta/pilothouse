@@ -616,8 +616,9 @@ func (m *Manager) Diff(ctx context.Context, ref string, stat bool, w io.Writer) 
 	if err != nil {
 		return err
 	}
+	copied := copiedSet(t) // task.yaml's copies (.env) are not the agent's work
 	for _, f := range strings.Split(untracked, "\x00") {
-		if f == "" {
+		if f == "" || copied[f] {
 			continue
 		}
 		if stat {
@@ -646,11 +647,11 @@ func (m *Manager) Done(ctx context.Context, ref string, o DoneOptions) (api.Task
 	}
 	wt := dirExists(t.Worktree)
 	if wt {
-		dirty, err := gitOutput(ctx, t.Worktree, "status", "--porcelain")
+		dirty, err := hasLeftovers(ctx, t) // task.yaml's copies don't count
 		if err != nil {
 			return t, err
 		}
-		if dirty != "" && !o.Force {
+		if dirty && !o.Force {
 			return t, fmt.Errorf("worktree %s has uncommitted changes — commit them (cd %s && git add -A && git commit) or pass --force to discard them", t.Worktree, t.Worktree)
 		}
 	}
@@ -663,7 +664,9 @@ func (m *Manager) Done(ctx context.Context, ref string, o DoneOptions) (api.Task
 		if err := m.stopAgent(ctx, t); err != nil {
 			return t, err
 		}
-		if err := removeWorktree(ctx, t, o.Force); err != nil {
+		// With nothing uncommitted, what is left is task.yaml's copies
+		// and ignored files: removing them needs --force too.
+		if err := removeWorktree(ctx, t, o.Force || len(copiedSet(t)) > 0); err != nil {
 			return t, err
 		}
 	}

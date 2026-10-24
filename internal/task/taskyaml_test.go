@@ -422,6 +422,35 @@ func TestPromptAndBaseChecks(t *testing.T) {
 	}
 }
 
+// TestCopiedFilesStayLocal: task.yaml's copies are not the agent's work:
+// `task diff` doesn't print them and `task done` doesn't see them as
+// uncommitted changes.
+func TestCopiedFilesStayLocal(t *testing.T) {
+	testEnv(t)
+	repo := newRepo(t)
+	writeFile(t, filepath.Join(repo, ".env"), "TOKEN=hunter2\n", 0o600)
+	writeTaskYAML(t, repo, "copy: [.env]\n")
+	m, _ := newManager(t)
+	ctx := context.Background()
+	tk, err := m.New(ctx, NewOptions{Prompt: "local copies", Agent: fakeAgentScript(t, true), Dir: repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d bytes.Buffer
+	if err := m.Diff(ctx, tk.ID, false, &d); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(d.String(), "hunter2") || !strings.Contains(d.String(), "+task: local copies") {
+		t.Fatalf("diff:\n%s", d.String())
+	}
+	if _, err := m.Done(ctx, tk.ID, DoneOptions{}); err != nil {
+		t.Fatalf("done with only copies left: %v", err)
+	}
+	if dirExists(tk.Worktree) {
+		t.Fatal("worktree kept")
+	}
+}
+
 // nopDaemon is a DaemonAPI that records nothing.
 type nopDaemon struct{}
 
