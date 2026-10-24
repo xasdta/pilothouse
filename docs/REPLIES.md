@@ -31,7 +31,11 @@ Control characters in the text are dropped first, so a reply can never end
 the paste early or press keys by itself. A program without bracketed paste
 gets the text typed as is. An interrupt presses Esc, waits a moment, then
 sends the text. A terminal attached with `pilothouse attach` stays attached
-and sees the reply being typed.
+and sees the reply being typed. While the agent shows a prompt (a permission
+dialog, a question, a plan), a plain reply is refused: the Enter that submits
+it would pick the prompt's highlighted option. Answer the prompt, or reply
+with interrupt: Esc cancels the prompt and the text tells the agent what to
+do instead.
 
 **Claude Code sessions you started yourself.** Every hook of a Claude
 session carries the path and token of the session's messaging socket; the

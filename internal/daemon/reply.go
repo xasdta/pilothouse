@@ -122,6 +122,15 @@ func (d *Daemon) Reply(ctx context.Context, sessionID string, r api.Reply, by st
 func (d *Daemon) deliverReply(ctx context.Context, s api.Session, r api.Reply, by string) (api.ReplyResult, error) {
 	var termErr error
 	if s.Mode == api.ModeWrapped {
+		caps, known := d.replies.holderCaps(s.ID)
+		typed := !known || hasCap(caps, wrap.CapInput)
+		if typed && s.State == api.StateBlocked && !r.Interrupt && r.Text != "" {
+			// A dialog is up (permission, question, plan): the Enter after
+			// the text would pick its highlighted option. A reply must
+			// never answer a prompt by accident; Esc first cancels it.
+			return api.ReplyResult{}, core.Invalid("the agent is waiting for an answer (%s); answer it first, or send the reply with interrupt to cancel the prompt and say what to do instead",
+				firstNonEmpty(s.StateDetail, "a prompt is open"))
+		}
 		termErr = d.replyTerminal(ctx, s, r)
 		if termErr == nil {
 			return api.ReplyResult{Via: api.ReplyTerminal}, nil

@@ -103,6 +103,19 @@ try:
     results["A-interrupted-shown"] = bool(re.search(r"Interrupted", A.text() + A.rawtext().decode("utf8", "replace")))
     wait_until(lambda: sess(sid)["state"] == "waiting", 90, what="waiting")
 
+    # A permission dialog is up: a plain reply is refused (its Enter would
+    # answer the dialog); with --interrupt, Esc cancels it first.
+    ph_person("here")
+    rc, out = ph_person("reply", sid, "Run this Bash command: touch blocked.txt")
+    wait_until(lambda: sess(sid)["state"] == "blocked", 90, what="permission dialog")
+    rc, out = ph_person("reply", sid, "yes")
+    say("reply while blocked:", rc, out.strip())
+    results["A-blocked-refused"] = rc != 0 and "waiting for an answer" in out
+    rc, out = ph_person("reply", sid, "--interrupt", "Don't run that. Use the Write tool to create blocked-alt.txt containing the word eta.")
+    results["A-blocked-interrupt-acted"] = "eta" in wait_file(f"{WA}/blocked-alt.txt")
+    results["A-blocked-not-approved"] = not os.path.exists(f"{WA}/blocked.txt")
+    wait_until(lambda: sess(sid)["state"] == "waiting", 90, what="waiting")
+
     # ------------------------------------------------------------ B: phone terminal
     if os.path.exists(PHONE):
         r = subprocess.run(["node", f"{HERE}/phone_terminal.mjs", PHONE, sid,

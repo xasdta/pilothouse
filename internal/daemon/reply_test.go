@@ -632,6 +632,29 @@ func TestReplyAndTerminalWrapped(t *testing.T) {
 	}
 }
 
+// While a wrapped agent shows a prompt, a plain reply is refused: its
+// Enter would answer the prompt. With interrupt (Esc first) it goes.
+func TestReplyRefusedWhileBlocked(t *testing.T) {
+	h := newHarness(t)
+	h.start(t)
+	ctx := context.Background()
+	hp := startWrapped(t, h, `printf 'ready\033]7501;state=blocked;kind=permission\007\n'; while read l; do echo "got:$l"; done`)
+	waitFor(t, "blocked", func() bool { s, _ := h.c.Session(ctx, hp.sid); return s.State == api.StateBlocked })
+	w := watchTerm(t, h, hp.sid, true)
+	_, err := h.c.Reply(ctx, hp.sid, api.Reply{Text: "yes do it"})
+	if ae := apiErr(t, err); ae.Status != 400 || !strings.Contains(ae.Msg, "waiting for an answer") || !strings.Contains(ae.Msg, "interrupt") {
+		t.Fatalf("reply while blocked: %v", err)
+	}
+	if strings.Contains(w.output(), "yes do it") {
+		t.Fatal("refused reply was typed")
+	}
+	if _, err := h.c.Reply(ctx, hp.sid, api.Reply{Text: "do this instead", Interrupt: true}); err != nil {
+		t.Fatal(err)
+	}
+	w.waitOutput(t, "got:\x1b") // a plain shell reads Esc as part of the line
+	w.waitOutput(t, "do this instead")
+}
+
 // A generic program without bracketed paste gets the text typed.
 func TestReplyWrappedPlainProgram(t *testing.T) {
 	h := newHarness(t)
