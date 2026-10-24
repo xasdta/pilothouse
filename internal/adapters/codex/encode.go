@@ -29,6 +29,8 @@ import (
 //     must do it (see askReason). allow is unsupported (Codex reports the
 //     hook as failed), so it prints nothing and Codex's own approval
 //     policy applies.
+//     request_user_input (a question for the person) gets no "ask"
+//     either: the question itself reaches them.
 //   - permission: allow → decision.behavior JSON; deny → exit 2. No
 //     updatedInput/updatedPermissions/interrupt: Codex fails closed on them.
 //   - session_start, prompt_submit: additionalContext; prompt_submit deny
@@ -41,6 +43,11 @@ func (Adapter) EncodeResponse(ev adapters.HookEvent, out adapters.HookOutcome) a
 		case api.BehaviorDeny:
 			return denyExit(preToolReason(out.Message, hookkit.DefaultDenyReason))
 		case api.BehaviorAsk:
+			if ev.Tool == toolRequestUserInput {
+				// A question already waits for the person: "ask" adds
+				// nothing, and its deny form would cancel the question.
+				break
+			}
 			return denyExit(preToolReason(askReason(out), ""))
 		}
 		return hookkit.PreToolResponse("", "", out.Context)
