@@ -94,10 +94,6 @@ type question struct {
 	Custom   *bool `json:"custom"` // free text allowed; OpenCode's default is true
 }
 
-const (
-	maxQuestions = 8
-	maxOptions   = 16
-)
 
 // ParseHook normalizes one plugin payload.
 func (Adapter) ParseHook(env adapters.HookEnvelope) (adapters.HookEvent, error) {
@@ -165,12 +161,17 @@ func (Adapter) ParseHook(env adapters.HookEnvelope) (adapters.HookEvent, error) 
 		describePermission(&ev, p)
 	case EventQuestionAsked:
 		ev.ToolUseID, ev.Tool, ev.ToolKind = p.RequestID, "question", api.ToolOther
-		ev.Questions = questions(p.RequestID, p.Questions)
 		ev.Input, _ = json.Marshal(map[string]any{"questions": p.Questions})
-		ev.Summary = "Question"
-		if len(ev.Questions) > 0 {
-			ev.Summary = "Asks: " + hookkit.OneLine(ev.Questions[0].Text, 120)
+		qs, ok := questions(p.RequestID, p.Questions)
+		ev.Summary = hookkit.QuestionSummary(qs)
+		if !ok {
+			// Not something Pilothouse can ask (too many questions, an
+			// option without a label, …): OpenCode's own dialog answers
+			// it, and the session shows as waiting on a question.
+			ev.Kind, ev.NotificationType, ev.Message = adapters.HookNotification, "question", ev.Summary
+			break
 		}
+		ev.Questions = qs
 	case EventPermissionReply, EventQuestionReply, EventQuestionReject:
 		// No tool: the request is matched by its id only, never by a
 		// tool and summary that another pending request might share.
@@ -189,35 +190,35 @@ func (Adapter) ParseHook(env adapters.HookEnvelope) (adapters.HookEvent, error) 
 // it generates a title from the first prompt.
 func defaultTitle(t string) bool { return strings.HasPrefix(t, "New session") }
 
-// questions converts question.asked's questions. Each gets an id derived
-// from the OpenCode question request (que_…), so answers are keyed
-// unambiguously even when two questions share their text; the answer goes
-// back in question order (EncodeResponse).
-func questions(requestID string, in []question) []api.Question {
-	if len(in) > maxQuestions {
-		in = in[:maxQuestions]
+// questions converts question.asked's questions. OpenCode gives the
+// request one id (que_…) and answers it with one list of labels per
+// question, in order; each question's ID is that id plus its position, so
+// answers are keyed unambiguously even when two questions share a text.
+// Texts and labels are kept exactly as sent (answers name the labels);
+// ok is false when the set can't be asked through Pilothouse
+// (hookkit.CheckQuestions).
+func questions(requestID string, in []question) ([]api.Question, bool) {
+	if requestID == "" || len(in) > hookkit.MaxQuestions {
+		return nil, false
 	}
 	out := make([]api.Question, 0, len(in))
 	for i, q := range in {
 		aq := api.Question{
 			ID:          questionID(requestID, i),
-			Header:      hookkit.Truncate(strings.TrimSpace(q.Header), 60),
-			Text:        hookkit.CapBytes(strings.TrimSpace(q.Question), 2000),
+			Header:      q.Header,
+			Text:        q.Question,
 			MultiSelect: q.Multiple,
 			AllowOther:  q.Custom == nil || *q.Custom,
 		}
-		for j, o := range q.Options {
-			if j == maxOptions {
-				break
-			}
-			aq.Options = append(aq.Options, api.QuestionOption{
-				Label:       hookkit.CapBytes(o.Label, 200),
-				Description: hookkit.CapBytes(o.Description, 500),
-			})
+		for _, o := range q.Options {
+			aq.Options = append(aq.Options, api.QuestionOption{Label: o.Label, Description: o.Description})
 		}
-		out = append(out, aq)
+		if len(aq.Text) > hookkit.MaxQuestionBytes {
+			return nil, false
+		}
+		out = append(out, hookkit.TidyQuestion(aq))
 	}
-	return out
+	return out, hookkit.CheckQuestions(out)
 }
 
 // questionID is the Question.ID of question i of an OpenCode question

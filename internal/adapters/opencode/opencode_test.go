@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -173,7 +174,7 @@ func TestParseHookQuestions(t *testing.T) {
 	if q := ev.Questions[1]; q.ID != "que_multi#2" || q.MultiSelect || !q.AllowOther {
 		t.Errorf("q1 %+v (OpenCode allows free text unless custom is false)", q)
 	}
-	if ev.Summary != "Asks: Which checks?" || ev.Tool != "question" {
+	if ev.Summary != "Asks: Which checks? (+1 more)" || ev.Tool != "question" {
 		t.Errorf("summary %q tool %q", ev.Summary, ev.Tool)
 	}
 }
@@ -200,20 +201,39 @@ func TestParseHookRejects(t *testing.T) {
 	}
 }
 
-func TestQuestionsAreBounded(t *testing.T) {
-	var qs []map[string]any
-	for i := 0; i < 20; i++ {
-		var opts []map[string]string
-		for j := 0; j < 30; j++ {
-			opts = append(opts, map[string]string{"label": strings.Repeat("x", 500), "description": "d"})
-		}
-		qs = append(qs, map[string]any{"question": strings.Repeat("q", 5000), "options": opts})
+// TestQuestionsOutOfBounds: a question set Pilothouse can't ask (answers
+// name its labels, so nothing is truncated) is left to OpenCode's own
+// dialog: the hook is a notification that the session waits on a question.
+func TestQuestionsOutOfBounds(t *testing.T) {
+	opt := func(label string) map[string]string { return map[string]string{"label": label} }
+	many := make([]map[string]any, 9)
+	for i := range many {
+		many[i] = map[string]any{"question": fmt.Sprintf("Q%d?", i), "options": []map[string]string{opt("a")}}
 	}
-	b, _ := json.Marshal(map[string]any{"v": 1, "event": "question.asked", "session_id": "s", "request_id": "que_1", "questions": qs})
-	ev := parse(t, b)
-	if len(ev.Questions) != maxQuestions || len(ev.Questions[0].Options) != maxOptions ||
-		len(ev.Questions[0].Text) > 2000 || len(ev.Questions[0].Options[0].Label) > 200 {
-		t.Errorf("not bounded: %d questions, %d options, text %d", len(ev.Questions), len(ev.Questions[0].Options), len(ev.Questions[0].Text))
+	var opts []map[string]string
+	for j := 0; j < 17; j++ {
+		opts = append(opts, opt(fmt.Sprintf("o%d", j)))
+	}
+	f := false
+	for name, qs := range map[string]any{
+		"too many questions": many,
+		"too many options":   []map[string]any{{"question": "Which?", "options": opts}},
+		"long label":         []map[string]any{{"question": "Which?", "options": []map[string]string{opt(strings.Repeat("x", 600))}}},
+		"long text":          []map[string]any{{"question": strings.Repeat("q", 3000), "options": []map[string]string{opt("a")}}},
+		"duplicate labels":   []map[string]any{{"question": "Which?", "options": []map[string]string{opt("a"), opt("a")}}},
+		"no way to answer":   []map[string]any{{"question": "Which?", "custom": &f}},
+		"none":               []map[string]any{},
+	} {
+		b, _ := json.Marshal(map[string]any{"v": 1, "event": "question.asked", "session_id": "s", "request_id": "que_1", "questions": qs})
+		ev := parse(t, b)
+		if ev.Kind != adapters.HookNotification || ev.NotificationType != "question" || len(ev.Questions) != 0 {
+			t.Errorf("%s: %+v", name, ev)
+		}
+	}
+	// Exactly at the limits it is asked.
+	b, _ := json.Marshal(map[string]any{"v": 1, "event": "question.asked", "session_id": "s", "request_id": "que_1", "questions": many[:8]})
+	if ev := parse(t, b); ev.Kind != adapters.HookPermission || len(ev.Questions) != 8 {
+		t.Errorf("8 questions: %+v", ev)
 	}
 }
 
