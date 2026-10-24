@@ -15,6 +15,11 @@
 .skel-block { min-height: 172px; animation: v2-skel 1.3s ease-in-out infinite; }
 .n-add { color: var(--allow); }
 .n-del { color: var(--deny); }
+/* --info as text on --info-soft is 4.48:1 in light mode; darken it the way
+   app.css darkens agent ink (100 % in dark mode, so unchanged there). */
+.sess-hero .pill.working, .sess-hero .pill.starting, .task-session .pill.working, .task-session .pill.starting {
+  color: color-mix(in srgb, var(--info) var(--agent-ink), #000);
+}
 .v2-head { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
 .v2-head > div { flex: 1 1 200px; min-width: 0; }
 .v2-head .btn { min-height: 44px; font-size: 15px; padding: 0 16px; }
@@ -99,6 +104,7 @@ details[open] > summary .act-chev { transform: rotate(180deg); }
 .act-who b { color: var(--text); font-weight: 650; }
 .act-who svg.ic { color: var(--text-3); }
 .act-time { margin-left: auto; padding-left: 8px; color: var(--text-3); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.act-prompt .act-time, .act-prompt .act-sent { color: var(--text-2); } /* --text-3 is under 4.5:1 on the tinted bubble */
 .act-ptext { margin: 4px 0 0; color: var(--text); font-size: 14.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .act-sent { display: flex; align-items: center; gap: 6px; margin: 6px 0 0; color: var(--text-3); font-size: 12.5px; }
 
@@ -155,7 +161,7 @@ details[open] > summary .act-chev { transform: rotate(180deg); }
 .act-sub-tail { margin: 0; padding: 0 12px 10px 50px; color: var(--text-3); font-size: 12.5px; }
 .act-live {
   display: flex; align-items: center; gap: 8px; margin: 6px 0 4px; padding: 8px 11px; border-radius: 10px;
-  background: var(--info-soft); color: var(--info); font-size: 13.5px; font-weight: 600;
+  background: var(--info-soft); color: color-mix(in srgb, var(--info) var(--agent-ink), #000); font-size: 13.5px; font-weight: 600;
 }
 .act-earlier { grid-template-columns: 1fr; padding: 0 0 2px 30px; }
 .act-earlier::before { display: none; }
@@ -268,7 +274,7 @@ main:has(> .term-view) { max-width: 1100px; }
   background: var(--muted-soft); color: var(--text-2); font-size: 12px; font-weight: 650; white-space: nowrap;
 }
 .task-chip svg.ic { width: 13px; height: 13px; }
-.task-chip.running { color: var(--info); background: var(--info-soft); }
+.task-chip.running { color: color-mix(in srgb, var(--info) var(--agent-ink), #000); background: var(--info-soft); }
 .task-chip.review { color: var(--warn); background: var(--warn-soft); }
 .task-chip.done { color: color-mix(in srgb, var(--allow) var(--agent-ink), #000); background: var(--brand-soft); }
 .task-row { align-items: flex-start; }
@@ -310,6 +316,7 @@ main:has(> .term-view) { max-width: 1100px; }
 .repo-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-3); font: 12px var(--mono); }
 .repo-branch { display: inline-flex; flex: none; max-width: 40%; align-items: center; gap: 4px; overflow: hidden; color: var(--text-2); font: 12px var(--mono); white-space: nowrap; }
 .repo-branch svg.ic { flex: none; width: 13px; height: 13px; }
+.repo-opt:has(input:checked) .repo-path { color: var(--text-2); }
 .repo-check { flex: none; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; background: var(--brand); color: var(--brand-ink); opacity: 0; transform: scale(0.6); transition: opacity 0.15s, transform 0.2s var(--ease); }
 .repo-check svg.ic { width: 14px; height: 14px; stroke-width: 2.6; }
 .repo-opt:has(input:checked) .repo-check { opacity: 1; transform: none; }
@@ -393,6 +400,7 @@ textarea#task-prompt { min-height: 130px; }
 .tdiff .ln { padding-right: 6px; color: var(--text-3); text-align: right; font-size: 11px; line-height: 19.4px; -webkit-user-select: none; user-select: none; font-variant-numeric: tabular-nums; }
 .tdiff code { padding: 0 12px 0 4px; font-size: inherit; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); }
 .tdiff .mk { display: inline-block; width: 1.2ch; color: var(--text-3); -webkit-user-select: none; user-select: none; }
+.tdiff .tl-add .ln, .tdiff .tl-del .ln { color: var(--text-2); }
 .tdiff .tl-add { background: color-mix(in srgb, var(--allow) 11%, transparent); }
 .tdiff .tl-add .mk { color: var(--allow); }
 .tdiff .tl-del { background: color-mix(in srgb, var(--deny) 10%, transparent); }

@@ -162,8 +162,9 @@ export function terminalView(id) {
   const title = h('div', { class: 'term-title' });
   const statusEl = h('span', { class: 'term-status', role: 'status', 'aria-live': 'polite' });
   const modeEl = h('span', { class: 'term-mode' });
-  const fontDown = h('button', { class: 'term-tool', type: 'button', 'aria-label': 'Smaller text', title: 'Smaller text' }, 'A−');
-  const fontUp = h('button', { class: 'term-tool', type: 'button', 'aria-label': 'Larger text', title: 'Larger text' }, 'A+');
+  // The accessible name starts with the visible text (WCAG 2.5.3).
+  const fontDown = h('button', { class: 'term-tool', type: 'button', 'aria-label': 'A− smaller text', title: 'Smaller text' }, 'A−');
+  const fontUp = h('button', { class: 'term-tool', type: 'button', 'aria-label': 'A+ larger text', title: 'Larger text' }, 'A+');
   const bar = h('div', { class: 'term-bar' }, statusEl, modeEl, h('span', { class: 'spacer' }), fontDown, fontUp);
   const screen = h('div', { class: 'term-screen', role: 'region', 'aria-label': 'Terminal' });
   const frame = h('div', { class: 'term-frame' }, screen);
@@ -365,12 +366,19 @@ export function terminalView(id) {
   function theme() {
     const cs = getComputedStyle(document.documentElement);
     const v = (n, d) => cs.getPropertyValue(n).trim() || d;
+    // The code background is dark in both themes. These ANSI colours read
+    // at ≥ 4.5:1 on it (xterm's defaults don't: its red is 3.1:1), and
+    // minimumContrastRatio lifts anything an agent paints darker.
     return {
       background: v('--code-bg', '#10141a'),
       foreground: v('--code-text', '#e6edf3'),
       cursor: v('--code-text', '#e6edf3'),
       cursorAccent: v('--code-bg', '#10141a'),
       selectionBackground: 'rgba(121, 167, 255, 0.35)',
+      black: '#484f58', red: '#ff7b72', green: '#3fb950', yellow: '#d29922',
+      blue: '#58a6ff', magenta: '#bc8cff', cyan: '#39c5cf', white: '#b1bac4',
+      brightBlack: '#6e7681', brightRed: '#ffa198', brightGreen: '#56d364', brightYellow: '#e3b341',
+      brightBlue: '#79c0ff', brightMagenta: '#d2a8ff', brightCyan: '#56d4dd', brightWhite: '#ffffff',
     };
   }
   const scheme = matchMedia('(prefers-color-scheme: dark)');
@@ -542,6 +550,7 @@ export function terminalView(id) {
       convertEol: false,
       allowProposedApi: false,
       screenReaderMode: false,
+      minimumContrastRatio: 4.5,
       theme: theme(),
     });
     fit = new x.FitAddon();
@@ -556,7 +565,8 @@ export function terminalView(id) {
     screen.addEventListener('click', () => term && term.focus());
 
     for (const k of KEYS) {
-      const b = h('button', { class: 'term-key k-' + k.area, type: 'button', 'aria-label': k.name },
+      // Text keys are named by their label; icon keys by their name.
+      const b = h('button', { class: 'term-key k-' + k.area, type: 'button', 'aria-label': k.icon ? k.name : null, title: k.label && k.label !== k.name ? k.name : null },
         k.icon ? ico(k.icon, 'sm') : k.label);
       // Keep focus (and the phone keyboard) on the terminal.
       b.addEventListener('mousedown', (e) => e.preventDefault());

@@ -66,8 +66,17 @@ export function tasksView() {
   const body = h('div');
   add(root, head, body);
 
+  let key = '';
   function render() {
     const ts = store2.tasks;
+    // Re-render only when the tasks or their sessions' live state change.
+    const live = (ts || []).filter((t) => t.status === 'running' && t.session_id).map((t) => {
+      const s = store.sessions.get(t.session_id);
+      return s ? s.state + (s.state_detail || '') : '';
+    });
+    const k = JSON.stringify([ts, live, store2.err && store2.err.status]);
+    if (k === key) return;
+    key = k;
     const running = (ts || []).filter((t) => t.status === 'running');
     const review = (ts || []).filter((t) => t.status === 'review');
     const done = (ts || []).filter((t) => t.status !== 'running' && t.status !== 'review')

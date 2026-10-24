@@ -286,9 +286,17 @@ export async function setSize(page, vp) {
  * top or tab bar when the element is scrolled just under it.
  */
 export async function tap(page, sel) {
-  const el = typeof sel === 'string' ? await page.waitForSelector(sel, { timeout: 5000 }) : sel;
-  await el.evaluate((e) => e.scrollIntoView({ block: 'center', behavior: 'instant' }));
-  await el.click();
+  for (let i = 0; ; i++) {
+    const el = typeof sel === 'string' ? await page.waitForSelector(sel, { timeout: 5000 }) : sel;
+    try {
+      await el.evaluate((e) => e.scrollIntoView({ block: 'center', behavior: 'instant' }));
+      await el.click();
+      return;
+    } catch (e) {
+      // A view re-rendered between finding and clicking: find it again.
+      if (typeof sel !== 'string' || i >= 2 || !/detached|not attached/i.test(e.message)) throw e;
+    }
+  }
 }
 
 /** Client-side navigation through the app's own router (keeps the store). */

@@ -393,7 +393,7 @@ export function sessionView(id) {
     const caps = (s && s.caps) || {};
     if (!s || !caps.reply || s.state === 'exited') {
       fill(replyEl, s && !caps.reply && s.state !== 'exited' && s.mode === 'observed' && s.agent === 'codex'
-        ? h('p', { class: 'reply-none' }, ico('info', 'sm'), 'To reply from here, start Codex with ', h('code', null, 'pilothouse run codex'), '.')
+        ? h('p', { class: 'reply-none' }, ico('info', 'sm'), h('span', null, 'To reply from here, start Codex with ', h('code', null, 'pilothouse run codex'), '.'))
         : null);
       return;
     }

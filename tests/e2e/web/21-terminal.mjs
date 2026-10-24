@@ -45,7 +45,7 @@ await run(async () => {
     const span = [...document.querySelectorAll('.xterm-rows span')].find((s) => s.textContent === 'FAIL');
     return span ? getComputedStyle(span).color : 'none';
   });
-  check('palette colours apply (adopted theme stylesheet)', red === 'rgb(204, 0, 0)', red); // xterm 6's default ANSI red
+  check('palette colours apply (adopted theme stylesheet)', red === 'rgb(255, 123, 114)', red); // the view's ANSI red
   check('no inline <style> left for the CSP to block', (await page.$$eval('.term-screen style', (s) => s.length)) === 0);
   check('no CSP violations with xterm open', (await page.evaluate(() => window.__csp.length)) === 0, (await page.evaluate(() => window.__csp.join(' | '))).slice(0, 200));
 
