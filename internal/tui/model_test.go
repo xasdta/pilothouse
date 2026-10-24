@@ -40,6 +40,12 @@ type fakeBackend struct {
 	requests  map[string]api.Request
 	events    []api.Event
 	streamErr error
+
+	replies       []replyCall
+	replyRes      *api.ReplyResult
+	replyErr      error
+	activity      map[string]api.Activity // nil: 501
+	activityCalls []string
 }
 
 type decideCall struct {
@@ -112,6 +118,39 @@ func (f *fakeBackend) MarkSeen(_ context.Context, id string) error {
 	defer f.mu.Unlock()
 	f.seen = append(f.seen, id)
 	return nil
+}
+
+// Reply and Activity answer 501 like a daemon without those features,
+// unless a test sets replyErr/replyRes or activity.
+func (f *fakeBackend) Reply(_ context.Context, id string, r api.Reply) (api.ReplyResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.replies = append(f.replies, replyCall{id, r})
+	if f.replyRes == nil {
+		return api.ReplyResult{}, unsupported
+	}
+	return *f.replyRes, f.replyErr
+}
+
+func (f *fakeBackend) Activity(_ context.Context, id string, q api.ActivityQuery) (api.Activity, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.activityCalls = append(f.activityCalls, id)
+	a, ok := f.activity[id]
+	if f.activity == nil {
+		return api.Activity{}, unsupported
+	}
+	if !ok {
+		return api.Activity{SessionID: id, Available: false}, nil
+	}
+	return a, nil
+}
+
+var unsupported = &client.APIError{Status: 501, Code: "unsupported", Msg: "not supported here"}
+
+type replyCall struct {
+	id string
+	r  api.Reply
 }
 
 func ptr[T any](v T) *T { return &v }
@@ -226,6 +265,20 @@ func execCmd(t *testing.T, m *Model, cmd tea.Cmd) tea.Msg {
 		t.Fatal("expected a command")
 	}
 	msg := cmd()
+	if b, ok := msg.(tea.BatchMsg); ok {
+		// Run each like the runtime; return the first message for callers
+		// that inspect it.
+		var first tea.Msg
+		for _, c := range b {
+			if c == nil {
+				continue
+			}
+			if got := execCmd(t, m, c); first == nil {
+				first = got
+			}
+		}
+		return first
+	}
 	if msg != nil {
 		m.Update(msg)
 	}
