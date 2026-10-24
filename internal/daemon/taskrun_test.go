@@ -768,7 +768,7 @@ func (p *phone) signed(action, target string, payload any) map[string]any {
 	return map[string]any{"payload": string(pb), "ts": ts, "nonce": nonce, "sig": base64.RawURLEncoding.EncodeToString(sig)}
 }
 
-func errCodeOf(b []byte) string {
+func bodyErrCode(b []byte) string {
 	var e api.Error
 	_ = json.Unmarshal(b, &e)
 	return e.Code
@@ -799,7 +799,7 @@ func TestTasksThroughSignedDeviceAPI(t *testing.T) {
 	if resp, body := p.post("/api/tasks", start); resp.StatusCode != 400 {
 		t.Fatalf("unsigned: %d %s", resp.StatusCode, body)
 	}
-	if resp, body := p.post("/api/tasks", p.signed(web.ActionTask, "t_other", start)); resp.StatusCode != 403 || errCodeOf(body) != "bad_signature" {
+	if resp, body := p.post("/api/tasks", p.signed(web.ActionTask, "t_other", start)); resp.StatusCode != 403 || bodyErrCode(body) != "bad_signature" {
 		t.Fatalf("wrong target: %d %s", resp.StatusCode, body)
 	}
 	if resp, body := p.post("/api/tasks", p.signed(web.ActionReply, "new", start)); resp.StatusCode != 403 {
@@ -810,7 +810,7 @@ func TestTasksThroughSignedDeviceAPI(t *testing.T) {
 	if resp, _ := anon.post("/api/tasks", p.signed(web.ActionTask, "new", start)); resp.StatusCode != 401 {
 		t.Fatalf("no cookie: %d", resp.StatusCode)
 	}
-	if resp, body := p.post("/api/tasks", p.signed(web.ActionTask, "new", api.TaskStart{Repo: t.TempDir(), Prompt: "x"})); resp.StatusCode != 400 || errCodeOf(body) != "invalid" ||
+	if resp, body := p.post("/api/tasks", p.signed(web.ActionTask, "new", api.TaskStart{Repo: t.TempDir(), Prompt: "x"})); resp.StatusCode != 400 || bodyErrCode(body) != "invalid" ||
 		!strings.Contains(string(body), "not a repository Pilothouse knows") {
 		t.Fatalf("unknown repo: %d %s", resp.StatusCode, body)
 	}
@@ -827,7 +827,7 @@ func TestTasksThroughSignedDeviceAPI(t *testing.T) {
 	if !strings.HasPrefix(tk.By, "device:d_") || tk.SessionID == "" || tk.Prompt != "Fix the login bug" {
 		t.Fatalf("task %+v", tk)
 	}
-	if resp, body := p.post("/api/tasks", good); resp.StatusCode != 403 || errCodeOf(body) != "replayed" {
+	if resp, body := p.post("/api/tasks", good); resp.StatusCode != 403 || bodyErrCode(body) != "replayed" {
 		t.Fatalf("replay: %d %s", resp.StatusCode, body)
 	}
 	if n := len(fs.started()); n != 1 {
