@@ -121,6 +121,10 @@ func (m *Model) closeAsk(k flashKind, why string) {
 func (m *Model) checkAskGone() {
 	switch m.mode {
 	case modeQuestion, modePlan, modeChanges, modeOther:
+	case modeDeny: // declining from the question panel
+		if m.ask.id == "" {
+			return
+		}
 	default:
 		return
 	}

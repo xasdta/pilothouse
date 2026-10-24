@@ -226,6 +226,14 @@ func TestQuestionClosedElsewhereOrInvalid(t *testing.T) {
 	if m.mode != modeList || !strings.Contains(m.View(), "Answered elsewhere") {
 		t.Fatalf("closed elsewhere:\n%s", m.View())
 	}
+	// Also while typing a reason to decline it.
+	m.Update(snapshotMsg{snap: askSnapshot()})
+	selectKey(t, m, "r:r_q7a8b9c0de")
+	press(m, "enter", "n")
+	m.Update(eventMsg{gen: m.gen, ev: api.Event{Seq: 300, Type: api.EventRequestClosed, Data: b}})
+	if m.mode != modeList || m.ask.id != "" {
+		t.Fatalf("closed while declining: mode %v", m.mode)
+	}
 
 	m, be = loadedAsks(t, 120, 35)
 	be.decideErr = &client.APIError{Status: 400, Code: "invalid", Msg: "“Which checks should run after it?” has no option “Fuzz”"}
