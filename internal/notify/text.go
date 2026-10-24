@@ -37,9 +37,17 @@ func Short(s string, n int) string {
 }
 
 // Action is what a request wants, without the agent:
-// "wants to run `git push origin main`".
+// "wants to run `git push origin main`", "asks: Which database? (Postgres
+// or SQLite)", "has a plan ready: Add OAuth login".
 func Action(r *api.Request) string {
 	switch {
+	case r.Checkpoint == api.CheckpointQuestion && len(r.Questions) > 0:
+		return questionAction(r.Questions)
+	case r.Checkpoint == api.CheckpointPlan:
+		if t := strings.TrimSpace(strings.TrimPrefix(r.Summary, "Plan ready")); strings.HasPrefix(t, ":") {
+			return "has a plan ready: " + Short(strings.TrimSpace(t[1:]), maxCommand)
+		}
+		return "has a plan ready for you to approve"
 	case r.Command != "":
 		return "wants to run `" + Short(r.Command, maxCommand) + "`"
 	case len(r.Paths) > 0:
@@ -60,6 +68,41 @@ func Action(r *api.Request) string {
 		return "asks: " + Short(r.Summary, maxCommand)
 	}
 	return "wants to use " + r.Tool
+}
+
+// maxOptionsShown bounds the options listed in a notification.
+const maxOptionsShown = 4
+
+// questionAction words a question with its options:
+// "asks: Which database? (Postgres, MySQL or SQLite)", plus "+1 more
+// question" when it asks several.
+func questionAction(qs []api.Question) string {
+	q := qs[0]
+	s := "asks: " + Short(q.Text, 120)
+	if n := len(q.Options); n > 0 {
+		labels := make([]string, 0, min(n, maxOptionsShown))
+		for _, o := range q.Options[:min(n, maxOptionsShown)] {
+			labels = append(labels, Short(o.Label, 40))
+		}
+		list := strings.Join(labels, ", ")
+		switch {
+		case n > maxOptionsShown:
+			list += " …"
+		case n > 1:
+			list = strings.Join(labels[:n-1], ", ") + " or " + labels[n-1]
+		}
+		if q.MultiSelect {
+			list = "any of " + list
+		}
+		s += " (" + list + ")"
+	}
+	if len(qs) > 1 {
+		s += " +" + strconv.Itoa(len(qs)-1) + " more question"
+		if len(qs) > 2 {
+			s += "s"
+		}
+	}
+	return s
 }
 
 // Where names the repo (and branch) of a request or session.

@@ -1,0 +1,35 @@
+ pilothouse  studio.local                                   ● here · auto   4 need you · 2 working · 1 waiting   ● live
+
+ NEEDS YOU 4
+  ● claude  api · main                Asks: Which database should the migration target? (+1 m…    40s  held · answer ⏎
+▌ ● claude  pilothouse-site · main    Plan ready: Add OAuth login                                 30s  held · review ⏎
+  ● claude  pilothouse · feat/inbox   $ git push origin feat/inbox --force-with-lease             12s  held · y a n
+  ○ codex   webapp · checkout-v2      apply_patch ~/src/webapp/src/checkout/cart.ts +1          1m04s  in its terminal
+
+ WORKING 2
+  ● claude  docs · main               Ran: npm run build                                           5s  enter to attach
+  ● codex   infra · tf-upgrade        Editing modules/vpc/main.tf                                 41s
+
+ WAITING 1
+  ✗ generic scratch                   Reported an error                                           25m  enter to attach
+
+ RECENTLY EXITED 1
+  ✓ claude  old-spike · spike/sqlite  exited (code 0)                                           3h00m
+
+
+
+
+
+
+
+
+── Plan r_p1a2n3 · claude · pilothouse-site · main · held for you · back to the terminal in 9m00s ──────────────────────
+  Add OAuth login
+  Users sign in with GitHub instead of a password.
+  Steps
+  where  pilothouse-site · main  ~/src/pilothouse-site
+  said   “Done. The landing page now loads in 380 ms. Want me to add the pricing section next?”
+  enter reads the plan · y approves · n asks for changes
+
+
+ enter read   y approve   n request changes   e explain   p presence   ? help   q quit

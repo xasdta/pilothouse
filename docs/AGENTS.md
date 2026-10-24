@@ -20,6 +20,7 @@ This page records what each agent really supports, with sources, as of
 | Policy `ask` (force the agent's prompt) | Yes (`permissionDecision: "ask"`) | **No prompt** — Codex has no `ask` at `PreToolUse`, so Pilothouse **denies** the call and tells the agent a person must do it (see Responses) |
 | Policy / grant `allow` (skip the prompt) | Yes (`permissionDecision: "allow"`; the agent's own deny/ask rules still win) | **No** at `PreToolUse` (Codex rejects `allow` without `updatedInput`); see Caveats |
 | Remote approvals (phone answers the prompt) | Yes (`PermissionRequest` → `decision.behavior` allow/deny), held up to 600 s | Yes (`PermissionRequest` → `decision.behavior` allow/deny), held up to 600 s |
+| Questions and plans from anywhere (0.2) | Yes: `AskUserQuestion` answers and `ExitPlanMode` approve / request changes through `PermissionRequest` (see Questions and plans) | Read-only: `request_user_input` shows as "blocked (question)"; answer it in Codex (no hook can) |
 | Resume a session | `claude --resume <session_id>` | `codex resume <session_id>` |
 | Activity feed and usage (read from the transcript, see [USAGE.md](USAGE.md)) | `~/.claude/projects/…/<session>.jsonl` + subagent files; usage per response | `~/.codex/sessions/…/rollout-*.jsonl`, found by thread id until hooks name it; usage from `token_count` |
 | OSC 7501 status (wrap mode, L1) | Emits it (v2.1.295+) when it detects terminal support | Emits it whenever stdout is a terminal |
@@ -94,6 +95,58 @@ Everything exits 0; decisions are JSON on stdout.
 - `SessionStart` / `UserPromptSubmit`: optional `additionalContext`.
 - Others: no output. (`Stop` with `decision: "block"` would keep Claude
   working, which Pilothouse never wants.)
+
+### Questions and plans
+
+Verified end to end with Claude Code 2.1.309 and 2.1.310
+(`tests/e2e/claude/s7_questions.py`, `s8_pretool_allow.py`,
+`s9_tui_answers.py`); fixtures in `internal/adapters/claude/testdata/hooks/*ask_user_question*`
+and `*exit_plan_mode*`.
+
+- **`AskUserQuestion`** fires `PreToolUse` and then `PermissionRequest` (no
+  `tool_use_id` on the latter), with
+  `tool_input: {"questions": [{"question", "header", "options": [{"label", "description"}], "multiSelect"}]}`
+  (1–4 questions, unique texts). Pilothouse opens a request with
+  `checkpoint: "question"` (summary `Asks: <first question>`); each question
+  is keyed by its text, `allow_other` is always true (Claude offers "Type
+  something"). The answer is
+  `{"decision": {"behavior": "allow", "updatedInput": <tool_input unchanged> + {"answers": {"<question>": "<label>"}}}}`.
+  A multi-select answer is the labels joined with `", "`; any other text is
+  taken as the person's own answer. Claude tells the model `Your questions
+  have been answered: "<question>"="<answer>"`. Claude refuses an answer whose
+  questions differ from what it asked, so the input is echoed exactly; if
+  the answers would not cover every question, Pilothouse gives no opinion
+  and Claude's own dialog stays. A deny ("decline") tells Claude the person
+  declined, with the person's reason when given.
+- **`ExitPlanMode`**: Claude adds `plan` (markdown) and `planFilePath` to
+  the input before the hooks run (on `PostToolUse` the input is empty and
+  the plan is in `tool_response.plan`). Pilothouse opens `checkpoint:
+  "plan"` (summary `Plan ready: <first heading or line>`). Approve = allow
+  with `updatedInput` = the input echoed: Claude leaves plan mode and does
+  the work. Request changes = deny with the feedback as `message`: Claude
+  revises the plan and asks again (a new request; the old one is closed).
+- **Routing** is the same as for permissions: away, the request is held and
+  pushed; at the desk Pilothouse steps aside. Claude renders its own
+  question / plan dialog while the hook holds the request too, so the
+  person can answer either place; the first answer wins. An answer given in
+  Claude's dialog closes the request as `answered_locally` (matched on
+  `PostToolUse` by tool and summary; a plan rejected in the dialog is closed
+  when the revised plan arrives).
+- **No `allow` at `PreToolUse`.** A `PreToolUse` allow without
+  `updatedInput` is ignored for both tools in 2.1.310: the dialog still
+  shows and `PermissionRequest` still fires (s8). Pilothouse never sends one
+  anyway — it would answer nothing, and a future version honoring it would
+  approve a plan nobody read — so allow rules and session grants do not
+  apply to these tools, an `ask` rule adds nothing, and only a `deny` rule
+  decides them at `PreToolUse`. Grants never answer a question or a plan at
+  the permission checkpoint either.
+- Validation (daemon): every question needs an answer (an option label in
+  any case, a comma list of labels for multi-select, or free text), plans
+  take allow or deny with an optional message, neither takes "allow for
+  session", and answers on a permission request are refused.
+- Plan files go to `~/.claude/plans` unless the project sets
+  `plansDirectory` (must be inside the project); the e2e scripts set it so
+  tests never write to the real home.
 
 ### Caveats
 
@@ -285,6 +338,16 @@ Only answers without an exit-code form use JSON on stdout.
   without routing to a person). The adapter encodes that answer correctly.
 - No `Notification` event: "blocked" comes from `PermissionRequest` (it fires
   before Codex shows its prompt), "waiting" from `Stop`/`Interrupt`.
+- **Questions (`request_user_input`) are read-only.** Its `PreToolUse` hook
+  fires with the model's arguments (`{"questions": [{"id", "header",
+  "question", "options": [{"label", "description"}]}]}`,
+  `request_user_input_spec.rs`), but no `PermissionRequest` follows and a
+  hook can only deny it; the answer travels through Codex's own UI or its
+  app-server (`codex-rs/core/src/tools/handlers/request_user_input.rs`).
+  Pilothouse reads the questions so the session shows "blocked (question):
+  Asks: …" until the next hook, and the inbox says to answer in the
+  terminal. A policy `ask` on it is dropped (its deny form would cancel the
+  question); a `deny` rule still blocks it.
 - Hooks run through `$SHELL -c` (0.164; `-lc` on main): anything a startup
   file (`~/.zshenv`, and login profiles with `-lc`) prints to stdout lands in
   front of Pilothouse's JSON. Denies are unaffected (exit code 2), but a

@@ -44,6 +44,11 @@ and one of them force-pushes. Pilothouse fixes both:
     other one closes.
   - **When you come back:** any request still held is handed back to your
     terminal.
+- **Questions and plans, too.** When Claude Code asks you something
+  (`AskUserQuestion`) or wants a plan approved (`ExitPlanMode`), the question
+  is held and pushed like a permission: pick an option or type your own
+  answer, approve the plan or tell Claude what to change, from your phone,
+  the inbox or the CLI. Claude carries on with your answer.
 - **Yours.** A single open-source Go binary. No account, no cloud, no
   telemetry, no inbound ports. Your phone reaches your machine over your own
   Tailscale network.
@@ -64,7 +69,10 @@ and one of them force-pushes. Pilothouse fixes both:
 2. Every hook call goes to the daemon over a Unix socket. Policy checks take
    microseconds, and the whole round trip is about 1 ms.
 3. Permission requests are routed by presence (OS idle time, or `pilothouse
-   here` / `away` / `auto`).
+   here` / `away` / `auto`). Questions and plans arrive at the same hook and
+   are routed the same way; the answer goes back to the agent in its own
+   format (for Claude Code, the answers or the approved plan; a plan you send
+   back with feedback is revised).
 4. Your phone runs a small web app served by your own machine. Pair it with a
    QR code. Each device keeps a non-extractable signing key, and every remote
    approval is signed.
@@ -72,9 +80,11 @@ and one of them force-pushes. Pilothouse fixes both:
 ## Everyday use
 
 ```sh
-pilothouse                       # inbox (TUI): y allow · a allow for session · n deny · enter attach
-pilothouse ls                    # sessions and waiting requests
+pilothouse                       # inbox (TUI): y allow · a allow for session · n deny · enter answer/attach · r reply
+pilothouse ls                    # sessions and waiting requests (questions and plans too)
 pilothouse approve r_7k2m        # or: deny r_7k2m -m "use a PR instead"
+pilothouse answer r_9q4p 2 "Lint, Tests"   # answer a question: option number, label, or your own words
+pilothouse deny r_3p1n -m "use PKCE"       # send a plan back with what to change (approve accepts it)
 pilothouse away                  # hold requests for my phone (here / auto)
 pilothouse explain s_3fq9        # why is this session "blocked"? show the evidence
 pilothouse activity s_3fq9 -f    # what the agent is doing: prompts, tool calls, results, files changed
@@ -176,8 +186,10 @@ pilothouse task done t_8d1x --pr          # push and open a PR with gh
 
 v0.1 supports **Claude Code** (rules, remote approvals and state) and **Codex**
 (remote approvals, deny rules and state; Codex's pre-tool hook can't allow or
-ask). See [docs/AGENTS.md](docs/AGENTS.md) for what each agent supports and
-why. It runs on **macOS and Linux** (amd64 and arm64).
+ask). 0.2 adds Claude Code questions and plan approval from anywhere; Codex's
+`request_user_input` questions show in the inbox but are answered in its
+terminal (no hook can answer them). See [docs/AGENTS.md](docs/AGENTS.md) for
+what each agent supports and why. It runs on **macOS and Linux** (amd64 and arm64).
 
 Roadmap: an end-to-end-encrypted relay for people without Tailscale, more agents
 (OpenCode, Copilot, Gemini), team policies, and Windows.

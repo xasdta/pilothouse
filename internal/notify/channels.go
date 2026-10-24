@@ -164,7 +164,10 @@ func (c *Ntfy) Request(ctx context.Context, n core.Notification) (*http.Request,
 				link = pub + "/s/" + url.PathEscape(n.Session.ID)
 			}
 			h.Set("Click", link)
-			if n.Kind == core.NotifyRequest && n.Request != nil && n.Request.Status == api.RequestOpen {
+			// One-tap Allow/Deny only for permissions: a question needs an
+			// answer and a plan should be read, so those open the app.
+			if n.Kind == core.NotifyRequest && n.Request != nil && n.Request.Status == api.RequestOpen &&
+				(n.Request.Checkpoint == api.CheckpointPermission || n.Request.Checkpoint == "") {
 				allow := c.Pusher.ActionURL(n.Request.ID, api.BehaviorAllow)
 				deny := c.Pusher.ActionURL(n.Request.ID, api.BehaviorDeny)
 				if allow != "" && deny != "" {

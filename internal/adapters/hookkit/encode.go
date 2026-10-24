@@ -32,8 +32,9 @@ type preToolOutput struct {
 }
 
 type permissionDecision struct {
-	Behavior string `json:"behavior"`
-	Message  string `json:"message,omitempty"`
+	Behavior     string          `json:"behavior"`
+	Message      string          `json:"message,omitempty"`
+	UpdatedInput json.RawMessage `json:"updatedInput,omitempty"`
 }
 
 type permissionOutput struct {
@@ -79,6 +80,15 @@ func PermissionResponse(b api.Behavior, message string) adapters.HookResponse {
 			d.Message = "Denied through Pilothouse."
 		}
 	}
+	return jsonResponse(envelope{HookSpecificOutput: permissionOutput{HookEventName: "PermissionRequest", Decision: d}})
+}
+
+// PermissionAllowInput answers a PermissionRequest hook with allow and
+// decision.updatedInput: the tool runs with input instead of what the
+// agent asked for. Claude Code takes the answers to AskUserQuestion and
+// the approval of ExitPlanMode this way. input must be a JSON object.
+func PermissionAllowInput(input json.RawMessage) adapters.HookResponse {
+	d := permissionDecision{Behavior: string(api.BehaviorAllow), UpdatedInput: input}
 	return jsonResponse(envelope{HookSpecificOutput: permissionOutput{HookEventName: "PermissionRequest", Decision: d}})
 }
 
