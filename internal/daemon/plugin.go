@@ -89,9 +89,9 @@ type pluginAck struct {
 type pluginChannel struct {
 	id       string // token hash
 	created  time.Time
-	polls    int // polls in flight
+	polls    int       // polls in flight
 	lastPoll time.Time // zero until the first poll
-	live     bool // liveness last reported to sessions (caps)
+	live     bool      // liveness last reported to sessions (caps)
 	queue    []pluginCommand
 	wake     chan struct{} // closed when the queue grows
 	acks     map[string]chan pluginAck
