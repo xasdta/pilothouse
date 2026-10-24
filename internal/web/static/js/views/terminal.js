@@ -182,6 +182,7 @@ export function terminalView(id) {
   let connectedAt = 0;
   let exited = false;
   let gone = false; // no terminal to show at all
+  let gotData = false; // the stream delivered its first frame
   let fixedSize = null; // {cols, rows} from the computer, when it sends one
   let token = null;
   let minting = null;
@@ -323,7 +324,7 @@ export function terminalView(id) {
   }
 
   function sendResize() {
-    if (!term || fixedSize || readOnly || exited || !token) return;
+    if (!term || !gotData || fixedSize || readOnly || exited || !token) return;
     const size = `${term.cols}x${term.rows}`;
     if (size === lastSize) return;
     lastSize = size;
@@ -403,6 +404,8 @@ export function terminalView(id) {
       return;
     }
     connectedAt = Date.now();
+    gotData = false; // resend the size with this connection's first frame
+    lastSize = '';
     term.reset(); // the replay redraws the screen from the scrollback
     setStatus('live', 'Live');
     if (!banner.hidden && banner.classList.contains('warn')) banner.hidden = true;
@@ -438,7 +441,9 @@ export function terminalView(id) {
     } catch {
       if (mine.signal.aborted) return;
     }
-    if (ctrl === mine && !destroyed && !exited) retry();
+    if (ctrl !== mine || destroyed || exited) return;
+    if (Date.now() - connectedAt > 5000) backoff = 0; // it was up for a while: start over
+    retry();
   }
 
   function dispatch(ev) {
@@ -446,6 +451,12 @@ export function terminalView(id) {
     switch (ev.event) {
       case 'data':
         try { term.write(fromB64(data)); } catch { /* not base64: skip the frame */ }
+        if (!gotData) {
+          // A `size` event comes before the replay; only now is it known
+          // whether this screen may set the size.
+          gotData = true;
+          sendResize();
+        }
         break;
       case 'size':
       case 'resize': {
@@ -469,7 +480,6 @@ export function terminalView(id) {
 
   function retry() {
     if (destroyed || exited) return;
-    if (connectedAt && Date.now() - connectedAt > 5000) backoff = 0; // it was up for a while
     const delay = Math.round(Math.min(15000, 500 * 2 ** backoff) * (0.8 + Math.random() * 0.4));
     backoff = Math.min(backoff + 1, 6);
     setStatus('reconnecting', `Reconnecting in ${Math.max(1, Math.round(delay / 1000))} s`);

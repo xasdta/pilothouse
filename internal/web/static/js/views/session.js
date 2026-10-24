@@ -74,14 +74,20 @@ export async function postAction(path, action, target, payload) {
   return res;
 }
 
+/** The daemon's errors are lower-case fragments; show them as sentences. */
+export function sentence(s) {
+  s = String(s || '').trim();
+  return s ? s[0].toUpperCase() + s.slice(1) + (/[.!?…]$/.test(s) ? '' : '.') : s;
+}
+
 /** A sentence for a failed signed action. */
 export function actionError(res, unsupported = 'Your computer can’t do that yet.') {
   const d = (res && res.data) || {};
   if (d.code === 'stale_signature') return 'This device’s clock is off — fix the time and try again.';
   if (d.code === 'replayed') return 'That was already sent. Try again.';
-  if (res && res.status === 501) return d.error && d.error !== 'not supported here' ? d.error : unsupported;
-  if (res && res.status === 0) return d.error || 'Can’t reach your computer.';
-  return d.error || 'Couldn’t send — try again.';
+  if (res && res.status === 501) return d.error && d.error !== 'not supported here' ? sentence(d.error) : unsupported;
+  if (res && res.status === 0) return sentence(d.error) || 'Can’t reach your computer.';
+  return sentence(d.error) || 'Couldn’t send — try again.';
 }
 
 const compact = new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 });
@@ -626,7 +632,7 @@ export function sessionView(id) {
     return [
       h('li', { class: 'act-earlier' }, h('button', {
         class: 'btn ghost', type: 'button',
-        onclick: () => { fullTurns.add(t.key); renderFeed(); },
+        onclick: () => { fullTurns.add(t.key); feedKey = ''; renderFeed(); },
       }, `Show ${hidden} earlier ${hidden === 1 ? 'step' : 'steps'}`)),
       ...steps.slice(-STEPS_SHOWN).map(stepEl),
     ];
