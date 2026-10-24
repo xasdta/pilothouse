@@ -61,7 +61,7 @@ func GuessToolKind(tool string) api.ToolKind {
 		return api.ToolEdit
 	case "Read", "Glob", "Grep", "LS", "NotebookRead", "view_image", "read", "glob", "grep", "list":
 		return api.ToolRead
-	case "WebFetch", "WebSearch", "web_search", "webfetch":
+	case "WebFetch", "WebSearch", "web_search", "webfetch", "websearch", "codesearch":
 		return api.ToolWeb
 	}
 	if strings.HasPrefix(tool, "mcp__") {
