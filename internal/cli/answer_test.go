@@ -41,9 +41,9 @@ func TestLsShowsQuestionsAndPlans(t *testing.T) {
 		t.Fatal(err)
 	}
 	ibxContains(t, out, "NEEDS YOU (6)",
-		"? Which database? [Postgres | SQLite] +1", "pilothouse answer r_q1qu …",
+		"Asks: Which database? [Postgres | SQLite] +1", "pilothouse answer r_q1qu …",
 		"Plan: Add OAuth login", "pilothouse approve|deny -m r_p1pl",
-		"? Ship? [Yes | No]")
+		"Asks: Ship? [Yes | No]")
 }
 
 func TestAnswerCommand(t *testing.T) {
@@ -150,7 +150,7 @@ func TestApproveDenyPlansAndQuestions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ibxContains(t, out, "✗ Declined to answer r_q1question: ? Which database?")
+	ibxContains(t, out, "✗ Declined to answer r_q1question: Asks: Which database?")
 
 	before := len(d.decides)
 	for name, tc := range map[string]struct {

@@ -244,7 +244,7 @@ func askWhat(r api.Request) (string, bool) {
 			return oneLineText(r.Summary), true
 		}
 		q := r.Questions[0]
-		s := "? " + oneLineText(q.Text)
+		s := "Asks: " + oneLineText(q.Text)
 		if len(q.Options) > 0 {
 			labels := make([]string, len(q.Options))
 			for i, o := range q.Options {
