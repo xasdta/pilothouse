@@ -366,7 +366,8 @@ export function sessionView(id) {
 
   // ---- Reply ----
   const replyText = h('textarea', {
-    class: 'input reply-input', id: 'reply-text', rows: 2, maxlength: 16384, autocomplete: 'off',
+    // data-shortcut: the `r` key (palette.js) focuses this box.
+    class: 'input reply-input', id: 'reply-text', 'data-shortcut': 'reply', rows: 2, maxlength: 16384, autocomplete: 'off',
     'aria-describedby': 'reply-note', enterkeyhint: 'send',
   });
   const replyLabel = h('label', { class: 'sr-only', for: 'reply-text' }, 'Reply');

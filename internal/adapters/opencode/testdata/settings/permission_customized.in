@@ -1,0 +1,6 @@
+{
+  "permission": {
+    "bash": {"*": "ask", "git status": "allow"},
+    "edit": "deny"
+  }
+}

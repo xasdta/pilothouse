@@ -5,7 +5,7 @@
 <h1 align="center">Pilothouse</h1>
 
 <p align="center"><b>Steer every coding agent from one place.</b><br>
-One inbox for Claude Code and Codex. Your rules run before every tool call,<br>and anything that needs a person reaches you at your desk or on your phone.</p>
+One inbox for Claude Code, Codex and OpenCode. Your rules run before every tool call,<br>and anything that needs a person reaches you at your desk or on your phone.</p>
 
 <p align="center">
   <a href="https://pilothouse.dev">Website</a> ·
@@ -32,9 +32,9 @@ You start three agents, walk away, and come back to find two of them stuck on
 a permission prompt since minute four. Or you approve everything to avoid that,
 and one of them force-pushes. Pilothouse fixes both:
 
-- **One inbox.** Every Claude Code and Codex session on the machine, in any
-  terminal, sorted by what needs you. It uses the agents' official hooks, not
-  screen-scraping.
+- **One inbox.** Every Claude Code, Codex and OpenCode session on the machine,
+  in any terminal, sorted by what needs you. It uses the agents' official hooks
+  (for OpenCode, a small plugin), not screen-scraping.
 - **Rules before every tool call.** Policies in YAML, with optional CEL
   expressions, run at the agent's pre-tool hook: block force-push, ask before
   `git push` to main, keep agents out of `.env`. Any `deny` wins.
@@ -67,8 +67,11 @@ and one of them force-pushes. Pilothouse fixes both:
 
 1. `pilothouse setup` installs hooks into Claude Code (`~/.claude/settings.json`)
    and Codex (`~/.codex/hooks.json`). It shows the exact diff, merges with your
-   existing hooks and writes a backup first. It then starts a small per-user
-   daemon (launchd or systemd) and helps your phone reach you.
+   existing hooks and writes a backup first. For OpenCode it installs a plugin
+   (`~/.config/opencode/plugins/pilothouse.js`) and offers to make OpenCode
+   ask before shell commands and edits, which it otherwise allows. It then
+   starts a small per-user daemon (launchd or systemd) and helps your phone
+   reach you.
 2. Every hook call goes to the daemon over a Unix socket. Policy checks take
    microseconds, and the whole round trip is about 1 ms.
 3. Permission requests are routed by presence (OS idle time, or `pilothouse
@@ -146,6 +149,14 @@ what your rules allowed, asked and blocked, and today's budget. Replies,
 terminal typing (one signature unlocks it for 10 minutes), and starting or
 finishing tasks are signed by the device like approvals.
 
+The inbox shows each request with what the agent last said, the command
+highlighted, a diff for file edits, risk labels and the rule that asked. You
+can answer agents' questions and approve or send back their plans. **Make it
+a rule** turns an answer into a rule with one tap. On a computer, the web app
+has three panes (sessions · current view · needs you) and keyboard shortcuts:
+`j`/`k` to move, `a` to allow, `d` to deny, `⌘K` to search, `?` to list them all.
+Light and dark mode follow your device unless you pick one in Settings.
+
 ### Rules
 
 ```yaml
@@ -216,15 +227,26 @@ pilothouse task done t_8d1x --pr          # push and open a PR with gh
 
 ## Status
 
-v0.1 supports **Claude Code** (rules, remote approvals and state) and **Codex**
-(remote approvals, deny rules and state; Codex's pre-tool hook can't allow or
-ask). 0.2 adds Claude Code questions and plan approval from anywhere; Codex's
-`request_user_input` questions show in the inbox but are answered in its
-terminal (no hook can answer them). See [docs/AGENTS.md](docs/AGENTS.md) for
-what each agent supports and why. It runs on **macOS and Linux** (amd64 and arm64).
+| | Claude Code | Codex | OpenCode |
+|---|---|---|---|
+| Integration | hooks | hooks | plugin |
+| Session state, inbox | ✓ | ✓ | ✓ |
+| Deny rules | ✓ | ✓ | ✓ |
+| Ask rules | ✓ (its prompt) | denied with a note (no prompt from a hook) | held for you in Pilothouse, at the desk too |
+| Remote approvals | ✓ | ✓ | ✓ |
+| Questions from anywhere | ✓ (and plans) | shown, answered in the terminal | ✓ |
+
+v0.1 supported **Claude Code** and **Codex**; 0.2 adds Claude Code questions
+and plan approval from anywhere, and **OpenCode** (1.x) through a plugin:
+rules before every tool call, its permission prompts and questions held while
+you're away, and replies from your phone that it takes as your next prompt.
+Codex's `request_user_input` questions show in the inbox but are answered in
+its terminal (no hook can answer them). See [docs/AGENTS.md](docs/AGENTS.md)
+for what each agent supports and why. It runs on **macOS and Linux** (amd64
+and arm64).
 
 Roadmap: an end-to-end-encrypted relay for people without Tailscale, more agents
-(OpenCode, Copilot, Gemini), team policies, and Windows.
+(Copilot, Gemini), team policies, and Windows.
 
 ## Build from source
 

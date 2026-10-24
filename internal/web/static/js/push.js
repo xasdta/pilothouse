@@ -1,5 +1,6 @@
 // Web Push: capability detection (with the iOS Home Screen rule),
-// subscribe / unsubscribe, and keeping the daemon's copy in sync.
+// subscribe / unsubscribe, keeping the daemon's copy in sync, and closing
+// a request's notification when this device answers it.
 
 import { api, store } from './api.js';
 
@@ -80,4 +81,20 @@ export async function syncPush() {
     return;
   }
   await api('POST', '/api/push/subscribe', sub.toJSON()).catch(() => {});
+}
+
+/**
+ * Closes this request's notifications on this device: the device that
+ * answers gets no "resolved" push, so the app tidies up itself. Never
+ * throws.
+ */
+export async function closeRequestNotifications(id) {
+  try {
+    if (!('serviceWorker' in navigator) || !id) return;
+    const reg = await Promise.race([registration(), new Promise((r) => setTimeout(() => r(null), 1500))]);
+    if (!reg || !reg.getNotifications) return;
+    for (const n of await reg.getNotifications()) {
+      if (n.tag === 'req-' + id || n.tag === id || (n.data && n.data.request_id === id)) n.close();
+    }
+  } catch { /* nothing to tidy */ }
 }

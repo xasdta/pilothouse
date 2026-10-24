@@ -109,8 +109,9 @@ type Daemon struct {
 	webURL   string
 	policy   atomic.Pointer[policyHolder]
 
-	pres  presenceState
-	tasks taskState // taskrun.go
+	pres    presenceState
+	plugins pluginHub // command channels of plugin agents (plugin.go)
+	tasks   taskState // taskrun.go
 
 	compacted bool // the database was compacted at least once (prune loop only)
 

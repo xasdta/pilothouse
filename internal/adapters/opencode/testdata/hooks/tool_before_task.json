@@ -1,0 +1,14 @@
+{
+  "v": 1,
+  "session_id": "ses_e94dcca81ffed3xpV80ryjnePM",
+  "agent_session_id": "ses_e94dcca81ffed3xpV80ryjnePM",
+  "directory": "/work/repo",
+  "event": "tool.execute.before",
+  "tool": "task",
+  "call_id": "call_10",
+  "args": {
+    "description": "Explore the code",
+    "prompt": "...",
+    "subagent_type": "general"
+  }
+}

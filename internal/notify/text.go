@@ -20,6 +20,8 @@ func AgentName(a api.AgentKind) string {
 		return "Claude Code"
 	case api.AgentCodex:
 		return "Codex"
+	case api.AgentOpenCode:
+		return "OpenCode"
 	case "", api.AgentGeneric:
 		return "An agent"
 	}

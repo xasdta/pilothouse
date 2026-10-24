@@ -384,7 +384,7 @@ func TestHooksCommands(t *testing.T) {
 	}
 	out, _, _ = run("hooks", "status", "--json")
 	var rows []hookStatusJSON
-	if err := json.Unmarshal([]byte(out), &rows); err != nil || len(rows) != 2 || !rows[0].Status.Current || rows[1].Status.Installed {
+	if err := json.Unmarshal([]byte(out), &rows); err != nil || len(rows) != len(all.List()) || !rows[0].Status.Current || rows[1].Status.Installed {
 		t.Errorf("status --json: %v\n%s", err, out)
 	}
 	out, _, err = run("hooks", "install", "--agent", "claude")
@@ -405,11 +405,11 @@ func TestHooksCommands(t *testing.T) {
 
 func TestHookTargetsNothingFound(t *testing.T) {
 	hkEnv(t)
-	t.Setenv("PATH", t.TempDir()) // no claude/codex binaries either
+	t.Setenv("PATH", t.TempDir()) // no agent binaries either
 	if _, err := hookTargets("", true); err == nil || !strings.Contains(err.Error(), "--agent") {
 		t.Errorf("err = %v", err)
 	}
-	if ts, err := hookTargets("", false); err != nil || len(ts) != 2 {
+	if ts, err := hookTargets("", false); err != nil || len(ts) != len(all.List()) {
 		t.Errorf("status targets: %v %v", ts, err)
 	}
 	if ts, err := hookTargets("Codex", true); err != nil || len(ts) != 1 {

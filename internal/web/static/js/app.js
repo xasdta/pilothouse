@@ -1,9 +1,14 @@
 // Pilothouse web app entry: boot, routing, live updates.
+//
+// A view is a function returning {el, update?(kind), destroy?()}; update
+// runs once per frame after store changes (kind 'data' or 'conn').
 
 import { h, fill } from './dom.js';
 import { api, store, subscribe, resync, connect } from './api.js';
-import { mountShell, chrome, refreshChrome, setNavigator, toast } from './ui.js';
+import { mountShell, chrome, refreshChrome, setNavigator, toast, onLayout } from './ui.js';
 import { syncPush } from './push.js';
+import { renderPanes } from './panes.js';
+import { initKeys, refreshSelection } from './palette.js';
 import { inboxView } from './views/inbox.js';
 import { sessionsView } from './views/sessions.js';
 import { sessionView } from './views/session.js';
@@ -18,39 +23,45 @@ import { pairView } from './views/pair.js';
 const root = document.getElementById('app');
 let main = null;
 let view = null;
+let current = '/';
 
+// [pattern, view, chrome options]. tab: the phone tab that lights up (null
+// hides the tab bar); route: the desktop nav item.
 const routes = [
   [/^\/$/, () => inboxView(), { tab: '/' }],
   [/^\/sessions$/, () => sessionsView(), { tab: '/sessions' }],
   [/^\/settings$/, () => settingsView(), { tab: '/settings' }],
-  [/^\/s\/([\w-]+)$/, (m) => sessionView(m[1]), { back: 'Back', tab: null }],
-  [/^\/r\/([\w-]+)$/, (m) => requestView(m[1]), { back: 'Back', tab: null }],
-  [/^\/s\/([\w-]+)\/terminal$/, (m) => terminalView(m[1]), { back: 'Back', tab: null }],
+  [/^\/rules$/, () => rulesView(), { tab: '/settings', route: '/rules', back: 'Settings', backTo: '/settings', backOnPhone: true }],
+  [/^\/s\/([\w-]+)$/, (m) => sessionView(m[1]), { back: 'Back', tab: null, route: '/sessions' }],
+  [/^\/r\/([\w-]+)$/, (m) => requestView(m[1]), { back: 'Back', tab: null, route: '/' }],
+  [/^\/s\/([\w-]+)\/terminal$/, (m) => terminalView(m[1]), { back: 'Back', tab: null, route: '/sessions' }],
   [/^\/tasks$/, () => tasksView(), { tab: '/tasks' }],
-  [/^\/new$/, () => newTaskView(), { back: 'Back', tab: null }],
-  [/^\/t\/([\w-]+)$/, (m) => taskView(m[1]), { back: 'Back', tab: null }],
+  [/^\/new$/, () => newTaskView(), { back: 'Back', tab: null, route: '/tasks' }],
+  [/^\/t\/([\w-]+)$/, (m) => taskView(m[1]), { back: 'Back', tab: null, route: '/tasks' }],
   [/^\/insights$/, () => insightsView(), { tab: '/insights' }],
-  [/^\/rules$/, () => rulesView(), { tab: '/rules' }],
 ];
 
 function render(path) {
   if (view && view.destroy) view.destroy();
+  const pathname = path.split(/[?#]/)[0] || '/';
   let match = null;
   let entry = routes[0];
   for (const r of routes) {
-    match = path.match(r[0]);
+    match = pathname.match(r[0]);
     if (match) { entry = r; break; }
   }
   if (!match) { history.replaceState(null, '', '/'); match = ['/']; }
+  current = match[0];
   chrome(entry[2]);
   view = entry[1](match);
   fill(main, view.el);
-  scrollTo(0, 0);
+  renderPanes(current);
+  if (!location.hash) scrollTo(0, 0);
   main.focus({ preventScroll: true });
 }
 
 function navigate(path, replace = false) {
-  if (path === location.pathname && !replace) return;
+  if (path === location.pathname + location.hash && !replace) return;
   if (replace) history.replaceState({ inApp: true }, '', path);
   else history.pushState({ inApp: true }, '', path);
   render(path);
@@ -80,10 +91,14 @@ async function startApp(me, path) {
   store.me = me;
   main = main || mountShell(root);
   setNavigator(navigate);
+  initKeys();
   subscribe((kind) => {
     refreshChrome();
+    renderPanes(current);
     if (view && view.update) view.update(kind);
+    refreshSelection();
   });
+  onLayout(() => render(location.pathname + location.hash));
   history.replaceState({ inApp: false }, '', path);
   render(path);
   try {
@@ -97,14 +112,14 @@ async function startApp(me, path) {
 
 async function boot() {
   registerSW();
-  addEventListener('popstate', () => { if (store.me) render(location.pathname); });
+  addEventListener('popstate', () => { if (store.me) render(location.pathname + location.hash); });
   // A pairing link opened in a tab that already shows /pair changes only the
   // fragment (no reload): pick the code up anyway.
   addEventListener('hashchange', () => {
     if (location.hash.length > 1 && (location.pathname === '/pair' || location.pathname === '/login')) location.reload();
   });
   const path = location.pathname;
-  const code = decodeURIComponent(location.hash.slice(1)).trim();
+  const code = (path === '/pair' || path === '/login') ? decodeURIComponent(location.hash.slice(1)).trim() : '';
   if (code) history.replaceState(null, '', path); // never keep the code in history
 
   if ((path === '/pair' || path === '/login') && code) {
@@ -125,7 +140,7 @@ async function boot() {
     fill(main, errorScreen(e));
     return;
   }
-  startApp(me, path === '/pair' || path === '/login' ? '/' : path);
+  startApp(me, path === '/pair' || path === '/login' ? '/' : path + location.hash);
 }
 
 function errorScreen(e) {

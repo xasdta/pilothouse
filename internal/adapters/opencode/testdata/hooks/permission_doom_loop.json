@@ -1,0 +1,28 @@
+{
+  "v": 1,
+  "session_id": "ses_e94dcca81ffed3xpV80ryjnePM",
+  "agent_session_id": "ses_e94dcca81ffed3xpV80ryjnePM",
+  "directory": "/work/repo",
+  "event": "permission.asked",
+  "request_id": "per_doom",
+  "permission": {
+    "permission": "doom_loop",
+    "patterns": [
+      "read"
+    ],
+    "metadata": {
+      "tool": "read",
+      "input": {
+        "filePath": "/work/repo/a"
+      }
+    },
+    "always": [
+      "read"
+    ]
+  },
+  "tool": "read",
+  "call_id": "call_12",
+  "args": {
+    "filePath": "/work/repo/a"
+  }
+}

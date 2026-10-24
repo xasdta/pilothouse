@@ -15,9 +15,10 @@ const ProtocolVersion = 1
 type AgentKind string
 
 const (
-	AgentClaude  AgentKind = "claude"
-	AgentCodex   AgentKind = "codex"
-	AgentGeneric AgentKind = "generic" // anything run under `pilothouse run` without an adapter
+	AgentClaude   AgentKind = "claude"
+	AgentCodex    AgentKind = "codex"
+	AgentOpenCode AgentKind = "opencode"
+	AgentGeneric  AgentKind = "generic" // anything run under `pilothouse run` without an adapter
 )
 
 // Mode is how Pilothouse is attached to a session.

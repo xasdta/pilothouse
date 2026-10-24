@@ -28,11 +28,13 @@ import (
 func newHooksCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "hooks",
-		Short: "Install, remove or check Pilothouse's hooks in Claude Code and Codex",
+		Short: "Install, remove or check Pilothouse's hooks in Claude Code, Codex and OpenCode",
 		Long: `Pilothouse sees agents through their hooks. ` + "`hooks install`" + ` merges a call to
 ` + "`pilothouse hook <agent>`" + ` into each agent's settings (~/.claude/settings.json,
 ~/.codex/hooks.json), keeping every other setting and hook, and backs the file
-up first. ` + "`hooks uninstall`" + ` removes exactly what install added.`,
+up first. OpenCode has no command hooks: install writes Pilothouse's plugin to
+~/.config/opencode/plugins/pilothouse.js instead. ` + "`hooks uninstall`" + ` removes exactly
+what install added.`,
 		Args: cobra.NoArgs,
 	}
 	cmd.AddCommand(newHooksChangeCmd(true), newHooksChangeCmd(false), newHooksStatusCmd())
@@ -44,7 +46,7 @@ func newHooksChangeCmd(install bool) *cobra.Command {
 	var dryRun bool
 	use, short := "uninstall", "Remove Pilothouse's hooks (and nothing else)"
 	if install {
-		use, short = "install", "Wire Pilothouse's hooks into Claude Code and Codex"
+		use, short = "install", "Wire Pilothouse's hooks into Claude Code, Codex and OpenCode"
 	}
 	cmd := &cobra.Command{
 		Use:   use,
@@ -64,7 +66,7 @@ func newHooksChangeCmd(install bool) *cobra.Command {
 			return runHooksChange(cmd.OutOrStdout(), targets, opts, install)
 		},
 	}
-	cmd.Flags().StringVar(&agent, "agent", "", "only this agent: claude or codex (default: every agent found on this machine)")
+	cmd.Flags().StringVar(&agent, "agent", "", "only this agent: "+agentChoices()+" (default: every agent found on this machine)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show the changes without writing anything")
 	return cmd
 }
@@ -149,7 +151,7 @@ func newHooksStatusCmd() *cobra.Command {
 			return runHooksStatus(cmd.OutOrStdout(), targets, adapters.InstallOptions{ShimPath: exe}, asJSON)
 		},
 	}
-	cmd.Flags().StringVar(&agent, "agent", "", "only this agent: claude or codex")
+	cmd.Flags().StringVar(&agent, "agent", "", "only this agent: "+agentChoices())
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print JSON")
 	return cmd
 }
@@ -255,7 +257,7 @@ func hookTargets(agent string, install bool) ([]adapters.Adapter, error) {
 	if agent != "" {
 		a := all.Get(api.AgentKind(strings.ToLower(agent)))
 		if a == nil {
-			return nil, fmt.Errorf("unknown agent %q: use claude or codex", agent)
+			return nil, fmt.Errorf("unknown agent %q: use %s", agent, agentChoices())
 		}
 		return []adapters.Adapter{a}, nil
 	}
@@ -270,9 +272,23 @@ func hookTargets(agent string, install bool) ([]adapters.Adapter, error) {
 		out = append(out, a)
 	}
 	if install && len(out) == 0 {
-		return nil, errors.New("found neither Claude Code (~/.claude) nor Codex (~/.codex); pass --agent claude or --agent codex to install anyway")
+		return nil, errors.New("found no supported agent (Claude Code in ~/.claude, Codex in ~/.codex, OpenCode in ~/.config/opencode); pass --agent <name> to install anyway")
 	}
 	return out, nil
+}
+
+// agentChoices lists the --agent values: "claude, codex or opencode".
+func agentChoices() string {
+	var kinds []string
+	for _, a := range all.List() {
+		if a != nil {
+			kinds = append(kinds, string(a.Kind()))
+		}
+	}
+	if len(kinds) < 2 {
+		return strings.Join(kinds, "")
+	}
+	return strings.Join(kinds[:len(kinds)-1], ", ") + " or " + kinds[len(kinds)-1]
 }
 
 // shimPath is the binary hooks will call: this one, absolute and with

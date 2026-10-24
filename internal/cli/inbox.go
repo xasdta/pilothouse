@@ -1374,6 +1374,7 @@ func runSetup(cmd *cobra.Command, yes, noPhone bool) error {
 		fmt.Fprintln(w, msg)
 		note("✓ " + a.DisplayName() + " hooks installed")
 	}
+	offerSuggestions(w, ui, opts, note) // agent settings (suggest.go)
 
 	// 2. Daemon.
 	fmt.Fprintln(w)
@@ -1860,6 +1861,11 @@ func runDoctor(ctx context.Context) []doctorCheck {
 			add(name, checkWarn, detail, "`pilothouse hooks install`")
 		default:
 			add(name, checkFail, "not installed — this agent's sessions are invisible to Pilothouse", "`pilothouse setup` or `pilothouse hooks install`")
+		}
+		if err == nil {
+			if level, detail, fix, ok := suggestionCheck(a, st); ok {
+				add("settings: "+a.DisplayName(), level, detail, fix)
+			}
 		}
 	}
 

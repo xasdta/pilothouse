@@ -1,0 +1,15 @@
+{
+  "kind": "pre_tool",
+  "vendor_event": "tool.execute.before",
+  "agent_session_id": "ses_e94dcca81ffed3xpV80ryjnePM",
+  "cwd": "/work/repo",
+  "tool_use_id": "call_10",
+  "tool": "task",
+  "tool_kind": "other",
+  "input": {
+    "description": "Explore the code",
+    "prompt": "...",
+    "subagent_type": "general"
+  },
+  "summary": "Subagent: Explore the code"
+}

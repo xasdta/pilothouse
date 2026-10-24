@@ -131,6 +131,14 @@ await run(async () => {
   apiR.on('POST', /^\/api\/sessions\/s_web01\/reply$/, () => ({ json: { via: 'terminal' } }));
   await page.$eval('#reply-text', (e) => { e.value = ''; e.dispatchEvent(new Event('input')); });
 
+  // ---- The `r` shortcut focuses the reply box ----
+  await page.evaluate(() => { if (document.activeElement) document.activeElement.blur(); scrollTo(0, 0); });
+  await page.keyboard.press('r');
+  await sleep(150);
+  check('`r` focuses the reply box', await page.evaluate(() => document.activeElement && document.activeElement.id === 'reply-text' && document.activeElement.dataset.shortcut === 'reply'));
+  check('…without typing the r', (await page.$eval('#reply-text', (e) => e.value)) === '');
+  await page.evaluate(() => document.activeElement.blur());
+
   // ---- Interrupt (signed, two taps) ----
   apiR.clear();
   await tap(page, '#interrupt-btn');

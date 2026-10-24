@@ -1,0 +1,8 @@
+{
+  "kind": "prompt_submit",
+  "vendor_event": "chat.message",
+  "agent_session_id": "ses_e94dcca81ffed3xpV80ryjnePM",
+  "cwd": "/work/repo",
+  "message": "Please fix the failing test in auth.go",
+  "summary": "Prompt: Please fix the failing test in auth.go"
+}

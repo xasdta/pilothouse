@@ -84,6 +84,11 @@ type HookEvent struct {
 	// permission checkpoint then raises a question or plan request.
 	Questions []api.Question `json:"questions,omitempty"`
 	Plan      *api.Plan      `json:"plan,omitempty"`
+	// Hold routes a permission request to a person through Pilothouse even
+	// while they are at the desk: the agent has no dialog of its own to
+	// show for it (OpenCode, after a policy "ask" before a tool call). Such
+	// a request is never answered by a session grant.
+	Hold bool `json:"hold,omitempty"`
 }
 
 // HookOutcome is what the daemon decided for one hook call.
@@ -147,6 +152,17 @@ type HookStatus struct {
 	Events    []string `json:"events"`  // vendor events wired to pilothouse
 	Path      string   `json:"path"`
 	Problems  []string `json:"problems,omitempty"`
+}
+
+// Suggester is an optional Adapter extension: a change to the agent's own
+// settings that `pilothouse setup` offers after the hooks, showing the
+// diff and applying it only with the person's consent (OpenCode: ask
+// before shell commands and edits, which it otherwise allows).
+type Suggester interface {
+	// Suggest plans the change (opts.DryRun) or applies it, backing the
+	// file up first. A Change with Changed false means nothing to suggest.
+	// Question is what setup asks, Why one sentence on the reason.
+	Suggest(opts InstallOptions) (ch Change, question, why string, err error)
 }
 
 // Adapter is one coding agent.

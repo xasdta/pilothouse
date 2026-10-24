@@ -1,22 +1,35 @@
 import { h, icon, agoLong, fill, add } from '../dom.js';
 import { store, api } from '../api.js';
-import { toast, refreshChrome } from '../ui.js';
+import { toast, refreshChrome, link, setTheme, theme, isWide } from '../ui.js';
 import { pushStatus, enablePush, disablePush } from '../push.js';
+import { openHelp } from '../palette.js';
 import { section } from './rows.js';
 
 export function settingsView() {
-  const root = h('div', { class: 'view' });
+  const root = h('div', { class: 'view settings' });
   const notif = h('div', { class: 'group' });
   const presence = h('div', { class: 'group group-pad' });
+  const appearance = h('div', { class: 'group group-pad' });
   const device = h('div', { class: 'group' });
   const conn = h('div', { class: 'group' });
+  const tile = (c, i) => h('span', { class: 'icon-tile ' + c, 'aria-hidden': 'true' }, icon(i));
 
   add(root,
-    h('div', { class: 'page-head' }, h('h1', { class: 'page-title' }, 'Settings')),
+    h('div', { class: 'page-head' }, h('div', null, h('h1', { class: 'page-title' }, 'Settings'))),
+    h('section', { class: 'section' }, h('div', { class: 'group' },
+      link('/rules', { class: 'setting' }, tile('green', 'shield'),
+        h('div', { class: 'label' }, h('b', null, 'Rules'), h('span', null, 'Guarded autopilot, and what runs without asking')),
+        icon('chev', 'sm', 'chev')),
+      link('/insights', { class: 'setting' }, tile('violet', 'chart'),
+        h('div', { class: 'label' }, h('b', null, 'Insights'), h('span', null, 'Usage, cost and what the rules did')),
+        icon('chev', 'sm', 'chev')))),
     section('Notifications', 0, notif),
+    section('Other ways to reach you', 0, channels()),
     section('Where should requests go?', 0, presence),
+    section('Appearance', 0, appearance),
     section('This device', 0, device),
     section('Connection', 0, conn),
+    section('About', 0, about()),
     h('section', { class: 'section' },
       h('div', { class: 'group' }, h('button', { class: 'setting danger', type: 'button', onclick: signOut }, 'Sign out this device')),
       h('p', { class: 'group-note' }, 'Signing out revokes this device. Pair again with ', h('code', null, 'pilothouse pair'), '.')),
@@ -25,7 +38,6 @@ export function settingsView() {
   // ---- Notifications ----
   async function renderNotif() {
     const st = await pushStatus();
-    const tile = (c, i) => h('span', { class: 'icon-tile ' + c }, icon(i));
     let content;
     switch (st) {
       case 'ios-install':
@@ -56,7 +68,10 @@ export function settingsView() {
       case 'on':
         content = [
           h('div', { class: 'setting' }, tile('green', 'bell'),
-            h('div', { class: 'label' }, h('b', null, 'Notifications are on'), h('span', null, 'Requests reach this device when you’re away'))),
+            h('div', { class: 'label' }, h('b', null, 'Notifications are on'),
+              h('span', null, /Android/.test(navigator.userAgent) || !/iPhone|iPad/.test(navigator.userAgent)
+                ? 'Allow or deny right from the notification; answered ones update to “Answered ✓”'
+                : 'Requests reach this device when you’re away'))),
           h('div', { class: 'group-pad' }, h('div', { class: 'row-btns' },
             h('button', { class: 'btn secondary', type: 'button', onclick: testPush }, 'Send a test'),
             h('button', { class: 'btn ghost', type: 'button', onclick: offPush }, 'Turn off'))),
@@ -66,7 +81,7 @@ export function settingsView() {
         content = h('div', { class: 'group-pad' },
           h('div', { class: 'notice' }, tile('blue', 'bell'),
             h('div', null, h('h3', null, 'Get notified'),
-              h('p', null, 'Get a notification when an agent needs you while you’re away. You can answer right from it on most phones.'))),
+              h('p', null, 'Get a notification when an agent needs you while you’re away. On Android and desktop you can answer right from it.'))),
           h('div', { class: 'row-btns' }, h('button', { class: 'btn primary', type: 'button', onclick: onPush }, 'Turn on notifications')));
     }
     fill(notif, ...[content].flat());
@@ -107,6 +122,16 @@ export function settingsView() {
     b.disabled = false;
   }
 
+  function channels() {
+    const row = (c, i, title, text, cmd) => h('div', { class: 'channel' }, tile(c, i),
+      h('b', null, title), h('span', null, text, cmd ? [' ', h('code', null, cmd)] : null));
+    return h('div', { class: 'group' },
+      row('sky', 'message', 'Telegram', 'Two-way: buttons to allow, deny and answer questions, and replies to prompt the agent. Set it up on your computer with', 'pilothouse notify telegram'),
+      row('amber', 'bell', 'ntfy', 'Push to the ntfy app, with action buttons on iPhone too. Set up by', 'pilothouse setup'),
+      row('gray', 'desk', 'This computer', 'Desktop notifications when a native prompt waits while you’re at your desk.'),
+    );
+  }
+
   // ---- Presence ----
   function renderPresence() {
     const p = store.presence || { mode: 'auto', state: 'present' };
@@ -140,10 +165,23 @@ export function settingsView() {
     refreshChrome();
   }
 
+  // ---- Appearance ----
+  function renderAppearance() {
+    const t = theme();
+    const opts = [['system', 'monitor', 'System'], ['light', 'sun', 'Light'], ['dark', 'moon', 'Dark']];
+    fill(appearance,
+      h('div', { class: 'seg', role: 'radiogroup', 'aria-label': 'Theme' },
+        opts.map(([mode, ic, label]) => h('button', {
+          type: 'button', role: 'radio', 'aria-checked': String(t === mode), 'data-theme-mode': mode,
+          onclick: () => { setTheme(mode); renderAppearance(); },
+        }, icon(ic, 'sm'), label))),
+      h('p', { class: 'group-note' }, t === 'system' ? 'Follows this device’s light or dark setting.' : 'Saved on this device.'));
+  }
+
   // ---- Device ----
   function renderDevice() {
     const d = store.me.device;
-    const input = h('input', { class: 'input', id: 'device-name', value: d.name, maxlength: 60, autocomplete: 'off', 'aria-label': 'Device name' });
+    const input = h('input', { class: 'input', id: 'device-name', value: d.name, maxlength: 60, autocomplete: 'off' });
     const save = h('button', { class: 'btn secondary', type: 'submit' }, 'Save');
     const form = h('form', { class: 'name-form' }, input, save);
     form.addEventListener('submit', async (e) => {
@@ -161,10 +199,10 @@ export function settingsView() {
     });
     fill(device,
       h('div', { class: 'group-pad' }, h('label', { class: 'field-label', for: 'device-name' }, 'Name'), form),
-      h('div', { class: 'setting' }, h('span', { class: 'icon-tile green' }, icon('key')),
-        h('div', { class: 'label' }, h('b', null, 'Signing key'), h('span', null, 'Kept on this device; signs every answer')),
+      h('div', { class: 'setting' }, tile('green', 'key'),
+        h('div', { class: 'label' }, h('b', null, 'Signing key'), h('span', null, 'Kept on this device; signs every answer, reply and rule')),
         h('div', { class: 'value' }, 'P-256')),
-      h('div', { class: 'setting' }, h('span', { class: 'icon-tile gray' }, icon('phone')),
+      h('div', { class: 'setting' }, tile('gray', 'phone'),
         h('div', { class: 'label' }, h('b', null, 'Paired'), h('span', null, new Date(d.created_at).toLocaleDateString())),
         h('div', { class: 'value' }, agoLong(d.created_at))));
   }
@@ -172,12 +210,25 @@ export function settingsView() {
   function renderConn() {
     const me = store.me;
     fill(conn,
-      h('div', { class: 'setting' }, h('span', { class: 'icon-tile blue' }, icon('desk')),
+      h('div', { class: 'setting' }, tile('blue', 'desk'),
         h('div', { class: 'label' }, h('b', null, store.machine || me.machine), h('span', null, store.conn === 'live' ? 'Connected · live' : 'Reconnecting…')),
         h('div', { class: 'value' }, /^\d/.test(me.version) ? 'v' + me.version : me.version)),
-      h('div', { class: 'setting' }, h('span', { class: 'icon-tile gray' }, icon('link')),
+      h('div', { class: 'setting' }, tile('gray', 'link'),
         h('div', { class: 'label' }, h('b', null, 'Address'), h('span', { class: 'mono' }, location.origin)),
         h('div', { class: 'value' }, me.public_url ? 'Tailnet' : 'Local only')));
+  }
+
+  function about() {
+    return h('div', { class: 'group' },
+      h('div', { class: 'setting' }, tile('green', 'shield'),
+        h('div', { class: 'label' }, h('b', null, 'Pilothouse'),
+          h('span', null, 'Open source. No account, no relay: your agents, rules and answers stay between your devices and your computer.'))),
+      isWide() || matchMedia('(hover: hover)').matches
+        ? h('button', { class: 'setting', type: 'button', onclick: () => openHelp() }, tile('gray', 'keyboard'),
+          h('div', { class: 'label' }, h('b', null, 'Keyboard shortcuts'), h('span', null, 'Press ? anywhere')), icon('chev', 'sm', 'chev'))
+        : null,
+      h('div', { class: 'setting' }, tile('gray', 'info'),
+        h('div', { class: 'label' }, h('b', null, 'Docs and source'), h('span', { class: 'mono' }, 'github.com/xasdta/pilothouse'))));
   }
 
   async function signOut() {
@@ -192,8 +243,11 @@ export function settingsView() {
     }
   }
 
+  const onTheme = () => renderAppearance();
+  addEventListener('pilothouse:theme', onTheme);
   renderNotif();
   renderPresence();
+  renderAppearance();
   renderDevice();
   renderConn();
   return {
@@ -203,5 +257,6 @@ export function settingsView() {
       renderConn();
       if (kind === 'data' && !device.contains(document.activeElement)) renderDevice();
     },
+    destroy() { removeEventListener('pilothouse:theme', onTheme); },
   };
 }
