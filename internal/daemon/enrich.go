@@ -144,9 +144,10 @@ func transcriptLine(line []byte) (text string, human bool) {
 			Message string          `json:"message"`
 			Content json.RawMessage `json:"content"`
 		} `json:"payload"`
-		IsSidechain bool `json:"isSidechain"`
+		IsSidechain bool `json:"isSidechain"` // a subagent's thread
+		IsMeta      bool `json:"isMeta"`      // text Claude Code adds, not the person's prompt
 	}
-	if json.Unmarshal(line, &rec) != nil || rec.IsSidechain {
+	if json.Unmarshal(line, &rec) != nil || rec.IsSidechain || rec.IsMeta {
 		return "", false
 	}
 	switch {
