@@ -1,6 +1,10 @@
 package transcript
 
-import "github.com/xasdta/pilothouse/internal/api"
+import (
+	"math"
+
+	"github.com/xasdta/pilothouse/internal/api"
+)
 
 // Tokens is the token use of one model response (or a sum of them), in
 // one shape for both agents: Input never includes cached tokens, and
@@ -65,6 +69,10 @@ func apiUsage(t Tokens, cost float64, model string, turns int) api.Usage {
 	return api.Usage{
 		InputTokens: t.Input, OutputTokens: t.Output, CacheReadTokens: t.CacheRead,
 		CacheWriteTokens: t.CacheWrite, ReasoningTokens: t.Reasoning,
-		CostUSD: cost, Model: model, Turns: turns,
+		CostUSD: roundCost(cost), Model: model, Turns: turns,
 	}
 }
+
+// roundCost keeps an estimate to a millionth of a dollar, so sums of
+// per-response costs don't show float noise.
+func roundCost(c float64) float64 { return math.Round(c*1e6) / 1e6 }

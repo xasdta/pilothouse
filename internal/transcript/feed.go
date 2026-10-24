@@ -380,7 +380,7 @@ type DayUsage struct {
 func (f *feed) days() []DayUsage {
 	out := make([]DayUsage, 0, len(f.byDay))
 	for k, a := range f.byDay {
-		out = append(out, DayUsage{Day: k.day, Model: k.model, Tokens: a.tokens, CostUSD: a.cost, Turns: a.turns})
+		out = append(out, DayUsage{Day: k.day, Model: k.model, Tokens: a.tokens, CostUSD: roundCost(a.cost), Turns: a.turns})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Day != out[j].Day {

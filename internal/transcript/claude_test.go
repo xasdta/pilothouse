@@ -121,7 +121,7 @@ func TestClaudeFeed(t *testing.T) {
 		Turns: 2} // the /model command reached no model
 	wantUsage.CostUSD = fakePricer{}.Cost("m-known", Tokens{Input: wantUsage.InputTokens, Output: wantUsage.OutputTokens,
 		CacheRead: wantUsage.CacheReadTokens, CacheWrite: wantUsage.CacheWriteTokens}, false)
-	if d := res.Usage.CostUSD - wantUsage.CostUSD; d > 1e-12 || d < -1e-12 {
+	if d := res.Usage.CostUSD - wantUsage.CostUSD; d > 1e-6 || d < -1e-6 {
 		t.Errorf("cost = %v, want %v", res.Usage.CostUSD, wantUsage.CostUSD)
 	}
 	res.Usage.CostUSD = wantUsage.CostUSD
@@ -175,7 +175,7 @@ func TestClaudeUsageDedupe(t *testing.T) {
 	}
 	// Only the known model costs anything; the other's tokens still count.
 	wantCost := fakePricer{}.Cost("m-known", Tokens{Input: 3, Output: 9, CacheRead: 100, CacheWrite: 10}, false)
-	if d := res.Usage.CostUSD - wantCost; d > 1e-12 || d < -1e-12 {
+	if d := res.Usage.CostUSD - wantCost; d > 1e-6 || d < -1e-6 {
 		t.Errorf("cost = %v, want %v", res.Usage.CostUSD, wantCost)
 	}
 	u, err := r.Usage("u", Source{Agent: api.AgentClaude, Path: path})
