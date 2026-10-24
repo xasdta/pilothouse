@@ -1,0 +1,22 @@
+{
+  "v": 1,
+  "session_id": "ses_e94dcca81ffed3xpV80ryjnePM",
+  "agent_session_id": "ses_e94dcca81ffed3xpV80ryjnePM",
+  "directory": "/work/repo",
+  "event": "permission.asked",
+  "request_id": "per_nocall",
+  "permission": {
+    "permission": "bash",
+    "patterns": [
+      "rm -rf build"
+    ],
+    "metadata": {
+      "command": "rm -rf build"
+    },
+    "always": [
+      "rm *"
+    ]
+  },
+  "tool": "",
+  "call_id": "call_unknown"
+}

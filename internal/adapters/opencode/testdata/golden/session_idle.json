@@ -1,0 +1,8 @@
+{
+  "kind": "stop",
+  "vendor_event": "session.idle",
+  "agent_session_id": "ses_e94dcca81ffed3xpV80ryjnePM",
+  "cwd": "/work/repo",
+  "message": "Done. I pushed the branch and opened a PR.\nAnything else?",
+  "summary": "Finished: Done. I pushed the branch and opened a PR. …"
+}

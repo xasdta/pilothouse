@@ -1,0 +1,16 @@
+{
+  "kind": "permission",
+  "vendor_event": "permission.asked",
+  "agent_session_id": "ses_e94dcca81ffed3xpV80ryjnePM",
+  "cwd": "/work/repo",
+  "tool_use_id": "per_doom",
+  "tool": "read",
+  "tool_kind": "read",
+  "paths": [
+    "/work/repo/a"
+  ],
+  "input": {
+    "filePath": "/work/repo/a"
+  },
+  "summary": "Repeat the same call again: Read: a"
+}

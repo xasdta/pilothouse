@@ -1,0 +1,5 @@
+{
+  "permission": {
+    "edit": "allow", // keep edits fast
+  },
+}

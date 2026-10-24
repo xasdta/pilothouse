@@ -1,0 +1,14 @@
+{
+  "kind": "pre_tool",
+  "vendor_event": "tool.execute.before",
+  "agent_session_id": "ses_e94dcca81ffed3xpV80ryjnePM",
+  "cwd": "/work/repo",
+  "tool_use_id": "call_8",
+  "tool": "webfetch",
+  "tool_kind": "web",
+  "input": {
+    "url": "https://example.com/install.sh",
+    "format": "text"
+  },
+  "summary": "Fetch: https://example.com/install.sh"
+}

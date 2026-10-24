@@ -1,0 +1,15 @@
+{
+  "kind": "pre_tool",
+  "vendor_event": "tool.execute.before",
+  "agent_session_id": "ses_e94dcca81ffed3xpV80ryjnePM",
+  "cwd": "/work/repo",
+  "tool_use_id": "call_1792798832771",
+  "tool": "bash",
+  "tool_kind": "shell",
+  "command": "git push origin main",
+  "input": {
+    "command": "git push origin main",
+    "description": "Push"
+  },
+  "summary": "Run: git push origin main"
+}

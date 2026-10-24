@@ -1,0 +1,18 @@
+{
+  "kind": "pre_tool",
+  "vendor_event": "tool.execute.before",
+  "agent_session_id": "ses_e94dcca81ffed3xpV80ryjnePM",
+  "cwd": "/work/repo",
+  "tool_use_id": "call_2",
+  "tool": "bash",
+  "tool_kind": "edit",
+  "command": "apply_patch <<'EOF'\n*** Begin Patch\n*** Update File: src/a.go\n@@\n-x\n+y\n*** End Patch\nEOF",
+  "paths": [
+    "/work/repo/src/a.go"
+  ],
+  "input": {
+    "command": "apply_patch <<'EOF'\n*** Begin Patch\n*** Update File: src/a.go\n@@\n-x\n+y\n*** End Patch\nEOF",
+    "description": "patch"
+  },
+  "summary": "Edit: src/a.go"
+}

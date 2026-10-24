@@ -1,0 +1,25 @@
+{
+  "v": 1,
+  "session_id": "ses_e94dcca81ffed3xpV80ryjnePM",
+  "agent_session_id": "ses_e94dcca81ffed3xpV80ryjnePM",
+  "directory": "/work/repo",
+  "event": "question.asked",
+  "request_id": "que_16b233996001qsrPGesT3b34ed",
+  "call_id": "call_13",
+  "questions": [
+    {
+      "question": "Which color?",
+      "header": "Color",
+      "options": [
+        {
+          "label": "Red",
+          "description": "red"
+        },
+        {
+          "label": "Blue",
+          "description": "blue"
+        }
+      ]
+    }
+  ]
+}

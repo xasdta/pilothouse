@@ -1,0 +1,16 @@
+{
+  "kind": "permission",
+  "vendor_event": "pilothouse.ask",
+  "agent_session_id": "ses_e94dcca81ffed3xpV80ryjnePM",
+  "cwd": "/work/repo",
+  "tool_use_id": "call_15",
+  "tool": "bash",
+  "tool_kind": "shell",
+  "command": "git push --force",
+  "input": {
+    "command": "git push --force",
+    "description": "force"
+  },
+  "summary": "Run: git push --force",
+  "hold": true
+}

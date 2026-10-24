@@ -1,0 +1,17 @@
+{
+  "kind": "pre_tool",
+  "vendor_event": "tool.execute.before",
+  "agent_session_id": "ses_e94dcca81ffed3xpV80ryjnePM",
+  "cwd": "/work/repo",
+  "tool_use_id": "call_7",
+  "tool": "grep",
+  "tool_kind": "read",
+  "paths": [
+    "/work/repo/src"
+  ],
+  "input": {
+    "pattern": "TODO",
+    "path": "src"
+  },
+  "summary": "Grep: TODO"
+}

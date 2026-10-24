@@ -1,0 +1,8 @@
+{
+  "kind": "post_tool",
+  "vendor_event": "permission.replied",
+  "agent_session_id": "ses_e94dcca81ffed3xpV80ryjnePM",
+  "cwd": "/work/repo",
+  "tool_use_id": "per_16b2338ac001vcFIqYJbypy2WI",
+  "summary": "Answered in OpenCode (once)"
+}

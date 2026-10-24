@@ -1,0 +1,85 @@
+{
+  "kind": "permission",
+  "vendor_event": "question.asked",
+  "agent_session_id": "ses_e94dcca81ffed3xpV80ryjnePM",
+  "cwd": "/work/repo",
+  "tool_use_id": "que_multi",
+  "tool": "question",
+  "tool_kind": "other",
+  "input": {
+    "questions": [
+      {
+        "question": "Which checks?",
+        "header": "Checks",
+        "options": [
+          {
+            "label": "Lint",
+            "description": ""
+          },
+          {
+            "label": "Unit, fast",
+            "description": "commas in a label"
+          },
+          {
+            "label": "E2E",
+            "description": ""
+          }
+        ],
+        "multiple": true,
+        "custom": false
+      },
+      {
+        "question": "Ship it?",
+        "header": "Ship",
+        "options": [
+          {
+            "label": "Yes",
+            "description": ""
+          },
+          {
+            "label": "No",
+            "description": ""
+          }
+        ],
+        "multiple": false,
+        "custom": null
+      }
+    ]
+  },
+  "summary": "Asks: Which checks?",
+  "questions": [
+    {
+      "id": "que_multi#1",
+      "header": "Checks",
+      "question": "Which checks?",
+      "options": [
+        {
+          "label": "Lint"
+        },
+        {
+          "label": "Unit, fast",
+          "description": "commas in a label"
+        },
+        {
+          "label": "E2E"
+        }
+      ],
+      "multi_select": true,
+      "allow_other": false
+    },
+    {
+      "id": "que_multi#2",
+      "header": "Ship",
+      "question": "Ship it?",
+      "options": [
+        {
+          "label": "Yes"
+        },
+        {
+          "label": "No"
+        }
+      ],
+      "allow_other": true
+    }
+  ]
+}
