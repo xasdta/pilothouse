@@ -93,6 +93,9 @@ await run(async () => {
   check('diff: added and removed lines with line numbers', (await page.$$eval('.file-diff .tl-add', (e) => e.length)) > 20 && (await page.$$eval('.file-diff .tl-del', (e) => e.length)) >= 5);
   check('diff: hunk headers and a "new" tag', (await page.$$eval('.tl-hunk', (e) => e.length)) === 4 && diff.includes('new'));
   check('diff: line numbers follow the hunk', await page.$eval('.file-diff .tl-ctx .ln', (e) => e.textContent === '12'));
+  check('diff: rendered by the shared diff component', (await page.$$eval('.file-diff .diff.bare .dfile', (e) => e.length)) === 3);
+  const wide = await page.$eval('.file-diff .dbody', (b) => ({ ox: getComputedStyle(b).overflowX, sw: b.scrollWidth, cw: b.clientWidth }));
+  check('diff: long lines scroll sideways inside the card on a phone (not clipped)', wide.sw <= wide.cw || wide.ox === 'auto' || wide.ox === 'scroll', JSON.stringify(wide));
   // Fold a file.
   await tap(page, '.file-diff summary');
   check('a file’s diff folds', !(await page.$eval('.file-diff', (e) => e.open)));
