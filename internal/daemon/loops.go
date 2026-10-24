@@ -58,6 +58,7 @@ func (d *Daemon) startLoops() {
 		}
 	})
 	d.startUpdateCheck()
+	d.goBackground(d.watchTasks) // taskrun.go
 }
 
 // ---- policy ----

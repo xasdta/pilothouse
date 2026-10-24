@@ -101,7 +101,9 @@ func runSetup(ctx context.Context, t api.Task, cfg *Config, also io.Writer) erro
 		if errors.Is(err, exec.ErrWaitDelay) {
 			err = nil
 		}
-		what := fmt.Sprintf("setup command %d of %d (`%s`)", i+1, len(cfg.Setup), Short(c, 60))
+		// By number: the command's text may carry a token, and this
+		// message reaches the task record and notifications.
+		what := fmt.Sprintf("setup command %d of %d", i+1, len(cfg.Setup))
 		switch {
 		case err == nil:
 			fmt.Fprintf(w, "# ok (%s)\n", time.Since(start).Round(time.Millisecond))

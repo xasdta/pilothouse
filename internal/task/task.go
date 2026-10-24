@@ -403,7 +403,7 @@ func (m *Manager) Launch(ctx context.Context, p *Prepared, t api.Task) (api.Task
 	t.UpdatedAt = m.now()
 	if t.Agent == api.AgentClaude && ClaudeAsksTrust(p.repo, t.Worktree) {
 		p.AsksTrust = true
-		t.Note = "Claude is asking whether to trust this folder — attach to answer: pilothouse attach " + sid
+		t.Note = strings.TrimSpace(t.Note + " Claude is asking whether to trust this folder — attach to answer: pilothouse attach " + sid)
 	}
 	if err := saveTask(t); err != nil {
 		return t, err

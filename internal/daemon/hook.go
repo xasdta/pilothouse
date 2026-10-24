@@ -165,7 +165,8 @@ func (d *Daemon) routeHook(ctx context.Context, ad adapters.Adapter, env adapter
 			outcome = d.holdPermission(ctx, plan, sess)
 		}
 	case adapters.HookStop:
-		if d.Presence().State == api.PresenceAway {
+		// A task's session says "ready for review" instead (taskrun.go).
+		if d.Presence().State == api.PresenceAway && sess.TaskID == "" {
 			// Empty Title/Body: notify renders the standard wording.
 			d.notify(core.Notification{Kind: core.NotifyWaiting, Session: &sess, Remote: true})
 		}

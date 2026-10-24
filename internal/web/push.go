@@ -218,6 +218,9 @@ func (s *Server) push(ctx context.Context, n core.Notification, onlyDevice strin
 	case n.Session != nil:
 		p.SessionID, p.Tag, p.URL = n.Session.ID, n.Session.ID, "/s/"+n.Session.ID
 	}
+	if len(n.URL) > 1 && n.URL[0] == '/' && n.URL[1] != '/' { // the sender's deep link (a task: /t/<id>)
+		p.URL = n.URL
+	}
 	msg, _ := json.Marshal(p)
 	topic := topicRE.ReplaceAllString(p.Tag, "")
 	if len(topic) > 32 {

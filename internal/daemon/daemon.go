@@ -34,6 +34,7 @@ import (
 	"github.com/xasdta/pilothouse/internal/presence"
 	"github.com/xasdta/pilothouse/internal/proc"
 	"github.com/xasdta/pilothouse/internal/store"
+	"github.com/xasdta/pilothouse/internal/task"
 	"github.com/xasdta/pilothouse/internal/web"
 )
 
@@ -81,6 +82,9 @@ type Options struct {
 	PollInterval time.Duration
 	// DisableUpdateCheck turns off the daily update check regardless of config.
 	DisableUpdateCheck bool
+	// TaskStarter starts the agent of a task begun from a device;
+	// defaults to task.SpawnStarter (a detached `pilothouse run` holder).
+	TaskStarter task.Starter
 }
 
 // Daemon is a running daemon. It implements core.Core.
@@ -104,7 +108,8 @@ type Daemon struct {
 	webURL   string
 	policy   atomic.Pointer[policyHolder]
 
-	pres presenceState
+	pres  presenceState
+	tasks taskState // taskrun.go
 
 	compacted bool // the database was compacted at least once (prune loop only)
 

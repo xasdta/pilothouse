@@ -163,6 +163,9 @@ func (c *Ntfy) Request(ctx context.Context, n core.Notification) (*http.Request,
 			case n.Session != nil:
 				link = pub + "/s/" + url.PathEscape(n.Session.ID)
 			}
+			if len(n.URL) > 1 && n.URL[0] == '/' && n.URL[1] != '/' { // the sender's deep link (a task: /t/<id>)
+				link = pub + n.URL
+			}
 			h.Set("Click", link)
 			if n.Kind == core.NotifyRequest && n.Request != nil && n.Request.Status == api.RequestOpen {
 				allow := c.Pusher.ActionURL(n.Request.ID, api.BehaviorAllow)
