@@ -77,8 +77,28 @@ pilothouse ls                    # sessions and waiting requests
 pilothouse approve r_7k2m        # or: deny r_7k2m -m "use a PR instead"
 pilothouse away                  # hold requests for my phone (here / auto)
 pilothouse explain s_3fq9        # why is this session "blocked"? show the evidence
+pilothouse activity s_3fq9 -f    # what the agent is doing: prompts, tool calls, results, files changed
+pilothouse usage --days 30       # tokens and estimated cost per day, agent, model and repo
 pilothouse log -f                # live event log
 ```
+
+### Usage and cost
+
+Pilothouse reads Claude Code and Codex transcripts (read-only, on this machine)
+to show each session's activity and token use, and estimates cost from list
+prices. Set a daily budget to get a notification at 80 % and 100 % of it:
+
+```yaml
+# ~/.pilothouse/config.yaml
+usage:
+  daily_budget_usd: 20
+  prices:                        # USD per million tokens; overrides the built-in list prices
+    claude-opus-5-5: { input: 4, output: 20, cache_read: 0.2, cache_write: 5 }
+```
+
+Estimates use public list prices; plans and discounts aren't known to
+Pilothouse. See [docs/USAGE.md](docs/USAGE.md) for what is read, how it is
+counted and where the prices come from.
 
 ### Phone
 
@@ -145,6 +165,9 @@ pilothouse task done t_8d1x --pr          # push and open a PR with gh
     agents as another user or in a container.
 - Fail-open by default: if the daemon is down, agents behave as if Pilothouse
   weren't installed. Set `approvals.fail_closed: true` to deny instead.
+- Transcripts are read only from the agents' own folders (`~/.claude/projects`,
+  `$CODEX_HOME/sessions`), with symlinks resolved, and only as regular `.jsonl`
+  files with bounded reads: a hook payload can't point Pilothouse at anything else.
 - Telemetry: none. The only network call is a daily anonymous update check,
   sending the version, OS, arch and an ID that changes every month. Turn it off
   with `update_check: false` or `PILOTHOUSE_NO_UPDATE_CHECK=1`.
