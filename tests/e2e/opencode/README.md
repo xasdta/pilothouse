@@ -10,7 +10,7 @@ R=$(mktemp -d)                                   # an empty directory you made
 E2E_ROOT=$R python3 tests/e2e/opencode/e2e.py    # the OpenCode-server scenarios
 # the TUI scenario needs pyte:
 python3 -m venv $R/venv && $R/venv/bin/pip install pyte
-E2E_ROOT=$R $R/venv/bin/python tests/e2e/opencode/e2e.py --tui s_tui
+E2E_ROOT=$R $R/venv/bin/python tests/e2e/opencode/e2e.py --tui s_tui s_wrap
 rm -rf $R
 ```
 
@@ -50,6 +50,7 @@ edited file and asks.
 | `s_reply` | `caps.reply` via plugin; a signed reply from the phone reaches the model through `promptAsync`, and the session's last message follows |
 | `s_daemon_down` | With the daemon stopped OpenCode keeps working (a call the policy would deny runs: fail open); after a restart the plugin reconnects and replies work again |
 | `s_tui` (`--tui`) | The interactive TUI, where the plugin's client is in-process (no listening server): held + allowed from the phone, then a phone reply |
+| `s_wrap` (`--tui`) | `pilothouse run -d -- opencode --prompt …`: the plugin's hooks join the wrapped session (no second session), held + allowed from the phone, `caps.reply` via plugin |
 
 Each run prints `[e2e] RESULTS {...}` and exits non-zero on any failure.
 Logs stay in `E2E_ROOT`: `daemon.log`, `serve.log`, `tui.log`, `mock.jsonl`.

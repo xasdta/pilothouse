@@ -516,8 +516,9 @@ its sessions with its first poll. The text of a reply is in the event log
 - No activity feed or usage for OpenCode sessions yet (they live in
   OpenCode's database, not in a transcript file).
 - `pilothouse run opencode` names the session OpenCode and the plugin
-  forwards `PILOTHOUSE_SESSION_ID`, so its hooks join the wrapped session;
-  this path is not covered by the e2e suite yet.
+  forwards `PILOTHOUSE_SESSION_ID`, so its hooks join the wrapped session
+  (one session, not a second observed one); replies to it go through the
+  plugin.
 - `pilothouse task new --agent opencode` does not work yet: tasks pass the
   prompt as the first argument, which OpenCode reads as a project path (it
   takes a prompt with `--prompt`).

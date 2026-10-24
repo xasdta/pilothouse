@@ -467,6 +467,35 @@ def s_tui():
             pass
 
 
+def s_wrap():
+    """`pilothouse run opencode`: the plugin's hooks join the wrapped session."""
+    presence("away")
+    env = oc_env()
+    env["PATH"] = os.path.dirname(OPENCODE) + ":" + env.get("PATH", "/usr/bin:/bin")
+    before = {s["id"] for s in sock("/v1/sessions") or []}
+    r = subprocess.run([PH, "run", "-d", "-n", "wrapped-oc", "--", "opencode", "--prompt", "RUNBASH echo wrapped-1"],
+                       env=env, cwd=PROJECT, capture_output=True, text=True, timeout=30)
+    check(r.returncode == 0, "run: " + r.stdout + r.stderr)
+    sid = r.stdout.strip().splitlines()[-1]
+    oc_pid = 0
+    try:
+        rc, out = phone("respond", PHONE_STATE, "permission", "Run: echo wrapped-1", '{"behavior":"allow"}', "90")
+        check(rc == 0, "phone: " + out)
+        wait_until(lambda: any("RESULT: wrapped-1" in (json.loads(l).get("reply") or "") for l in open(MOCK_LOG)), 30, what="tool ran wrapped")
+        s = wait_until(lambda: (lambda x: x if x and x.get("agent_session_id") and x["caps"].get("reply") else None)(sock(f"/v1/sessions/{sid}")), 30, what="wrapped session with caps.reply")
+        oc_pid = s.get("pid") or 0
+        check(s["mode"] == "wrapped" and s["agent"] == "opencode" and s["caps"].get("reply_via") == "plugin", f"session {s}")
+        extra = [x for x in sock("/v1/sessions") or [] if x["id"] not in before and x["id"] != sid and x["agent"] == "opencode"]
+        check(not extra, f"the wrapped OpenCode also showed up as another session: {extra}")
+        return f"wrapped session {sid} (OpenCode pid {oc_pid}) caps={s['caps']}"
+    finally:
+        if oc_pid:
+            try:
+                os.kill(oc_pid, signal.SIGTERM)  # the OpenCode this scenario started; the holder exits with it
+            except ProcessLookupError:
+                pass
+
+
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     tui = "--tui" in sys.argv
@@ -484,14 +513,16 @@ def main():
                 results[fn.__name__] = f"FAIL: {ex}"
             say(results[fn.__name__])
         stop("serve")
-        if tui and (not args or "s_tui" in args):
-            say("--- s_tui")
+        for fn in [s_tui, s_wrap] if tui else []:
+            if args and fn.__name__ not in args:
+                continue
+            say("---", fn.__name__)
             try:
-                results["s_tui"] = "PASS: " + s_tui()
+                results[fn.__name__] = "PASS: " + fn()
             except Exception as ex:
                 traceback.print_exc()
-                results["s_tui"] = f"FAIL: {ex}"
-            say(results["s_tui"])
+                results[fn.__name__] = f"FAIL: {ex}"
+            say(results[fn.__name__])
     finally:
         teardown()
     print("[e2e] RESULTS " + json.dumps(results, indent=1), flush=True)
