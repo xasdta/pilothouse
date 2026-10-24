@@ -42,7 +42,19 @@ $R/venv/bin/python s3_grant.py     # allow-for-session grant; deny/ask rules bea
 $R/venv/bin/python s4_wrap.py      # pilothouse run: OSC 7501, detach/attach, daemon kill/restart, exit codes
 $R/venv/bin/python s5_task.py      # task new / ls / diff / done --keep / abandon (always_hold + phone)
 $R/venv/bin/python s6_observe.py   # TUI shows held request live and answers with y; CLI approve/deny; guard
+$R/venv/bin/python s7_questions.py # questions: phone (signed v2 respond) label / own words / decline, `pilothouse answer`
+                                   #   (two questions, multi-select), desk dialog; plans: phone revise → approve
+$R/venv/bin/python s8_pretool_allow.py  # probe (no Pilothouse hooks): what Claude does with a PreToolUse allow
+                                        #   for AskUserQuestion / ExitPlanMode
 ```
+
+s7 and s8 set `plansDirectory: plans` in the work folder's project settings,
+so plan files land in `<workdir>/plans` and never in `~/.claude/plans`.
+
+A deep `E2E_ROOT` (a scratchpad, say) makes the daemon's socket path longer
+than macOS allows (104 bytes): put the run dir somewhere short with
+`E2E_RUN_DIR=$(mktemp -d /tmp/ph.XXXX)` and export the same value as
+`PILOTHOUSE_RUN_DIR` for the setup commands.
 
 Each prints `[e2e] RESULTS {...}` at the end, plus `pilothouse log`/`explain` output.
 
@@ -51,7 +63,8 @@ Each prints `[e2e] RESULTS {...}` at the end, plus `pilothouse log`/`explain` ou
 - `ptyterm.py` – PTY + `pyte` virtual screen; `wait(regex)`, `send`, `type`.
 - `common.py` – env isolation (strips the parent's `CLAUDECODE`/`CLAUDE_*` vars), `ph()`, `ph_person()`, `claude()` launcher (`--permission-mode default` so dialogs appear even if the user's default mode is auto), folder-trust handling.
 - `detach.py` – runs a command double-forked so it is not a descendant of an agent. Pilothouse refuses `approve/deny/here/away/pair/stop` from inside an agent's process tree by design; a harness running under Claude Code acts as "the person" through this.
-- `phone.mjs` – simulated paired phone (WebCrypto P-256, signed decisions, replay check).
+- `phone.mjs` – simulated paired phone (WebCrypto P-256, signed decisions, replay check;
+  `respond` signs 0.2 actions — `pilothouse-action:v2` over the exact payload — for answers and plans).
 - `tui_driver.py` – drives the inbox TUI in a PTY (run via `detach.py`).
 
 Isolation: never run these without the `PILOTHOUSE_*` variables; `claude` is
