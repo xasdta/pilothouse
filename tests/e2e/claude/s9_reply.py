@@ -1,4 +1,4 @@
-"""Scenario 7 (0.2) — replies, interrupts, the live terminal and keep-awake
+"""Scenario 9 (0.2) — replies, interrupts, the live terminal and keep-awake
 with real Claude Code (haiku):
 
   A. wrapped (`pilothouse run claude`, a terminal attached the whole time):

@@ -1,0 +1,30 @@
+ pilothouse  studio.local               ● here · auto   4 need you · 2 working · 1 waiting   ● live
+
+── Question r_q7a8b9 · claude · api · main · held for you · back to the terminal in 8m00s ──────────
+  “Two databases are configured; I need to know which one the migration is for.”
+
+  Question 1 of 2 · Database
+  Which database should the migration target?
+
+  ❯ 1 Postgres 16  What production runs today
+    2 Postgres 17  Newer; needs a staging run first
+      Other…       type your own answer (o)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 1-2 choose   ↑↓ move   enter choose   o own answer   n decline   esc back

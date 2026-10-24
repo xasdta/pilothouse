@@ -41,12 +41,13 @@ func (fakeAdapter) ParseHook(env adapters.HookEnvelope) (adapters.HookEvent, err
 }
 
 type fakeOutcome struct {
-	Behavior api.Behavior `json:"behavior"`
-	Message  string       `json:"message"`
+	Behavior api.Behavior      `json:"behavior"`
+	Message  string            `json:"message"`
+	Answers  map[string]string `json:"answers,omitempty"`
 }
 
 func (fakeAdapter) EncodeResponse(_ adapters.HookEvent, out adapters.HookOutcome) adapters.HookResponse {
-	b, _ := json.Marshal(fakeOutcome{Behavior: out.Behavior, Message: out.Message})
+	b, _ := json.Marshal(fakeOutcome{Behavior: out.Behavior, Message: out.Message, Answers: out.Answers})
 	return adapters.HookResponse{Stdout: string(b)}
 }
 

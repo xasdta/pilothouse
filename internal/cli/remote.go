@@ -428,8 +428,13 @@ func rmtTailscaleOn(ctx context.Context, w io.Writer) error {
 	if err := rmtTailscale.interactive(ctx, bin, rmtServeArgs(port)...); err != nil {
 		return fmt.Errorf("`tailscale %s` failed: %v\n(If Tailscale asked you to enable Serve for your tailnet, follow its link and run this again.)", strings.Join(rmtServeArgs(port), " "), err)
 	}
-	cfg.Web.PublicURL = "https://" + host
-	if err := cfg.Save(); err != nil {
+	// `tailscale serve` may have waited on the person: re-read and change
+	// only public_url, keeping whatever was saved meanwhile (the daemon
+	// pairing a Telegram chat, another command).
+	if cfg, err = config.Update(nil, func(c *config.Config) error {
+		c.Web.PublicURL = "https://" + host
+		return nil
+	}); err != nil {
 		return fmt.Errorf("tailscale serve is running but saving web.public_url failed: %w", err)
 	}
 	fmt.Fprintf(w, "\n✓ The web app is on your tailnet at %s\n", cfg.Web.PublicURL)
@@ -439,8 +444,7 @@ func rmtTailscaleOn(ctx context.Context, w io.Writer) error {
 }
 
 func rmtTailscaleOff(ctx context.Context, w io.Writer) error {
-	cfg, err := config.Load()
-	if err != nil {
+	if _, err := config.Load(); err != nil {
 		return err
 	}
 	if bin, err := rmtTailscale.binary(); err == nil {
@@ -448,9 +452,11 @@ func rmtTailscaleOff(ctx context.Context, w io.Writer) error {
 			fmt.Fprintf(w, "! `tailscale %s` failed (%v); check `tailscale serve status`.\n", strings.Join(rmtServeOffArgs(), " "), err)
 		}
 	}
-	had := cfg.Web.PublicURL
-	cfg.Web.PublicURL = ""
-	if err := cfg.Save(); err != nil {
+	had := ""
+	if _, err := config.Update(nil, func(c *config.Config) error {
+		had, c.Web.PublicURL = c.Web.PublicURL, ""
+		return nil
+	}); err != nil {
 		return err
 	}
 	if had != "" {

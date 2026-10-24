@@ -192,6 +192,11 @@ func (d *Daemon) applyHookEffects(ctx context.Context, tx *store.Tx, s api.Sessi
 			_, err := tx.Emit(ctx, api.EventRequestClosed, s.ID, plan.req.ID, plan.req)
 			return adapters.HookOutcome{}, err
 		}
+		if asksRequest(plan.req) {
+			if err := h.supersede(ctx, tx, plan.req); err != nil {
+				return adapters.HookOutcome{}, err
+			}
+		}
 		if err := tx.InsertRequest(ctx, plan.req, plan.toolUseID); err != nil {
 			return adapters.HookOutcome{}, err
 		}
@@ -261,10 +266,15 @@ func (h *hookCall) answerAllLocally(ctx context.Context, tx *store.Tx, sessionID
 // deny rule always wins over "allow for this session". When a rule or grant
 // decided, a policy.decision event (policy.DecisionEvent, which `policy
 // replay` pairs with the hook by tool_use_id) records it.
+//
+// A tool that asks the person something (a question, a plan) is decided
+// by deny rules only: an allow would not answer it — or would approve a
+// plan nobody read — and an ask adds nothing, since it reaches the person
+// anyway. The permission checkpoint asks them.
 func (d *Daemon) decidePreTool(ctx context.Context, tx *store.Tx, s api.Session, ev adapters.HookEvent, pol policy.Result) (adapters.HookOutcome, error) {
 	de := policy.DecisionEvent{ToolUseID: ev.ToolUseID, Tool: ev.Tool, Summary: ev.Summary, Result: pol}
 	out, decided := policyVerdict(ev, pol)
-	if !decided {
+	if !decided && !asksEvent(ev) {
 		grants, err := tx.Grants(ctx, s.ID)
 		if err != nil {
 			return out, err
@@ -296,6 +306,9 @@ func policyVerdict(ev adapters.HookEvent, pol policy.Result) (adapters.HookOutco
 		return adapters.HookOutcome{Behavior: api.BehaviorDeny, Rule: pol.Rule,
 			Message: firstNonEmpty(pol.Message, "Blocked by Pilothouse policy rule "+pol.Rule+".")}, true
 	case api.BehaviorAsk:
+		if asksEvent(ev) {
+			return adapters.HookOutcome{}, false // the question itself reaches the person
+		}
 		return adapters.HookOutcome{Behavior: api.BehaviorAsk, Rule: pol.Rule, Message: pol.Message}, true
 	}
 	return adapters.HookOutcome{}, false
@@ -307,9 +320,11 @@ func policyVerdict(ev adapters.HookEvent, pol policy.Result) (adapters.HookOutco
 // the permission checkpoint is the only place a grant can take effect.
 // Policy "allow" is deliberately not applied here: a call that reached the
 // permission checkpoint after an "ask" (which Codex can't express at
-// pre_tool) must still reach a person.
+// pre_tool) must still reach a person. Questions and plans are never
+// granted: only the person can answer them (a grant for ExitPlanMode left
+// over from 0.1 would otherwise approve every plan unseen).
 func (d *Daemon) grantPermission(ctx context.Context, tx *store.Tx, p *permissionPlan) error {
-	if p.pol.Action == api.BehaviorDeny || p.pol.Action == api.BehaviorAsk {
+	if p.pol.Action == api.BehaviorDeny || p.pol.Action == api.BehaviorAsk || asksRequest(p.req) {
 		return nil
 	}
 	grants, err := tx.Grants(ctx, p.req.SessionID)
@@ -330,7 +345,8 @@ func (d *Daemon) grantPermission(ctx context.Context, tx *store.Tx, p *permissio
 
 // planPermission builds the request for a permission hook and picks its
 // route: devices when the person is away (or always_hold), else the
-// terminal's own dialog.
+// terminal's own dialog. A question or plan tool opens a question or plan
+// request (questions.go), routed the same way.
 func (d *Daemon) planPermission(h *hookCall, pol policy.Result) *permissionPlan {
 	now := d.now()
 	hold := d.cfg.Approvals.HoldLimit.Duration
@@ -349,6 +365,7 @@ func (d *Daemon) planPermission(h *hookCall, pol policy.Result) *permissionPlan 
 	if pol.Action != "" {
 		p.req.PolicyRule = pol.Rule
 	}
+	shapeAsk(&p.req, ev)
 	d.enrichRequest(&p.req, h)
 	away := d.Presence().State == api.PresenceAway
 	if hold > 0 && (d.cfg.Approvals.AlwaysHold || away) {
@@ -390,7 +407,7 @@ func (d *Daemon) holdPermission(ctx context.Context, p *permissionPlan, sess api
 	switch final.Status {
 	case api.RequestDecided:
 		if dec := final.Decision; dec != nil {
-			return adapters.HookOutcome{Behavior: dec.Behavior, Message: decisionMessage(dec)}
+			return adapters.HookOutcome{Behavior: dec.Behavior, Message: askOutcomeMessage(final, dec), Answers: dec.Answers}
 		}
 	case api.RequestExpired:
 		// The person is still away: tell their devices to use the terminal.

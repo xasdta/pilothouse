@@ -140,6 +140,18 @@ func (d *Daemon) Decide(ctx context.Context, dec api.Decision) (api.Request, err
 	var out api.Request
 	err = d.db.Write(ctx, func(tx *store.Tx) error {
 		dec.At = tx.Now()
+		// What a valid answer is depends on what the request asks
+		// (questions.go). A closed request reports already-closed below,
+		// whatever the answer: the first one won.
+		cur, err := tx.Request(ctx, id)
+		if err != nil {
+			return err
+		}
+		if cur.Status == api.RequestOpen || cur.Status == api.RequestSteppedAside {
+			if err := validateDecision(cur, &dec); err != nil {
+				return err
+			}
+		}
 		req, err := tx.CloseRequest(ctx, id, api.RequestDecided, &dec, tx.Now())
 		if err != nil {
 			return err
@@ -229,14 +241,18 @@ func (d *Daemon) stateInput(ctx context.Context, r store.Reader, s api.Session, 
 	if s.ExitCode != nil {
 		in.ExitDetail = "Exited with code " + strconv.Itoa(*s.ExitCode)
 	}
-	pending, err := r.Requests(ctx, store.RequestFilter{SessionID: s.ID, Statuses: store.PendingStatuses,
-		Checkpoint: api.CheckpointPermission, Limit: 1})
+	pending, err := r.Requests(ctx, store.RequestFilter{SessionID: s.ID, Statuses: store.PendingStatuses, Limit: 1})
 	if err != nil {
 		return state.Input{}, nil, err
 	}
 	if len(pending) > 0 {
 		in.PendingPermission = true
-		in.PermissionDetail = "Waiting for permission: " + pending[0].Summary
+		if p := pending[0]; asksRequest(p) {
+			// "Asks: Which database?" / "Plan ready: …" already say it.
+			in.PendingKind, in.PermissionDetail = api.BlockQuestion, p.Summary
+		} else {
+			in.PermissionDetail = "Waiting for permission: " + p.Summary
+		}
 	}
 	return in, evs, nil
 }

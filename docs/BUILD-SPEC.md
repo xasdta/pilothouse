@@ -111,6 +111,7 @@ POST /v1/hook(env):
   switch ev.Kind:
   pre_tool:   self-protection/policy/grants → outcome (deny > ask > grant-allow > policy-allow > none)
               emit policy.decision when a rule or grant matched
+              (0.2) a question/plan tool (ev.Questions/ev.Plan) is decided by deny only: no ask, grant or allow
   permission: req := open Request{checkpoint: permission}
               holdMax := min(config hold_limit, ad.MaxHold(permission) - 15s)
               route := devices if always_hold or presence == away, else terminal
@@ -120,6 +121,14 @@ POST /v1/hook(env):
                         decision → encode allow/deny (+ Grant if scope=session)
                         presence→present → status=stepped_aside, no-opinion (person is back: use the terminal)
                         timeout/ctx → status=expired, no-opinion, notify "answer in the terminal"
+              (0.2) ev.Questions → checkpoint question (Summary "Asks: <first question>"), ev.Plan →
+                    checkpoint plan ("Plan ready: <first heading or line>"); same routing and hold; never
+                    answered by a grant; a new one supersedes the session's older pending one for the same
+                    tool (answered_locally). The held hook returns the decision's Answers.
+                    Decide validates: question → allow with one answer per Question.Key() (option label,
+                    labels joined ", " for multi-select, free text when allow_other) or deny; plan → allow or
+                    deny(+message as feedback); neither takes scope=session; permission takes no answers.
+                    Failures are core.Invalid with a sentence for the person.
   post_tool:  stepped_aside request with same tool_use_id (else same tool+summary, newest) → answered_locally
   prompt_submit / stop / session_end: remaining stepped_aside requests of the session → answered_locally
   notification: evidence only (permission_prompt → blocked/permission, idle_prompt → waiting, elicitation → blocked/question, auth → blocked/auth)

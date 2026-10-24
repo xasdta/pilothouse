@@ -18,8 +18,11 @@ One inbox for Claude Code and Codex. Your rules run before every tool call,<br>a
 
 ```sh
 curl -fsSL https://pilothouse.dev/install.sh | sh     # or: brew install xasdta/tap/pilothouse
-pilothouse setup
+pilothouse demo      # optional: try the phone app with pretend agents (touches nothing)
+pilothouse setup     # hooks (shows the diff first), daemon, phone, test notification
 ```
+
+See [Getting started](docs/GETTING-STARTED.md) for what setup and the demo do.
 
 <p align="center"><img src="docs/assets/demo.gif" width="900" alt="Pilothouse demo: a rule blocks a force-push, then the inbox holds a git push to main while you're away and you approve it with y"></p>
 
@@ -44,6 +47,11 @@ and one of them force-pushes. Pilothouse fixes both:
     other one closes.
   - **When you come back:** any request still held is handed back to your
     terminal.
+- **Questions and plans, too.** When Claude Code asks you something
+  (`AskUserQuestion`) or wants a plan approved (`ExitPlanMode`), the question
+  is held and pushed like a permission: pick an option or type your own
+  answer, approve the plan or tell Claude what to change, from your phone,
+  the inbox or the CLI. Claude carries on with your answer.
 - **Yours.** A single open-source Go binary. No account, no cloud, no
   telemetry, no inbound ports. Your phone reaches your machine over your own
   Tailscale network.
@@ -54,17 +62,20 @@ and one of them force-pushes. Pilothouse fixes both:
  Claude Code / Codex ──hook──▶ pilothouse daemon ──▶ policy (allow / ask / deny)
                                      │
                      needs a person? ├─ at desk ─▶ the agent's own prompt
-                                     └─ away ────▶ phone (Web Push / ntfy) ─▶ signed Allow / Deny
+                                     └─ away ────▶ phone (Web Push / ntfy / Telegram) ─▶ Allow / Deny
 ```
 
 1. `pilothouse setup` installs hooks into Claude Code (`~/.claude/settings.json`)
-   and Codex (`~/.codex/hooks.json`). It merges them with your existing hooks
-   and writes a backup first. It then starts a small per-user daemon (launchd or
-   systemd).
+   and Codex (`~/.codex/hooks.json`). It shows the exact diff, merges with your
+   existing hooks and writes a backup first. It then starts a small per-user
+   daemon (launchd or systemd) and helps your phone reach you.
 2. Every hook call goes to the daemon over a Unix socket. Policy checks take
    microseconds, and the whole round trip is about 1 ms.
 3. Permission requests are routed by presence (OS idle time, or `pilothouse
-   here` / `away` / `auto`).
+   here` / `away` / `auto`). Questions and plans arrive at the same hook and
+   are routed the same way; the answer goes back to the agent in its own
+   format (for Claude Code, the answers or the approved plan; a plan you send
+   back with feedback is revised).
 4. Your phone runs a small web app served by your own machine. Pair it with a
    QR code. Each device keeps a non-extractable signing key, and every remote
    approval is signed.
@@ -72,24 +83,68 @@ and one of them force-pushes. Pilothouse fixes both:
 ## Everyday use
 
 ```sh
-pilothouse                       # inbox (TUI): y allow · a allow for session · n deny · enter attach
-pilothouse ls                    # sessions and waiting requests
+pilothouse                       # inbox (TUI): y allow · a allow for session · n deny · enter answer/attach · r reply
+pilothouse ls                    # sessions and waiting requests (questions and plans too)
 pilothouse approve r_7k2m        # or: deny r_7k2m -m "use a PR instead"
+pilothouse answer r_9q4p 2 "Lint, Tests"   # answer a question: option number, label, or your own words
+pilothouse deny r_3p1n -m "use PKCE"       # send a plan back with what to change (approve accepts it)
 pilothouse away                  # hold requests for my phone (here / auto)
 pilothouse explain s_3fq9        # why is this session "blocked"? show the evidence
+pilothouse activity s_3fq9 -f    # what the agent is doing: prompts, tool calls, results, files changed
+pilothouse usage --days 30       # tokens and estimated cost per day, agent, model and repo
 pilothouse log -f                # live event log
 ```
+
+### Usage and cost
+
+Pilothouse reads Claude Code and Codex transcripts (read-only, on this machine)
+to show each session's activity and token use, and estimates cost from list
+prices. Set a daily budget to get a notification at 80 % and 100 % of it:
+
+```yaml
+# ~/.pilothouse/config.yaml
+usage:
+  daily_budget_usd: 20
+  prices:                        # USD per million tokens; overrides the built-in list prices
+    claude-opus-5-5: { input: 4, output: 20, cache_read: 0.2, cache_write: 5 }
+```
+
+Estimates use public list prices; plans and discounts aren't known to
+Pilothouse. See [docs/USAGE.md](docs/USAGE.md) for what is read, how it is
+counted and where the prices come from.
 
 ### Phone
 
 ```sh
 pilothouse remote tailscale      # HTTPS on your tailnet via Tailscale Serve (nothing public)
 pilothouse pair                  # scan the QR code with your phone, add it to the home screen
+pilothouse notify telegram       # answer from Telegram: buttons, replies; no Tailscale needed
+pilothouse notify ntfy           # or the ntfy app (Allow / Deny buttons with remote access)
+pilothouse notify test           # check what reaches you
 ```
 
-Notifications go out over Web Push. You can also use [ntfy](https://ntfy.sh),
-whose notifications have Allow and Deny buttons, Slack or Discord webhooks, or
-desktop notifications.
+Notifications go out over Web Push from the paired web app, the
+[ntfy](https://ntfy.sh) app, a Telegram bot you create, Slack or Discord
+webhooks, or desktop notifications. They say what is asked (the command, the
+question and its options, the plan), with risk labels and the agent's last
+words when Pilothouse has them. When a request is answered anywhere, the
+phone's notification is replaced ("✓ Allowed from iPhone") instead of
+lingering with stale buttons. In Telegram, requests arrive with buttons
+(Allow / Allow for session / Deny, question options, plan Approve / Request
+changes), and replying to a "finished" message sends that agent a follow-up.
+See [docs/NOTIFICATIONS.md](docs/NOTIFICATIONS.md).
+
+Open a session in the app to see what the agent is doing: its activity turn by
+turn (prompts, tool calls with their output, subagents, errors), the files it
+changed, its tokens and estimated cost, and a *Catch me up* summary of what
+happened since you last looked. Where the agent supports it you can reply,
+interrupt, or open its live terminal (sessions started with `pilothouse run`),
+with a key row for Esc, Ctrl-C, arrows, Enter, y and n. *Tasks* starts an agent
+on a prompt in its own worktree; you review the diff and ship it as a pull
+request or discard it. *Insights* shows usage and cost over 7, 30 or 90 days,
+what your rules allowed, asked and blocked, and today's budget. Replies,
+terminal typing (one signature unlocks it for 10 minutes), and starting or
+finishing tasks are signed by the device like approvals.
 
 ### Rules
 
@@ -149,6 +204,11 @@ pilothouse task done t_8d1x --pr          # push and open a PR with gh
   web app. Remote access goes through Tailscale Serve only.
 - Remote decisions must carry an ECDSA P-256 signature from a paired device,
   with a timestamp and a single-use nonce.
+- Telegram answers only the one private chat that opened the one-time pairing
+  link; every other chat is ignored. Its buttons carry single-use tokens bound
+  to the chat, message, request and action. The bot token stays in
+  `~/.pilothouse/keys/telegram.json` (0600), never in config, logs or events.
+  `notify.telegram.decisions: false` makes it notify-only.
 - **Agents can't approve themselves.**
   - Local decisions are refused when the caller descends from an agent process.
   - A built-in rule forces a person to confirm any agent command that runs
@@ -163,16 +223,23 @@ pilothouse task done t_8d1x --pr          # push and open a PR with gh
   table, never in events, logs or the API.
 - Fail-open by default: if the daemon is down, agents behave as if Pilothouse
   weren't installed. Set `approvals.fail_closed: true` to deny instead.
-- Telemetry: none. The only network call is a daily anonymous update check,
-  sending the version, OS, arch and an ID that changes every month. Turn it off
-  with `update_check: false` or `PILOTHOUSE_NO_UPDATE_CHECK=1`.
+- Transcripts are read only from the agents' own folders (`~/.claude/projects`,
+  `$CODEX_HOME/sessions`), with symlinks resolved, and only as regular `.jsonl`
+  files with bounded reads: a hook payload can't point Pilothouse at anything else.
+- Telemetry: none. Apart from the notification services you configure (Web
+  Push, ntfy, Telegram, webhooks), the only network call is a daily anonymous
+  update check, sending the version, OS, arch and an ID that changes every
+  month. Turn it off with `update_check: false` or
+  `PILOTHOUSE_NO_UPDATE_CHECK=1`.
 
 ## Status
 
 v0.1 supports **Claude Code** (rules, remote approvals and state) and **Codex**
 (remote approvals, deny rules and state; Codex's pre-tool hook can't allow or
-ask). See [docs/AGENTS.md](docs/AGENTS.md) for what each agent supports and
-why. It runs on **macOS and Linux** (amd64 and arm64).
+ask). 0.2 adds Claude Code questions and plan approval from anywhere; Codex's
+`request_user_input` questions show in the inbox but are answered in its
+terminal (no hook can answer them). See [docs/AGENTS.md](docs/AGENTS.md) for
+what each agent supports and why. It runs on **macOS and Linux** (amd64 and arm64).
 
 Roadmap: an end-to-end-encrypted relay for people without Tailscale, more agents
 (OpenCode, Copilot, Gemini), team policies, and Windows.

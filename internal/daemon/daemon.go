@@ -103,6 +103,7 @@ type Daemon struct {
 	waiters  *waiters
 	git      *gitCache
 	notifier core.Notifier
+	tg       *telegramManager // telegram.go
 	web      *web.Server
 	webURL   string
 	policy   atomic.Pointer[policyHolder]
@@ -227,6 +228,8 @@ func (d *Daemon) run(parent context.Context) (err error) {
 	}
 	d.initPolicy()
 	d.initWeb()
+	d.watchClosedRequests() // withdraw.go
+	d.startTelegram()       // telegram.go
 
 	unixSrv, unixLn, err := d.listenUnix()
 	if err != nil {
@@ -334,13 +337,16 @@ func (d *Daemon) initWeb() {
 	} else {
 		d.web = ws
 	}
+	d.tg = newTelegramManager(d)
 	d.notifier = d.opts.Notifier
 	if d.notifier == nil {
 		var p notify.Pusher
 		if d.web != nil {
 			p = d.web
 		}
-		d.notifier = notify.New(d.cfg, p, d.log) // notify adds component=notify itself
+		// notify adds component=notify itself; Telegram lives in its own
+		// package, so the daemon adds its channel.
+		d.notifier = notify.New(d.cfg, p, d.log, telegramChannel{d.tg})
 	}
 }
 

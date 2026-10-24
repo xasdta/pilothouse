@@ -80,6 +80,8 @@ func describeTool(ev *adapters.HookEvent) {
 		ev.ToolKind = api.ToolEdit
 		ev.Paths = hookkit.PatchPaths(field("command"), ev.Cwd)
 		ev.Summary = editSummary(ev.Paths, ev.Cwd)
+	case toolRequestUserInput:
+		describeUserInput(ev)
 	case "request_permissions":
 		ev.ToolKind = api.ToolOther
 		ev.Summary = "Request permissions"
