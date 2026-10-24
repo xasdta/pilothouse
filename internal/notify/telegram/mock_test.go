@@ -84,7 +84,9 @@ func reply(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-func ok(w http.ResponseWriter, result any) { reply(w, 200, map[string]any{"ok": true, "result": result}) }
+func ok(w http.ResponseWriter, result any) {
+	reply(w, 200, map[string]any{"ok": true, "result": result})
+}
 
 func (m *mockAPI) serve(w http.ResponseWriter, r *http.Request) {
 	tok, method, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/bot"), "/")

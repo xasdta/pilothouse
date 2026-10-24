@@ -241,7 +241,9 @@ const (
 )
 
 // spend uses a token pressed in (chat, messageID): it must exist for that
-// chat and message, be unused and unexpired. Pressing any button of a
+// chat and message, be unused and unexpired. A token not yet bound to its
+// message (pressed the instant the message appeared, while the sender was
+// still recording it) is accepted for its chat. Pressing any button of a
 // keyboard spends all of them, so a stale keyboard can never act twice;
 // the bot sends a fresh keyboard when the request is still open.
 func (d *db) spend(ctx context.Context, data string, chat, messageID int64) (requestID, action string, res tokenResult, err error) {
@@ -264,7 +266,7 @@ func (d *db) spend(ctx context.Context, data string, chat, messageID int64) (req
 		return "", "", tokenUnknown, nil
 	case err != nil:
 		return "", "", tokenUnknown, err
-	case msg != messageID:
+	case msg != 0 && msg != messageID:
 		return "", "", tokenUnknown, nil
 	case used.Valid:
 		return requestID, action, tokenUsed, nil
@@ -272,7 +274,8 @@ func (d *db) spend(ctx context.Context, data string, chat, messageID int64) (req
 		return requestID, action, tokenExpired, nil
 	}
 	now := d.now().UnixMilli()
-	if _, err := tx.ExecContext(ctx, `UPDATE telegram_tokens SET used_at = ? WHERE chat_id = ? AND message_id = ? AND used_at IS NULL`, now, chat, messageID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE telegram_tokens SET used_at = ? WHERE chat_id = ? AND used_at IS NULL
+	AND (message_id = ? OR (message_id = 0 AND request_id = ?))`, now, chat, messageID, requestID); err != nil {
 		return "", "", tokenUnknown, err
 	}
 	if err := tx.Commit(); err != nil {

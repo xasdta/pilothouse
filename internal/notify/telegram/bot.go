@@ -77,6 +77,10 @@ type Bot struct {
 	log  *slog.Logger
 	chat atomic.Int64
 	mu   sync.Mutex // serializes edits of request messages (refresh vs. close)
+	// sendMu is held while a request message is sent and its buttons are
+	// bound to it; a press waits for it, so a button tapped the instant it
+	// appears is never refused as unknown.
+	sendMu sync.Mutex
 
 	pruned time.Time
 }
@@ -184,6 +188,8 @@ func (b *Bot) send(ctx context.Context, m SendMessage) (Message, error) {
 }
 
 func (b *Bot) sendRequest(ctx context.Context, chat int64, n core.Notification) error {
+	b.sendMu.Lock()
+	defer b.sendMu.Unlock()
 	r := *n.Request
 	st := answerState{Answers: map[string]string{}}
 	text := fitRequest(n, st, b.o.Now())
@@ -196,11 +202,13 @@ func (b *Bot) sendRequest(ctx context.Context, chat int64, n core.Notification) 
 		b.db.discard(context.WithoutCancel(ctx), data)
 		return err
 	}
-	if err := b.db.bind(ctx, data, chat, m.MessageID); err != nil {
+	// The message exists now: record it even if the caller's deadline just
+	// passed, or its buttons would never work.
+	ctx = context.WithoutCancel(ctx)
+	if err := b.db.saveMessage(ctx, msgRow{ChatID: chat, MessageID: m.MessageID, Kind: kindRequest, RequestID: r.ID, SessionID: r.SessionID, Text: text, State: st.String()}); err != nil {
 		return err
 	}
-	sid := r.SessionID
-	return b.db.saveMessage(ctx, msgRow{ChatID: chat, MessageID: m.MessageID, Kind: kindRequest, RequestID: r.ID, SessionID: sid, Text: text, State: st.String()})
+	return b.db.bind(ctx, data, chat, m.MessageID)
 }
 
 // keyboard mints tokens for a request's buttons. It returns nil (no
@@ -395,7 +403,9 @@ func (b *Bot) maybePair(ctx context.Context, m *Message) {
 	}
 	b.chat.Store(m.Chat.ID)
 	b.log.Info("telegram: paired", "chat", m.Chat.ID)
-	b.reply(ctx, m, "✅ <b>Connected to "+esc(b.o.Machine)+".</b>\nWhen you're away, requests that need you show up here"+
+	// Pairing changes the settings, so the daemon restarts the bot right
+	// away: the welcome must not die with this poller's context.
+	b.reply(context.WithoutCancel(ctx), m, "✅ <b>Connected to "+esc(b.o.Machine)+".</b>\nWhen you're away, requests that need you show up here"+
 		b.decisionsNote()+".\nSend /status to see what's waiting.")
 }
 
@@ -628,6 +638,8 @@ func (b *Bot) onCallback(ctx context.Context, q *CallbackQuery) {
 		b.answer(ctx, q, "Answering from Telegram is turned off.", false)
 		return
 	}
+	b.sendMu.Lock() // wait for a message still being recorded (see sendMu)
+	b.sendMu.Unlock()
 	reqID, action, res, err := b.db.spend(ctx, q.Data, chat, msgID)
 	if err != nil {
 		b.log.Error("telegram: spend token", "err", err)
