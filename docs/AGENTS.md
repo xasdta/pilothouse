@@ -21,6 +21,7 @@ This page records what each agent really supports, with sources, as of
 | Policy / grant `allow` (skip the prompt) | Yes (`permissionDecision: "allow"`; the agent's own deny/ask rules still win) | **No** at `PreToolUse` (Codex rejects `allow` without `updatedInput`); see Caveats |
 | Remote approvals (phone answers the prompt) | Yes (`PermissionRequest` → `decision.behavior` allow/deny), held up to 600 s | Yes (`PermissionRequest` → `decision.behavior` allow/deny), held up to 600 s |
 | Resume a session | `claude --resume <session_id>` | `codex resume <session_id>` |
+| Replies (follow-up prompt from the phone/CLI) | Wrapped: typed into the terminal (interrupt with Esc). Started on its own: Claude's session messaging socket (2.1.224+; no interrupt) | Wrapped only (`pilothouse run codex`): hooks can't inject a prompt |
 | OSC 7501 status (wrap mode, L1) | Emits it (v2.1.295+) when it detects terminal support | Emits it whenever stdout is a terminal |
 
 "Remote approvals" means: when the person is away, the hook holds the agent's
@@ -130,6 +131,21 @@ Everything exits 0; decisions are JSON on stdout.
   Pilothouse does not police in v0.1.
 - Settings edits are normally picked up by running sessions; restart a session
   if the hooks do not appear.
+
+### Messaging socket (replies to sessions not started with `pilothouse run`)
+
+Verified end to end with 2.1.310 (`tests/e2e/claude/s7_reply.py`). Hooks run
+with `CLAUDE_CODE_MESSAGING_SOCKET` (`/tmp/cc-socks/<pid>.sock`, mode 0600 in
+a 0700 directory) and `CLAUDE_CODE_MESSAGING_TOKEN`. Writing the NDJSON lines
+`{"type":"auth","token":…}` and `{"type":"user","message":{"role":"user","content":…}}`
+starts a turn at once in an idle session (UserPromptSubmit fires with the
+content as the prompt). The socket answers nothing. Claude shows the model the
+text under "Another Claude session sent a message: … not typed by your user",
+with the rule that a peer can't grant permissions or approve prompts; tool calls
+still go through the session's permission settings and hooks. 2.1.310 also
+accepted a missing or wrong token, so the socket's file mode is what keeps other
+users out. Claude's setting `crossSessionInbound: refuse` turns the socket off (not tested here).
+Details of Pilothouse's framing: [REPLIES.md](REPLIES.md).
 
 ## Codex CLI
 

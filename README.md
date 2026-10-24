@@ -118,6 +118,20 @@ current rules would have done to last week's tool calls. A repo can ship its own
 `.pilothouse/policy.yaml`. Until you `pilothouse policy trust` that repo, its
 rules can only make things stricter. See [docs/POLICY.md](docs/POLICY.md).
 
+### Replies and the live terminal
+
+```sh
+pilothouse reply s_3fq9 "also add a test for the empty cart"
+pilothouse reply s_3fq9 --interrupt "stop, use the staging database"
+```
+
+Sessions started with `pilothouse run` get replies typed into their terminal
+(and can be interrupted); Claude Code sessions you started yourself get them
+through Claude's own messaging socket. On the phone, wrapped sessions also have
+a live terminal you can watch and type into, without disturbing the terminal
+at your desk. While agents work, Pilothouse keeps the computer from idle
+sleep (`keep_awake: off` to turn that off). See [docs/REPLIES.md](docs/REPLIES.md).
+
 ### Wrap mode and tasks
 
 ```sh
@@ -143,6 +157,10 @@ pilothouse task done t_8d1x --pr          # push and open a PR with gh
     sees. A process that double-forks away from the agent escapes the ancestry
     check, and an obfuscated command can escape the rule. For hard isolation, run
     agents as another user or in a container.
+- Replies from devices are signed like decisions. Typing into a live terminal
+  uses a 10-minute token minted by one signed action and bound to that
+  session and device. Claude's messaging-socket token is kept in a private
+  table, never in events, logs or the API.
 - Fail-open by default: if the daemon is down, agents behave as if Pilothouse
   weren't installed. Set `approvals.fail_closed: true` to deny instead.
 - Telemetry: none. The only network call is a daily anonymous update check,
