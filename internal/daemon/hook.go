@@ -348,6 +348,7 @@ func (d *Daemon) planPermission(h *hookCall, pol policy.Result) *permissionPlan 
 	if pol.Action != "" {
 		p.req.PolicyRule = pol.Rule
 	}
+	d.enrichRequest(&p.req, h)
 	away := d.Presence().State == api.PresenceAway
 	if hold > 0 && (d.cfg.Approvals.AlwaysHold || away) {
 		if ch, ok := d.waiters.add(p.req.ID); ok {

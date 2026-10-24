@@ -254,6 +254,7 @@ func (d *Daemon) saveSession(ctx context.Context, tx *store.Tx, before *api.Sess
 		s.Unseen = true
 	}
 	s.State, s.BlockKind, s.StateLayer, s.StateDetail = res.State, res.Kind, res.Layer, res.Detail
+	s.Caps = d.capsFor(ctx, tx.Reader, s)
 	if before != nil && sameSession(*before, s) {
 		return s, nil
 	}

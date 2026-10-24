@@ -31,7 +31,18 @@ type HookEnvelope struct {
 	Cwd                 string            `json:"cwd"`
 	TTY                 string            `json:"tty,omitempty"`
 	Env                 map[string]string `json:"env,omitempty"` // allow-listed: TERM_PROGRAM, TMUX, PILOTHOUSE_TASK_ID, ...
-	ReceivedAt          time.Time         `json:"received_at"`
+	// Messaging is where a person's follow-up prompt can be delivered to
+	// this session (Claude Code's CLAUDE_CODE_MESSAGING_SOCKET and _TOKEN).
+	// The daemon keeps it in session_secrets only: never in events,
+	// evidence, explain output, logs or the API.
+	Messaging  *MessagingEndpoint `json:"messaging,omitempty"`
+	ReceivedAt time.Time          `json:"received_at"`
+}
+
+// MessagingEndpoint is an agent's own channel for messages into a session.
+type MessagingEndpoint struct {
+	Socket string `json:"socket"`
+	Token  string `json:"token"`
 }
 
 // HookKind is a vendor-neutral hook event.
@@ -68,6 +79,11 @@ type HookEvent struct {
 	NotificationType string          `json:"notification_type,omitempty"`
 	Summary          string          `json:"summary,omitempty"` // "Run: git push origin main"
 	PermissionMode   string          `json:"permission_mode,omitempty"`
+	// Questions and Plan are set when the tool asks a person something
+	// (Claude AskUserQuestion / ExitPlanMode, OpenCode question): the
+	// permission checkpoint then raises a question or plan request.
+	Questions []api.Question `json:"questions,omitempty"`
+	Plan      *api.Plan      `json:"plan,omitempty"`
 }
 
 // HookOutcome is what the daemon decided for one hook call.
@@ -81,6 +97,9 @@ type HookOutcome struct {
 	// fallback: Codex turns a pre_tool "ask" into a deny, worded
 	// differently for the built-in self-protection rule.
 	Rule string
+	// Answers answers a question request (Question.Key() → answer); the
+	// adapter turns them into the agent's own answer format.
+	Answers map[string]string
 }
 
 // HookResponse is how the shim answers the agent: print Stdout, print

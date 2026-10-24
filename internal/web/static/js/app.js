@@ -6,7 +6,12 @@ import { mountShell, chrome, refreshChrome, setNavigator, toast } from './ui.js'
 import { syncPush } from './push.js';
 import { inboxView } from './views/inbox.js';
 import { sessionsView } from './views/sessions.js';
-import { sessionView, requestView } from './views/session.js';
+import { sessionView } from './views/session.js';
+import { requestView } from './views/request.js';
+import { terminalView } from './views/terminal.js';
+import { tasksView, taskView, newTaskView } from './views/tasks.js';
+import { insightsView } from './views/insights.js';
+import { rulesView } from './views/rules.js';
 import { settingsView } from './views/settings.js';
 import { pairView } from './views/pair.js';
 
@@ -20,6 +25,12 @@ const routes = [
   [/^\/settings$/, () => settingsView(), { tab: '/settings' }],
   [/^\/s\/([\w-]+)$/, (m) => sessionView(m[1]), { back: 'Back', tab: null }],
   [/^\/r\/([\w-]+)$/, (m) => requestView(m[1]), { back: 'Back', tab: null }],
+  [/^\/s\/([\w-]+)\/terminal$/, (m) => terminalView(m[1]), { back: 'Back', tab: null }],
+  [/^\/tasks$/, () => tasksView(), { tab: '/tasks' }],
+  [/^\/new$/, () => newTaskView(), { back: 'Back', tab: null }],
+  [/^\/t\/([\w-]+)$/, (m) => taskView(m[1]), { back: 'Back', tab: null }],
+  [/^\/insights$/, () => insightsView(), { tab: '/insights' }],
+  [/^\/rules$/, () => rulesView(), { tab: '/rules' }],
 ];
 
 function render(path) {

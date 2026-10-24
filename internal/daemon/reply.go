@@ -5,6 +5,7 @@ import (
 
 	"github.com/xasdta/pilothouse/internal/api"
 	"github.com/xasdta/pilothouse/internal/core"
+	"github.com/xasdta/pilothouse/internal/store"
 )
 
 // Replies and the live terminal (F2, F3; workstream B).
@@ -33,3 +34,7 @@ func (d *Daemon) TerminalInput(ctx context.Context, sessionID string, data []byt
 func (d *Daemon) ResizeTerminal(ctx context.Context, sessionID string, cols, rows uint16) error {
 	return core.ErrUnsupported
 }
+
+// replyCaps sets Reply/ReplyVia/Interrupt/Watch for wrapped sessions and
+// for observed sessions with a messaging endpoint.
+func (d *Daemon) replyCaps(ctx context.Context, r store.Reader, s api.Session, c *api.SessionCaps) {}
