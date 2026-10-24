@@ -212,6 +212,14 @@ if (reg) {
   n = await notes();
   const done = n.filter((x) => x.tag === 'req-r_x1');
   check('push: resolved replaces it — same tag, “Answered ✓”, no buttons', done.length === 1 && done[0].body.startsWith('Answered ✓') && done[0].body.includes('at the computer') && done[0].actions.length === 0 && done[0].title.includes('git push'), JSON.stringify(done));
+  // The daemon's own wording (internal/web/push.go resolvedPayload) wins.
+  await push({ type: 'request', kind: 'request', title: 'infra wants to edit', body: 'Edit terraform/prod/main.tf', tag: 'req-r_x5', request_id: 'r_x5', request: { id: 'r_x5', checkpoint: 'permission', summary: 'Edit' }, actions: true });
+  await sleep(600);
+  await push({ type: 'resolved', kind: 'resolved', title: '✓ Allowed', body: 'Edit terraform/prod/main.tf — from iPhone', tag: 'req-r_x5', url: '/r/r_x5', request_id: 'r_x5', status: 'decided', by: 'from iPhone' });
+  await sleep(600);
+  n = await notes();
+  const f5 = n.filter((x) => x.tag === 'req-r_x5');
+  check('push: the daemon’s resolved text is shown as written', f5.length === 1 && f5[0].title === '✓ Allowed' && f5[0].body.endsWith('from iPhone') && f5[0].actions.length === 0, JSON.stringify(f5));
   // 0.1 servers tag with the bare id and nest nothing.
   await push({ kind: 'request', title: 'old', body: 'x', tag: 'r_x3', request_id: 'r_x3', actions: true });
   await sleep(600);

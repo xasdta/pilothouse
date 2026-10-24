@@ -30,6 +30,7 @@ import { h, icon, agentBadge, agentClass, agentName, repoName, ago, left, toMs, 
 import { store, api, changed, signed } from './api.js';
 import { toast, openSheet, go, link, skeleton } from './ui.js';
 import { diffView } from './diff.js';
+import { closeRequestNotifications } from './push.js';
 import { renderMarkdown, markdownTitle } from './markdown.js';
 
 const cards = new Map(); // `${slot}|${id}` → controller
@@ -306,6 +307,7 @@ function build(req, opts) {
     if (res.ok) {
       store.requests.set(res.data.id, res.data);
       changed();
+      closeRequestNotifications(id);
       if (opts.keep) settling.delete(id); else settle(900);
       return true;
     }
@@ -712,6 +714,7 @@ function suggestionRow(s, req, alsoBox, sheet) {
       if (res.ok) {
         store.requests.set(res.data.id, res.data);
         changed();
+        closeRequestNotifications(req.id);
         answered = act === 'allow' ? ' and allowed this one' : ' and denied this one';
       }
     }

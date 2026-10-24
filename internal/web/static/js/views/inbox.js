@@ -104,7 +104,8 @@ export function inboxView() {
   let todayTimer = 0;
   async function loadToday() {
     try {
-      const in1 = await api('GET', '/api/insights?days=1');
+      // The insights page's default range, so both share the daemon's work.
+      const in1 = await api('GET', '/api/insights?days=7');
       const d = in1.days && in1.days[in1.days.length - 1];
       if (!d) return;
       const chip = (value, label, cls = '') => link('/insights', { class: 'stat-chip ' + cls }, h('b', null, value), label);

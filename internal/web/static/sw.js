@@ -46,6 +46,9 @@ const SHELL = [
   '/js/views/settings.js',
   '/js/views/tasks.js',
   '/js/views/terminal.js',
+  '/vendor/xterm/xterm.mjs',
+  '/vendor/xterm/addon-fit.mjs',
+  '/vendor/xterm/xterm.css',
   '/manifest.webmanifest',
   '/icons/icon.svg',
   '/icons/icon-192.png',
@@ -114,6 +117,7 @@ async function notificationsFor(id, tag) {
   return all.filter((n) => (tag && n.tag === tag) || (id && n.data && n.data.request_id === id));
 }
 
+/** "Answered ✓ …" for payloads without server-written text. */
 function answeredText(status, by) {
   if (status === 'expired') return 'Timed out — handed back to the terminal';
   if (status === 'answered_locally') return 'Answered ✓ in the terminal';
@@ -123,7 +127,8 @@ function answeredText(status, by) {
       : by.startsWith('telegram') ? ' in Telegram'
         : by === 'ntfy' ? ' from ntfy'
           : by.startsWith('policy:') ? ' by a rule'
-            : by.startsWith('device:') ? ' on a paired device' : '';
+            : by.startsWith('device:') ? ' on a paired device'
+              : by.includes(' ') ? ' ' + by : ''; // already words: "from iPhone"
   return 'Answered ✓' + who;
 }
 
@@ -149,8 +154,10 @@ async function showResolved(d) {
   const title = (prev[0] && prev[0].title) || d.title || 'Pilothouse';
   // Close copies shown under another tag (0.1 servers tagged with the bare id).
   for (const n of prev) if (n.tag !== tag) n.close();
-  await self.registration.showNotification(title, {
-    body: d.body && !d.title ? d.body : answeredText(d.status, d.by || ''),
+  // The daemon writes the text ("✓ Allowed", "… — from iPhone"); older
+  // payloads only say what happened.
+  await self.registration.showNotification(d.title || title, {
+    body: d.title && d.body ? d.body : answeredText(d.status, d.by || ''),
     tag,
     renotify: false,
     icon: ICON,

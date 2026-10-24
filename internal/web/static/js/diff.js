@@ -4,10 +4,18 @@
 //
 // Exported API (stable; workstream I uses it for task diffs):
 //   diffView(source, opts?) → element
-//     source: {files, added, removed, truncated} (Preview / TaskDiff) | FilePreview[] | FilePreview
+//     source: {files, added, removed, truncated} (Preview / TaskDiff) | FilePreview[]
+//             → one collapsible card per file, with its path, op and +/−;
+//     source: one FilePreview → just its lines (the caller shows the file;
+//             opts.header: true adds the card header)
 //     opts.cwd       shorten absolute paths under it
 //     opts.open      'auto' (default: all files when ≤ 2, else the first) | 'all' | 'none'
-//     opts.maxLines  lines per file before "Show N more lines" (default 40; 0 = all)
+//     opts.maxLines  lines per file before "Show N more lines" (default 40, or 200 for
+//                    one bare file; 0 = all)
+//     opts.lang      highlighting hint (accepted, not used yet)
+//   Rows are .dl.add/.del/.ctx/.hunk/.note with .n line-number cells; the
+//   aliases .tl-add/.tl-del/.tl-ctx/.tl-hunk/.tl-meta and .ln match the
+//   task view's earlier markup.
 //     opts.summary   show the "N files +A −R" line (default: when > 1 file)
 //   diffStat(added, removed, {bar}?) → element "+12 −3" with an optional 5-cell bar
 //   parseUnified(text) → [{kind: 'hunk'|'add'|'del'|'ctx'|'note', text, old, new}]
@@ -73,26 +81,29 @@ export function fileLabel(path, cwd) {
 
 const OPS = { create: 'new', delete: 'deleted', rename: 'renamed', overwrite: 'rewrite' };
 
+const ALIAS = { add: 'tl-add', del: 'tl-del', ctx: 'tl-ctx', hunk: 'tl-hunk', note: 'tl-meta' };
+
 function lineRow(l) {
   const sign = l.kind === 'add' ? '+' : l.kind === 'del' ? '−' : '';
+  const cls = `dl ${l.kind} ${ALIAS[l.kind]}`;
   if (l.kind === 'hunk') {
-    return h('div', { class: 'dl hunk' }, h('span', { class: 'n' }), h('span', { class: 'n' }), h('span', { class: 's' }, '⋯'), h('span', { class: 't' }, l.text));
+    return h('div', { class: cls }, h('span', { class: 'n ln' }), h('span', { class: 'n ln' }), h('span', { class: 's' }, '⋯'), h('span', { class: 't' }, l.text));
   }
   if (l.kind === 'note') {
-    return h('div', { class: 'dl note' }, h('span', { class: 'n' }), h('span', { class: 'n' }), h('span', { class: 's' }), h('span', { class: 't' }, l.text));
+    return h('div', { class: cls }, h('span', { class: 'n ln' }), h('span', { class: 'n ln' }), h('span', { class: 's' }), h('span', { class: 't' }, l.text));
   }
-  return h('div', { class: 'dl ' + l.kind },
-    h('span', { class: 'n' }, l.old == null ? '' : String(l.old)),
-    h('span', { class: 'n' }, l.new == null ? '' : String(l.new)),
+  return h('div', { class: cls },
+    h('span', { class: 'n ln' }, l.old == null ? '' : String(l.old)),
+    h('span', { class: 'n ln' }, l.new == null ? '' : String(l.new)),
     h('span', { class: 's', 'aria-hidden': 'true' }, sign),
     h('span', { class: 't' }, l.kind === 'add' ? h('span', { class: 'sr-only' }, 'added: ') : l.kind === 'del' ? h('span', { class: 'sr-only' }, 'removed: ') : null, l.text || ' '));
 }
 
-function fileView(f, opts, open) {
+function fileView(f, opts, open, bare = false) {
   const id = 'dfile-' + ++seq;
   const [dir, name] = fileLabel(f.path, opts.cwd);
   const lines = parseUnified(f.diff);
-  const root = h('section', { class: 'dfile' + (open ? '' : ' closed') });
+  const root = h(bare ? 'div' : 'section', { class: 'dfile' + (bare ? ' bare' : '') + (open ? '' : ' closed') });
   const head = h('button', { class: 'dfile-head', type: 'button', 'aria-expanded': String(open), 'aria-controls': id },
     icon('chevDown', 'sm', 'chev'),
     h('span', { class: 'path', title: relPath(f.path, opts.cwd) }, h('bdi', null, h('span', { class: 'dir' }, dir), name)),
@@ -100,7 +111,7 @@ function fileView(f, opts, open) {
     diffStat(f.added, f.removed));
   const table = h('div', { class: 'dtable' });
   const body = h('div', { class: 'dbody', id, tabindex: '0', role: 'region', 'aria-label': `Diff of ${name}` }, table);
-  const max = opts.maxLines === 0 ? Infinity : (opts.maxLines || 40);
+  const max = opts.maxLines === 0 ? Infinity : (opts.maxLines || (bare ? 200 : 40));
   let shown = 0;
   function render(limit) {
     const slice = lines.slice(shown, limit);
@@ -112,7 +123,7 @@ function fileView(f, opts, open) {
   } else {
     render(max);
   }
-  add(root, head, body);
+  add(root, bare ? null : head, body);
   if (shown < lines.length) {
     const more = h('button', { class: 'dmore', type: 'button' });
     const label = () => fill(more, `Show ${lines.length - shown} more ${plural(lines.length - shown, 'line', 'lines')}`);
@@ -123,7 +134,7 @@ function fileView(f, opts, open) {
     });
     add(body, more);
   }
-  if (f.truncated) add(table, lineRow({ kind: 'note', text: 'The diff is cut here — the rest is too long to send to your phone.' }));
+  if (f.truncated) add(table, lineRow({ kind: 'note', text: 'This diff is cut short — the rest is too long to show here.' }));
   head.addEventListener('click', () => {
     const isOpen = root.classList.toggle('closed') === false;
     head.setAttribute('aria-expanded', String(isOpen));
@@ -133,6 +144,12 @@ function fileView(f, opts, open) {
 
 /** The diff of one or more files; see the header for opts. */
 export function diffView(source, opts = {}) {
+  if (source && source.path && !Array.isArray(source.files)) {
+    // One file inside the caller's own file card: just the lines.
+    const bare = opts.header !== true;
+    const el = fileView(source, opts, true, bare);
+    return bare ? h('div', { class: 'diff bare' }, el) : h('div', { class: 'diff' }, el);
+  }
   let files = [];
   let added = 0;
   let removed = 0;
@@ -143,7 +160,7 @@ export function diffView(source, opts = {}) {
     added = source.added;
     removed = source.removed;
     truncated = !!source.truncated;
-  } else if (source && source.path) files = [source];
+  }
   if (!added && !removed) {
     for (const f of files) {
       added += f.added || 0;
