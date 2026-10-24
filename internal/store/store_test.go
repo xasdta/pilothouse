@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -45,8 +46,14 @@ func TestOpenIsIdempotentAndPrivate(t *testing.T) {
 			t.Fatalf("open #%d: %v", i, err)
 		}
 		v, ok, err := db.Meta(ctx, schemaKey)
-		if err != nil || !ok || v != "1" {
+		if err != nil || !ok || v != strconv.Itoa(SchemaVersion()) {
 			t.Fatalf("schema version = %q %v %v", v, ok, err)
+		}
+		for _, table := range []string{"sessions", "session_secrets", "usage_daily"} {
+			var n int
+			if err := db.SQL().QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&n); err != nil || n != 1 {
+				t.Fatalf("table %s: %d %v", table, n, err)
+			}
 		}
 		if err := db.Close(); err != nil {
 			t.Fatal(err)

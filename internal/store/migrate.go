@@ -89,6 +89,35 @@ CREATE TABLE IF NOT EXISTS evidence (
 CREATE INDEX IF NOT EXISTS evidence_session ON evidence(session_id, id);
 CREATE INDEX IF NOT EXISTS evidence_at ON evidence(at);
 `,
+	// 2 (0.2): private per-session values the API never returns (Claude's
+	// messaging-socket path and token), and daily usage per session/model
+	// for insights. Allocated up front for all 0.2 workstreams.
+	`
+CREATE TABLE IF NOT EXISTS session_secrets (
+	session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+	kind       TEXT NOT NULL,
+	value      TEXT NOT NULL,
+	updated_at INTEGER NOT NULL,
+	PRIMARY KEY (session_id, kind)
+);
+CREATE TABLE IF NOT EXISTS usage_daily (
+	session_id  TEXT NOT NULL,
+	day         TEXT NOT NULL,
+	agent       TEXT NOT NULL,
+	model       TEXT NOT NULL DEFAULT '',
+	repo        TEXT NOT NULL DEFAULT '',
+	input       INTEGER NOT NULL DEFAULT 0,
+	output      INTEGER NOT NULL DEFAULT 0,
+	cache_read  INTEGER NOT NULL DEFAULT 0,
+	cache_write INTEGER NOT NULL DEFAULT 0,
+	reasoning   INTEGER NOT NULL DEFAULT 0,
+	cost_usd    REAL NOT NULL DEFAULT 0,
+	turns       INTEGER NOT NULL DEFAULT 0,
+	updated_at  INTEGER NOT NULL,
+	PRIMARY KEY (session_id, day, model)
+);
+CREATE INDEX IF NOT EXISTS usage_daily_day ON usage_daily(day);
+`,
 }
 
 // SchemaVersion is the schema version this build migrates to.
