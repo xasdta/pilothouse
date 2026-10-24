@@ -180,6 +180,7 @@ const lastText = new Bounded(1000); // session id → last assistant text this t
 const lastError = new Bounded(1000); // session id → error this turn
 const titles = new Bounded(1000); // session id → title last reported
 const holds = new Map(); // permission/question id → AbortController of its held call
+const approved = new Bounded(100); // tool call id → permission a person approved in Pilothouse
 const instances = new Set();
 
 // root maps a subagent's session to the session a person sees: OpenCode
@@ -317,16 +318,34 @@ async function preTool(inst, input, output) {
   try {
     v = await hook("pilothouse.ask", { ...data, rule: out.rule || "", message: out.message || "" }, { timeout: HOLD_TIMEOUT });
   } catch {}
-  if (v?.action === "allow") return;
+  if (v?.action === "allow") {
+    // A person approved this very call: OpenCode's own prompt for it (when
+    // its settings ask too) is answered the same way, not asked twice.
+    approved.set(input.callID, ownPermission(input.tool));
+    return;
+  }
   if (v?.action === "deny") throw new Error(v.message || "Denied in Pilothouse.");
   const why = (out.message || "").trim().replace(/[.\s]+$/, "");
   throw new Error(ASK_UNANSWERED + (why ? " (" + why + ")" : "") + ".");
 }
 
+// ownPermission is the permission OpenCode asks for a tool itself (file
+// tools share "edit"); other asks about a call, such as external_directory,
+// are separate questions.
+function ownPermission(tool) {
+  return ["edit", "write", "apply_patch", "patch", "multiedit"].includes(tool) ? "edit" : tool;
+}
+
 function onPermissionAsked(inst, p) {
   if (!p?.id) return;
   remember(inst, p.sessionID);
-  const call = calls.get(p.tool?.callID);
+  const callID = p.tool?.callID;
+  if (callID && approved.get(callID) === p.permission) {
+    approved.delete(callID);
+    replyPermission(inst, p, "once");
+    return;
+  }
+  const call = calls.get(callID);
   const ctrl = new AbortController();
   holds.set(p.id, ctrl);
   afterQueue(async () => {

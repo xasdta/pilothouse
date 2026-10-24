@@ -141,6 +141,24 @@ test("policy ask is held through pilothouse.ask", async () => {
   await p.dispose();
 });
 
+test("an ask a person approved also answers OpenCode's own prompt for that call", async () => {
+  const p = await load({ answer: (ev) => (ev === "tool.execute.before" ? { action: "ask" } : ev === "pilothouse.ask" ? { action: "allow" } : {}) });
+  await p.hooks["tool.execute.before"]({ tool: "write", sessionID: "s", callID: "call_w" }, { args: { filePath: "/x" } });
+  // A side question about the same call still goes to the daemon …
+  p.hooks.event(event("permission.asked", { id: "per_ext", sessionID: "s", permission: "external_directory", tool: { callID: "call_w" } }));
+  // … the tool's own permission is answered at once.
+  p.hooks.event(event("permission.asked", { id: "per_own", sessionID: "s", permission: "edit", tool: { callID: "call_w" } }));
+  await until("reply", () => p.client.posts.length === 1);
+  await settle();
+  assert.equal(p.client.posts[0].path.requestID, "per_own");
+  assert.deepEqual(p.client.posts[0].body, { reply: "once" });
+  assert.deepEqual(p.daemon.hooks.filter((x) => x.event === "permission.asked").map((x) => x.payload.request_id), ["per_ext"]);
+  // Only once.
+  p.hooks.event(event("permission.asked", { id: "per_again", sessionID: "s", permission: "edit", tool: { callID: "call_w" } }));
+  await until("hook", () => p.daemon.hooks.some((x) => x.payload.request_id === "per_again"));
+  await p.dispose();
+});
+
 test("permission prompts: enriched, answered through the client", async () => {
   const answers = { per_1: { action: "allow" }, per_2: { action: "deny", message: "Use a dry run." }, per_3: {} };
   const p = await load({ answer: (ev, pl) => (ev === "permission.asked" ? answers[pl.request_id] : {}) });
