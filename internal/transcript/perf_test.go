@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -55,6 +56,12 @@ func TestLargeTranscriptPerformance(t *testing.T) {
 		t.Skip("writes a 128 MB file")
 	}
 	e := newEnv(t)
+	var fs syscall.Statfs_t
+	if err := syscall.Statfs(e.claude, &fs); err == nil {
+		if free := int64(fs.Bavail) * int64(fs.Bsize); free < 512<<20 {
+			t.Skipf("needs 512 MB of free disk for a 128 MB transcript, %d MB free", free>>20)
+		}
+	}
 	path := e.claudePath("sess-big")
 	turns := writeBigClaude(t, path, 128<<20)
 	r := e.reader()
