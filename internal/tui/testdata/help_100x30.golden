@@ -2,13 +2,15 @@
 
 ── Keys ────────────────────────────────────────────────────────────────────────────────────────────
    j k  ↑ ↓      move
-   y             allow once
+   y             allow once · approve a plan
    a             allow for the rest of this session
-   n             deny (type an optional reason, enter sends)
-   enter         attach to a wrapped session, or show more detail
+   n             deny · decline a question · ask for changes to a plan
+   enter         answer a question, read a plan, attach to a wrapped session, or more detail
+   1-9           answer a question with that option
+   r             reply to a session that takes replies
    e             explain why a session is in its state
    p             presence: auto → here → away
-   r             reload from the daemon
+   R             reload from the daemon
    ?             this help · q quits
 
 ── Presence ────────────────────────────────────────────────────────────────────────────────────────
@@ -16,9 +18,7 @@
    away          requests are held and sent to your paired phone
    auto          here or away from keyboard and mouse idle time
 
-   From any shell: pilothouse approve <id> · pilothouse deny <id> -m "why" · pilothouse ls
-
-
+   From any shell: pilothouse approve <id> · deny <id> -m "why" · answer <id> <answer> · ls
 
 
 

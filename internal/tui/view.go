@@ -249,6 +249,12 @@ func (m *Model) rowHint(r row) (string, lipgloss.Style) {
 			return "sending…", m.st.dim
 		}
 		if r.req.Status == api.RequestOpen {
+			switch r.req.Checkpoint {
+			case api.CheckpointQuestion:
+				return "held · answer ⏎", m.st.key
+			case api.CheckpointPlan:
+				return "held · review ⏎", m.st.key
+			}
 			return "held · y a n", m.st.key
 		}
 		if attachable(r.sess) {
@@ -338,11 +344,15 @@ func (m *Model) View() string {
 		out = append(out, m.st.banner.Render(fit(" "+b, w)))
 	}
 	listH, detailH := m.layout()
-	switch m.mode {
-	case modeHelp:
+	switch {
+	case m.mode == modeHelp:
 		out = append(out, m.viewHelp(w, listH+detailH)...)
-	case modeExplain:
+	case m.mode == modeExplain:
 		out = append(out, m.viewExplain(w, listH+detailH)...)
+	case m.mode == modeQuestion || m.mode == modeOther || (m.mode == modeDeny && m.ask.id != ""):
+		out = append(out, m.viewQuestion(w, listH+detailH)...)
+	case m.mode == modePlan || (m.mode == modeChanges && !m.ask.fromList):
+		out = append(out, m.viewPlan(w, listH+detailH)...)
 	default:
 		lines, idx := m.listLines(w)
 		sel, top := selLines(idx, m.cursor)
@@ -476,11 +486,8 @@ func (m *Model) viewFlash(w int) string {
 type keyHint struct{ key, desc string }
 
 func (m *Model) viewFooter(w int) string {
-	if m.mode == modeDeny {
-		label := m.st.warn.Render(" Deny "+shortID(m.denyID)) + m.st.dim.Render(" reason: ")
-		tail := m.st.dim.Render("  enter send · esc cancel")
-		m.input.Width = max(10, w-lipgloss.Width(label)-lipgloss.Width(tail)-2)
-		return fit(label+m.input.View()+tail, w)
+	if m.typing() {
+		return m.inputFooter(w)
 	}
 	var hints []keyHint
 	switch m.mode {
@@ -488,15 +495,24 @@ func (m *Model) viewFooter(w int) string {
 		hints = []keyHint{{"esc", "back"}, {"q", "quit"}}
 	case modeExplain:
 		hints = []keyHint{{"esc", "back"}, {"q", "quit"}}
+	case modeQuestion, modePlan:
+		hints = m.askHints()
 	default:
 		r := m.selected()
 		switch {
+		case r != nil && r.req != nil && r.req.Status == api.RequestOpen && r.req.Checkpoint == api.CheckpointQuestion:
+			hints = append(hints, keyHint{"enter", "answer"}, keyHint{"n", "decline"})
+		case r != nil && r.req != nil && r.req.Status == api.RequestOpen && r.req.Checkpoint == api.CheckpointPlan:
+			hints = append(hints, keyHint{"enter", "read"}, keyHint{"y", "approve"}, keyHint{"n", "request changes"})
 		case r != nil && r.req != nil && r.req.Status == api.RequestOpen:
 			hints = append(hints, keyHint{"y", "allow"}, keyHint{"a", "allow for session"}, keyHint{"n", "deny"})
 		case r != nil && attachable(r.sess):
 			hints = append(hints, keyHint{"enter", "attach"})
 		case r != nil:
 			hints = append(hints, keyHint{"enter", "details"})
+		}
+		if s := m.selectedSession(); s != nil && s.Caps.Reply && s.State != api.StateExited {
+			hints = append(hints, keyHint{"r", "reply"})
 		}
 		hints = append(hints, keyHint{"e", "explain"}, keyHint{"p", "presence"}, keyHint{"?", "help"}, keyHint{"q", "quit"})
 	}
@@ -542,6 +558,9 @@ func (m *Model) viewDetail(w, h int) []string {
 		return fill(nil, h)
 	}
 	inner := w - 4
+	if asks(r.req) {
+		return m.detailAsk(r, w, h)
+	}
 	if r.req != nil {
 		q := r.req
 		status := "held for you"
@@ -630,15 +649,29 @@ func (m *Model) viewDetail(w, h int) []string {
 	if src == "" {
 		src = "unknown source"
 	}
-	lines = append(lines, m.labelLine("state", state+m.st.dim.Render(" · from "+src+" · e to explain"), w))
+	var tail []string
+	tail = append(tail, m.labelLine("state", state+m.st.dim.Render(" · from "+src+" · e to explain"), w))
 	switch {
 	case s.State == api.StateBlocked && attachable(s):
-		lines = append(lines, "  "+m.st.warn.Render("Answer it in the agent: press enter to attach"))
+		tail = append(tail, "  "+m.st.warn.Render("Answer it in the agent: press enter to attach"))
 	case s.State == api.StateBlocked:
-		lines = append(lines, "  "+m.st.warn.Render(trunc("Answer it in the terminal where the agent runs", inner)))
+		tail = append(tail, "  "+m.st.warn.Render(trunc("Answer it in the terminal where the agent runs", inner)))
 	case attachable(s):
-		lines = append(lines, "  "+m.st.dim.Render("enter to attach · ctrl+\\ detaches"))
+		hint := "enter to attach · ctrl+\\ detaches"
+		if s.Caps.Reply {
+			hint += " · r to reply"
+		}
+		tail = append(tail, "  "+m.st.dim.Render(hint))
+	case s.Caps.Reply && s.State != api.StateExited:
+		tail = append(tail, "  "+m.st.dim.Render("r to reply"))
 	}
+	// The latest activity fills whatever room is left.
+	room := h - len(lines) - len(tail)
+	if !m.expanded {
+		room = min(room, 3)
+	}
+	lines = append(lines, m.activityLines(s.ID, w, room)...)
+	lines = append(lines, tail...)
 	return fill(lines, h)
 }
 
@@ -659,13 +692,15 @@ func (m *Model) viewHelp(w, h int) []string {
 	lines := []string{
 		m.rule(m.st.bold.Render("Keys"), w),
 		k("j k  ↑ ↓", "move"),
-		k("y", "allow once"),
+		k("y", "allow once · approve a plan"),
 		k("a", "allow for the rest of this session"),
-		k("n", "deny (type an optional reason, enter sends)"),
-		k("enter", "attach to a wrapped session, or show more detail"),
+		k("n", "deny · decline a question · ask for changes to a plan"),
+		k("enter", "answer a question, read a plan, attach to a wrapped session, or more detail"),
+		k("1-9", "answer a question with that option"),
+		k("r", "reply to a session that takes replies"),
 		k("e", "explain why a session is in its state"),
 		k("p", "presence: auto → here → away"),
-		k("r", "reload from the daemon"),
+		k("R", "reload from the daemon"),
 		k("?", "this help · q quits"),
 		"",
 		m.rule(m.st.bold.Render("Presence"), w),
@@ -673,7 +708,7 @@ func (m *Model) viewHelp(w, h int) []string {
 		k("away", "requests are held and sent to your paired phone"),
 		k("auto", "here or away from keyboard and mouse idle time"),
 		"",
-		"   " + m.st.dim.Render(trunc("From any shell: pilothouse approve <id> · pilothouse deny <id> -m \"why\" · pilothouse ls", w-4)),
+		"   " + m.st.dim.Render(trunc("From any shell: pilothouse approve <id> · deny <id> -m \"why\" · answer <id> <answer> · ls", w-4)),
 	}
 	return fill(lines, h)
 }

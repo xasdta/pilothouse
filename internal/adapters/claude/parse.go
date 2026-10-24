@@ -37,7 +37,10 @@ func (Adapter) ParseHook(env adapters.HookEnvelope) (adapters.HookEvent, error) 
 		kind = adapters.HookUnknown
 	}
 	ev := p.HookEvent(kind)
-	if p.ToolName != "" {
+	switch {
+	case asksPerson(p.ToolName):
+		describeAsk(&ev, env.Payload)
+	case p.ToolName != "":
 		describeTool(&ev)
 	}
 	return ev, nil

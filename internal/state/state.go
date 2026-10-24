@@ -49,10 +49,12 @@ type Input struct {
 	// arrived, or layer L0 found the process gone.
 	Exited     bool
 	ExitDetail string
-	// PendingPermission is true while an open or stepped-aside permission
-	// request exists for the session.
+	// PendingPermission is true while an open or stepped-aside request
+	// (permission, question or plan) exists for the session. PendingKind
+	// says what it waits for; empty means permission.
 	PendingPermission bool
 	PermissionDetail  string
+	PendingKind       api.BlockKind
 	// HasHooks is true when the session's agent has a hook adapter. Without
 	// one, OSC is the best evidence available and wins outright.
 	HasHooks bool
@@ -92,7 +94,11 @@ func Resolve(in Input) Result {
 	case in.Exited:
 		return res.with(api.StateExited, "", api.LayerProcess, orDefault(in.ExitDetail, "Session ended"), RuleExited)
 	case in.PendingPermission:
-		return res.with(api.StateBlocked, api.BlockPermission, api.LayerHook,
+		kind := in.PendingKind
+		if kind == "" {
+			kind = api.BlockPermission
+		}
+		return res.with(api.StateBlocked, kind, api.LayerHook,
 			orDefault(in.PermissionDetail, "Waiting for permission"), RulePermission)
 	}
 

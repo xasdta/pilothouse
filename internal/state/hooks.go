@@ -15,6 +15,12 @@ func FromHook(ev adapters.HookEvent) (st api.State, kind api.BlockKind, detail s
 	case adapters.HookSessionStart:
 		return api.StateStarting, "", "Session started", true
 	case adapters.HookPreTool:
+		if len(ev.Questions) > 0 {
+			// The agent is about to wait for a person's answer. For Codex's
+			// request_user_input this is the only sign of it: no permission
+			// hook follows, and the answer is given in the terminal.
+			return api.StateBlocked, api.BlockQuestion, orDefault(ev.Summary, "Asked a question"), true
+		}
 		return api.StateWorking, "", orDefault(ev.Summary, "Using "+ev.Tool), true
 	case adapters.HookPostTool:
 		return api.StateWorking, "", orDefault(ev.Summary, "Used "+ev.Tool), true

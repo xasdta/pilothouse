@@ -1,0 +1,35 @@
+ pilothouse  studio.local                                   ● here · auto   3 need you · 2 working · 2 waiting   ● live
+
+ NEEDS YOU 3
+  ● claude  pilothouse · feat/inbox   $ git push origin feat/inbox --force-with-lease             12s  held · y a n
+  ○ codex   webapp · checkout-v2      apply_patch ~/src/webapp/src/checkout/cart.ts +1          1m04s  in its terminal
+  ○ claude  api · main                Asked: Which database should the migration target, Post…  3m20s  in its terminal
+
+ WORKING 2
+▌ ● claude  docs · main               Ran: npm run build                                           5s  enter to attach
+  ● codex   infra · tf-upgrade        Editing modules/vpc/main.tf                                 41s
+
+ WAITING 2
+  ● claude  pilothouse-site · main    Done. The landing page now loads in 380 ms. Want me to …  2m05s
+  ✗ generic scratch                   Reported an error                                           25m  enter to attach
+
+ RECENTLY EXITED 1
+  ✓ claude  old-spike · spike/sqlite  exited (code 0)                                           3h00m
+
+
+
+
+
+
+
+
+── s_w1x3y5 · claude · wrapped · working for 5s ────────────────────────────────────────────────────────────────────────
+  Ran: npm run build
+  where  docs · main  ~/src/docs
+  recent 1m30s ✗ Run: npm run lint
+         1m00s “Lint failed on two files; fixing them.”
+            5s … Run: npm run build
+  state  working · from L2-hook · e to explain
+  enter to attach · ctrl+\ detaches
+
+ enter attach   e explain   p presence   ? help   q quit
