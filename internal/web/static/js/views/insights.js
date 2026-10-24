@@ -15,8 +15,6 @@ const RANGE_KEY = 'pilothouse.insights.days';
 const METRIC_KEY = 'pilothouse.insights.metric';
 const whole = new Intl.NumberFormat();
 const MAX_GROUPS = 6; // past this, the tail folds into "Other"
-// Agents dom.js doesn't name yet (OpenCode lands with workstream E).
-const AGENT_NAMES = { opencode: 'OpenCode' };
 
 function svg(tag, attrs, ...kids) {
   const el = document.createElementNS(SVGNS, tag);
@@ -353,7 +351,7 @@ export function insightsView() {
         const v = val(g);
         const bar = h('i', { class: 'hbar-fill' });
         bar.style.width = Math.max(v > 0 ? 1.5 : 0, (v / max) * 100).toFixed(2) + '%';
-        const name = g.other ? `Other (${g.other})` : by === 'agent' ? (AGENT_NAMES[g.key] || agentName(g.key)) : g.key || 'Unknown';
+        const name = g.other ? `Other (${g.other})` : by === 'agent' ? agentName(g.key) : g.key || 'Unknown';
         return h('div', { class: 'hbar' },
           h('span', { class: 'hbar-label' },
             by === 'agent' && !g.other ? h('span', { class: 'agent-dot ' + agentClass(g.key) }) : null,
