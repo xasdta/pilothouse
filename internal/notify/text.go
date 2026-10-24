@@ -173,28 +173,12 @@ func capitalize(s string) string {
 const maxDetail = 160
 
 // Details are the extra lines a request notification carries when the
-// request has them (other workstreams fill these fields): the options of
-// a question, risk labels, the size of a file change and the agent's last
-// words before it asked. Each line is one short sentence; none when the
-// request has nothing beyond its action.
+// request has them (other workstreams fill these fields): risk labels, the
+// size of a file change and the agent's last words before it asked. (A
+// question's options are part of Action.) Each line is one short
+// sentence; none when the request has nothing beyond its action.
 func Details(r *api.Request) []string {
 	var out []string
-	if r.Checkpoint == api.CheckpointQuestion && len(r.Questions) > 0 {
-		q := r.Questions[0]
-		var labels []string
-		for _, o := range q.Options {
-			if l := strings.TrimSpace(o.Label); l != "" {
-				labels = append(labels, l)
-			}
-		}
-		if len(labels) > 0 {
-			prefix := "Options: "
-			if q.MultiSelect {
-				prefix = "Pick any: "
-			}
-			out = append(out, Short(prefix+strings.Join(labels, " · "), maxDetail))
-		}
-	}
 	if line := RiskLine(r.Risk); line != "" {
 		out = append(out, line)
 	}

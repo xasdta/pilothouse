@@ -171,6 +171,15 @@ func TestPushPayloads(t *testing.T) {
 		t.Fatalf("request payload = %+v ttl=%d urgency=%s", p, ttl, urg)
 	}
 
+	// No one-tap actions for questions and plans: they need the app.
+	for _, cp := range []api.Checkpoint{api.CheckpointQuestion, api.CheckpointPlan} {
+		q := r
+		q.Checkpoint = cp
+		if p, _, _ := payloadFor(core.Notification{Kind: core.NotifyRequest, Request: &q}, now); p.Actions || p.Request.Checkpoint != string(cp) {
+			t.Fatalf("%s payload offers actions: %+v", cp, p)
+		}
+	}
+
 	r.Status = api.RequestDecided
 	r.Decision = &api.Decision{Behavior: api.BehaviorAllow, Scope: api.ScopeSession, By: "device:d_1"}
 	rp := resolvedPayload(r, func(id string) string { return map[string]string{"d_1": "iPhone"}[id] })

@@ -84,26 +84,23 @@ func TestRichBodies(t *testing.T) {
 		t.Fatalf("body = %q\nwant  %q", got.Body, want)
 	}
 
+	// Questions and plans: what is asked comes from Action (whatever its
+	// wording), the extra lines from Details.
 	q := &api.Request{ID: "r_q", Agent: api.AgentClaude, Checkpoint: api.CheckpointQuestion, Cwd: "/src/app",
-		Questions: []api.Question{{Text: "Which auth method?", Options: []api.QuestionOption{{Label: "OAuth"}, {Label: "API key"}}},
-			{Text: "Add tests?", MultiSelect: true}}}
+		Questions: []api.Question{{Text: "Which auth method?", Options: []api.QuestionOption{{Label: "OAuth"}, {Label: "API key"}}}},
+		Context:   "I need to pick a login flow."}
 	got = Render(core.Notification{Kind: core.NotifyRequest, Request: q})
-	if got.Body != "Asks: Which auth method? (+1 more)\nOptions: OAuth · API key" {
-		t.Fatalf("question body = %q", got.Body)
+	if want := capitalize(Action(q)) + "\n“I need to pick a login flow.”"; got.Body != want || !strings.Contains(got.Body, "Which auth method?") {
+		t.Fatalf("question body = %q, want %q", got.Body, want)
 	}
-	q.Questions[0].MultiSelect = true
-	if d := Details(q); len(d) != 1 || d[0] != "Pick any: OAuth · API key" {
-		t.Fatalf("multi-select = %q", d)
-	}
-
-	p := &api.Request{ID: "r_p", Agent: api.AgentClaude, Checkpoint: api.CheckpointPlan,
-		Plan: &api.Plan{Markdown: "\n## Plan: retry webhooks\n\n1. Add backoff"}, Preview: &api.Preview{Files: make([]api.FilePreview, 3), Added: 12, Removed: 4}}
+	p := &api.Request{ID: "r_p", Agent: api.AgentClaude, Checkpoint: api.CheckpointPlan, Summary: "Plan ready: retry webhooks",
+		Plan: &api.Plan{Markdown: "## Retry webhooks\n1. Add backoff"}, Preview: &api.Preview{Files: make([]api.FilePreview, 3), Added: 12, Removed: 4}}
 	got = Render(core.Notification{Kind: core.NotifyRequest, Request: p})
-	if got.Body != "Wants a plan approved: Plan: retry webhooks\n✎ 3 files, +12 −4" {
-		t.Fatalf("plan body = %q", got.Body)
+	if want := capitalize(Action(p)) + "\n✎ 3 files, +12 −4"; got.Body != want {
+		t.Fatalf("plan body = %q, want %q", got.Body, want)
 	}
-	if Line(core.Notification{Kind: core.NotifyRequest, Request: p}) != "Claude Code wants a plan approved: Plan: retry webhooks" {
-		t.Fatal(Line(core.Notification{Kind: core.NotifyRequest, Request: p}))
+	if d := Details(&api.Request{Preview: &api.Preview{Files: make([]api.FilePreview, 1), Added: 1}}); len(d) != 1 || d[0] != "✎ 1 file, +1 −0" {
+		t.Fatalf("one-file preview = %q", d)
 	}
 }
 

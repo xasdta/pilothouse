@@ -253,7 +253,10 @@ func payloadFor(n core.Notification, now time.Time) (pushPayload, int, webpush.U
 		p.RequestID, p.SessionID = r.ID, r.SessionID
 		p.Tag, p.URL = PushTag(r.ID), "/r/"+r.ID
 		p.Request = &pushRequest{ID: r.ID, Checkpoint: string(r.Checkpoint), Summary: truncate(r.Summary, 200)}
-		p.Actions = n.Kind == core.NotifyRequest && r.Status == api.RequestOpen
+		// One-tap Allow/Deny only for permissions: a bare allow can't
+		// answer a question, and a plan should be read first.
+		p.Actions = n.Kind == core.NotifyRequest && r.Status == api.RequestOpen &&
+			(r.Checkpoint == api.CheckpointPermission || r.Checkpoint == "")
 		if !r.ExpiresAt.IsZero() {
 			p.ExpiresAt = r.ExpiresAt.UnixMilli()
 			ttl = max(int(r.ExpiresAt.Sub(now).Seconds()), 30)
