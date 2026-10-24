@@ -43,6 +43,10 @@ const (
 	// dropped first, so pasted text can't end the paste early or inject
 	// key sequences.
 	FramePaste FrameType = 7
+	// FrameAttach (holder→watcher, CapWatch) says whether a terminal is
+	// attached (payload 1) or not (0) whenever that changes; while one is,
+	// its size is the PTY's size and input-mode resizes are ignored.
+	FrameAttach FrameType = 8
 )
 
 func (t FrameType) String() string {
@@ -61,6 +65,8 @@ func (t FrameType) String() string {
 		return "error"
 	case FramePaste:
 		return "paste"
+	case FrameAttach:
+		return "attach"
 	}
 	return fmt.Sprintf("frame(%d)", uint8(t))
 }
@@ -176,6 +182,22 @@ func DecodeExit(p []byte) (int, error) {
 	return int(int32(binary.BigEndian.Uint32(p))), nil
 }
 
+// EncodeAttach builds an attach-state payload.
+func EncodeAttach(attached bool) []byte {
+	if attached {
+		return []byte{1}
+	}
+	return []byte{0}
+}
+
+// DecodeAttach parses an attach-state payload.
+func DecodeAttach(p []byte) (bool, error) {
+	if len(p) != 1 || p[0] > 1 {
+		return false, fmt.Errorf("wrap: attach payload %v, want one byte 0 or 1", p)
+	}
+	return p[0] == 1, nil
+}
+
 // DecodeText parses an error or detach payload: bounded, valid UTF-8.
 func DecodeText(p []byte) (string, error) {
 	if len(p) > maxText {
@@ -210,7 +232,9 @@ const (
 	ModeProbe HelloMode = "probe"
 	// ModeWatch (CapWatch) streams output read-only: scrollback first
 	// when Replay is set, then live data, resize frames when the
-	// terminal's size changes and the exit frame. Several watchers may
+	// terminal's size changes, attach frames when a terminal attaches or
+	// leaves (ServerHello.Attached is the state at first) and the exit
+	// frame. Several watchers may
 	// connect; none of them touches the attached client, and a watcher
 	// that falls behind is dropped.
 	ModeWatch HelloMode = "watch"
@@ -260,6 +284,8 @@ type ServerHello struct {
 	// Cols and Rows are the agent terminal's current size (0.2+).
 	Cols uint16 `json:"cols,omitempty"`
 	Rows uint16 `json:"rows,omitempty"`
+	// Attached says a terminal is attached, so its size wins (0.2+).
+	Attached bool `json:"attached,omitempty"`
 }
 
 // Has reports whether the holder lists capability c.

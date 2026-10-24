@@ -207,8 +207,9 @@ func (d *Daemon) StreamTerminal(ctx context.Context, sessionID string, replay bo
 		case <-stop:
 		}
 	}()
-	if c.Hello.Cols > 0 && c.Hello.Rows > 0 {
-		if err := ev(core.TerminalEvent{Cols: c.Hello.Cols, Rows: c.Hello.Rows}); err != nil {
+	cols, rows, fixed := c.Hello.Cols, c.Hello.Rows, c.Hello.Attached
+	if cols > 0 && rows > 0 {
+		if err := ev(core.TerminalEvent{Cols: cols, Rows: rows, Fixed: fixed}); err != nil {
 			return err
 		}
 	}
@@ -228,11 +229,22 @@ func (d *Daemon) StreamTerminal(ctx context.Context, sessionID string, replay bo
 		case wrap.FrameData:
 			e.Data = f.Payload
 		case wrap.FrameResize:
-			cols, rows, err := wrap.DecodeResize(f.Payload)
+			c, r, err := wrap.DecodeResize(f.Payload)
 			if err != nil {
 				continue
 			}
-			e.Cols, e.Rows = cols, rows
+			cols, rows = c, r
+			e.Cols, e.Rows, e.Fixed = cols, rows, fixed
+		case wrap.FrameAttach:
+			a, err := wrap.DecodeAttach(f.Payload)
+			if err != nil || a == fixed {
+				continue
+			}
+			fixed = a
+			if cols == 0 || rows == 0 {
+				continue
+			}
+			e.Cols, e.Rows, e.Fixed = cols, rows, fixed
 		case wrap.FrameExit:
 			code, _ := wrap.DecodeExit(f.Payload)
 			return ev(core.TerminalEvent{Exited: true, ExitCode: code})

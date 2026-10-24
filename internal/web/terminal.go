@@ -26,7 +26,10 @@ import (
 //	POST /api/sessions/{id}/terminal/token   signed "terminal", target = session id, payload {}
 //	  → {"token": "…", "expires_at": "<RFC 3339>"}
 //	GET  /api/sessions/{id}/terminal?replay=1   (cookie only: EventSource can't send headers)
-//	  event: size  {"cols": c, "rows": r}   first, then on every change (addition to the contract)
+//	  event: size  {"cols": c, "rows": r}   only while a terminal is attached at the computer, which
+//	                                        fixes the size: before the replay, then on every change
+//	  event: free  {"cols": c, "rows": r}   that terminal left: the viewer may size the terminal again
+//	                                        (addition to the contract)
 //	  event: data  <base64 of output bytes>
 //	  event: exit  {"code": n}              the agent exited (n is -1 when unknown); the stream ends
 //	  event: error {"error": "…"}           the stream ended otherwise (addition); reconnect with replay=1
@@ -212,11 +215,18 @@ func (s *Server) handleTerminalStream(w http.ResponseWriter, r *http.Request) {
 	}
 	ping := time.NewTicker(s.d.PingEvery)
 	defer ping.Stop()
+	fixed := false // a terminal at the computer sets the size
 	write := func(ev core.TerminalEvent) (exited bool, err error) {
 		var buf bytes.Buffer
 		if ev.Cols > 0 && ev.Rows > 0 {
 			b, _ := json.Marshal(map[string]uint16{"cols": ev.Cols, "rows": ev.Rows})
-			fmt.Fprintf(&buf, "event: size\ndata: %s\n\n", b)
+			switch {
+			case ev.Fixed:
+				fmt.Fprintf(&buf, "event: size\ndata: %s\n\n", b)
+			case fixed:
+				fmt.Fprintf(&buf, "event: free\ndata: %s\n\n", b)
+			}
+			fixed = ev.Fixed
 		}
 		if len(ev.Data) > 0 {
 			fmt.Fprintf(&buf, "event: data\ndata: %s\n\n", base64.StdEncoding.EncodeToString(ev.Data))

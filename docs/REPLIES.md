@@ -67,8 +67,9 @@ type into it.
 - Typing needs a short-lived token: opening the terminal signs one action
   with the device key, which gives a token for that session and that device
   for 10 minutes. Keystrokes then need no signature of their own.
-- While a terminal is attached at the desk, its size wins; with none
-  attached, the phone may resize the agent's terminal to fit its screen.
+- While a terminal is attached at the desk, its size wins and the phone
+  shows the screen at that size (smaller text); with none attached, the
+  phone resizes the agent's terminal to fit its screen.
 
 Holders keep running across Pilothouse upgrades. A session started by an
 older Pilothouse keeps working as before, but has no live terminal and no
@@ -78,8 +79,9 @@ probes such a holder, so it can never take over the terminal attached to it.
 
 The device API is documented in `internal/web/terminal.go`:
 `POST /api/sessions/{id}/terminal/token` (signed `terminal` action),
-`GET /api/sessions/{id}/terminal?replay=1` (SSE: `size`, `data` as base64,
-`exit`, `error`, `ping`) and `POST /api/sessions/{id}/terminal/input`
+`GET /api/sessions/{id}/terminal?replay=1` (SSE: `size` while a desk
+terminal fixes the size, `free` when it leaves, `data` as base64, `exit`,
+`error`, `ping`) and `POST /api/sessions/{id}/terminal/input`
 (`X-Terminal-Token`; `{"data": "<base64>"}` or `{"resize": {"cols", "rows"}}`).
 
 ## Keep-awake

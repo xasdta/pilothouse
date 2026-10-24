@@ -49,9 +49,14 @@ type Terminal interface {
 // TerminalEvent is one item of a terminal stream: output, the mirrored
 // terminal's size, or the agent's exit.
 type TerminalEvent struct {
-	Data     []byte // output bytes
-	Cols     uint16 // with Rows: a size report (the first event, then every change)
-	Rows     uint16
+	Data []byte // output bytes
+	// Cols and Rows (when set) report the size: first, then on every
+	// change of the size or of Fixed.
+	Cols uint16
+	Rows uint16
+	// Fixed: a terminal attached at the computer sets the size (a viewer
+	// should keep it); otherwise a viewer may resize to fit itself.
+	Fixed    bool
 	Exited   bool // the agent exited with ExitCode; the stream ends
 	ExitCode int
 }

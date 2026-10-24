@@ -323,14 +323,25 @@ func TestTerminalStream(t *testing.T) {
 	if fs.id != "s_term000001" || !fs.replay {
 		t.Fatalf("stream %+v", fs)
 	}
-	_ = fs.ev(core.TerminalEvent{Cols: 120, Rows: 40})
+	// A terminal attached at the computer fixes the size: `size` comes
+	// before the replay and on every change; when it leaves, `free`.
+	// Sizes nobody fixed are the viewer's own business: no event.
+	_ = fs.ev(core.TerminalEvent{Cols: 120, Rows: 40, Fixed: true})
 	_ = fs.ev(core.TerminalEvent{Data: []byte("hello \x1b[1mworld\x1b[0m")})
-	if ev, data := c.nextNonPing(t); ev != "size" || data != `{"cols":120,"rows":40}` {
-		t.Fatalf("size: %s %s", ev, data)
-	}
-	ev, data := c.nextNonPing(t)
-	if raw, _ := base64.StdEncoding.DecodeString(data); ev != "data" || string(raw) != "hello \x1b[1mworld\x1b[0m" {
-		t.Fatalf("data: %s %q", ev, data)
+	_ = fs.ev(core.TerminalEvent{Cols: 100, Rows: 30, Fixed: true})
+	_ = fs.ev(core.TerminalEvent{Cols: 100, Rows: 30})
+	_ = fs.ev(core.TerminalEvent{Cols: 45, Rows: 20})
+	_ = fs.ev(core.TerminalEvent{Data: []byte("x")})
+	for _, want := range [][2]string{
+		{"size", `{"cols":120,"rows":40}`},
+		{"data", b64("hello \x1b[1mworld\x1b[0m")},
+		{"size", `{"cols":100,"rows":30}`},
+		{"free", `{"cols":100,"rows":30}`},
+		{"data", b64("x")},
+	} {
+		if ev, data := c.nextNonPing(t); ev != want[0] || data != want[1] {
+			t.Fatalf("got %s %s, want %s %s", ev, data, want[0], want[1])
+		}
 	}
 	// Keep-alives flow while the terminal is quiet.
 	if ev, _ := c.next(t); ev != "ping" {
@@ -354,7 +365,7 @@ func TestTerminalStream(t *testing.T) {
 		t.Fatal("replay without ?replay=1")
 	}
 	fs.end <- errors.New("read unix /tmp/x/h-s_term000001.sock: connection reset")
-	ev, data = c.nextNonPing(t)
+	ev, data := c.nextNonPing(t)
 	if ev != "error" || strings.Contains(data, "/tmp/") || !strings.Contains(data, "reconnect") {
 		t.Fatalf("error event: %s %s", ev, data)
 	}

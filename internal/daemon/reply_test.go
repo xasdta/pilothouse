@@ -444,6 +444,7 @@ type termWatch struct {
 	mu     sync.Mutex
 	out    bytes.Buffer
 	sizes  [][2]uint16
+	fixed  []bool // per size event
 	exited *int
 	err    error
 	done   chan struct{}
@@ -462,6 +463,7 @@ func watchTerm(t *testing.T, h *harness, sid string, replay bool) *termWatch {
 			w.out.Write(ev.Data)
 			if ev.Cols > 0 {
 				w.sizes = append(w.sizes, [2]uint16{ev.Cols, ev.Rows})
+				w.fixed = append(w.fixed, ev.Fixed)
 			}
 			if ev.Exited {
 				c := ev.ExitCode
@@ -597,6 +599,14 @@ func TestReplyAndTerminalWrapped(t *testing.T) {
 		defer w.mu.Unlock()
 		return len(w.sizes) > 0 && w.sizes[len(w.sizes)-1] == [2]uint16{40, 12}
 	})
+	// The size was fixed by the attached terminal, and free once it left.
+	w.mu.Lock()
+	fixed := append([]bool(nil), w.fixed...)
+	sizes = append([][2]uint16(nil), w.sizes...)
+	w.mu.Unlock()
+	if !fixed[0] || fixed[len(fixed)-1] {
+		t.Fatalf("fixed flags %v for sizes %v", fixed, sizes)
+	}
 
 	evs, _ := h.c.SessionEvents(ctx, hp.sid, 100)
 	n := 0

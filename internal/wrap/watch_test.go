@@ -209,6 +209,20 @@ func TestHolderInputResize(t *testing.T) {
 	if strings.Contains(w.output(), "10 40") || len(w.framesOf(FrameResize)) != 2 {
 		t.Fatalf("resize applied while attached: %q %d", w.output(), len(w.framesOf(FrameResize)))
 	}
+	// Watchers learn when a terminal attaches and leaves; so does a probe.
+	if sh, _ := Probe(context.Background(), h.sock); !sh.Attached || w.c.Hello.Attached {
+		t.Fatalf("attached in hellos: probe %v, watcher's first %v", sh.Attached, w.c.Hello.Attached)
+	}
+	a.c.Close()
+	waitFor(t, 5*time.Second, "detach reaches the watcher", func() bool { return len(w.framesOf(FrameAttach)) == 2 })
+	for i, want := range []bool{true, false} {
+		if got, err := DecodeAttach(w.framesOf(FrameAttach)[i].Payload); err != nil || got != want {
+			t.Fatalf("attach frame %d = %v %v, want %v", i, got, err, want)
+		}
+	}
+	if sh, _ := Probe(context.Background(), h.sock); sh.Attached {
+		t.Fatal("probe says attached after the client left")
+	}
 	h.stop()
 	h.wait(t)
 }

@@ -400,7 +400,7 @@ func (h *Holder) pump() {
 			h.modes.Feed(chunk)
 			if p := h.cur; p != nil && !p.enqueue(frame) {
 				h.log.Warn("client too slow; detaching it")
-				h.cur = nil
+				h.setCur(nil)
 				p.kill()
 			}
 			h.broadcast(frame)
@@ -474,6 +474,18 @@ func (h *Holder) serverHello() ServerHello {
 		Caps:      holderCaps,
 		Cols:      h.cols,
 		Rows:      h.rows,
+		Attached:  h.cur != nil,
+	}
+}
+
+// setCur changes the attached client and tells watchers when that
+// changes whether a terminal is attached (whose size then wins). Callers
+// hold h.mu.
+func (h *Holder) setCur(p *peer) {
+	was := h.cur != nil
+	h.cur = p
+	if now := p != nil; now != was {
+		h.broadcast(mustFrame(FrameAttach, EncodeAttach(now)))
 	}
 }
 
@@ -556,7 +568,7 @@ func (h *Holder) serve(c net.Conn) {
 		old.enqueue(mustFrame(FrameDetach, encodeText("attached from another terminal")))
 		old.finish()
 	}
-	h.cur = p
+	h.setCur(p)
 	h.mu.Unlock()
 	h.log.Info("client attached", "replay", hello.Replay)
 
@@ -566,7 +578,7 @@ func (h *Holder) serve(c net.Conn) {
 	reason := h.readInput(p)
 	h.mu.Lock()
 	if h.cur == p {
-		h.cur = nil
+		h.setCur(nil)
 	}
 	p.finish()
 	h.mu.Unlock()
