@@ -584,10 +584,14 @@ export function terminalView(id) {
     if (token) { lastSize = ''; sendResize(); }
   }
 
-  // Phones freeze background pages: reconnect at once when shown again.
+  // Phones freeze background pages, which can leave the stream dead without
+  // an error: reconnect at once when shown again after a while (or if it
+  // was already retrying).
+  let hiddenAt = 0;
   function onVisibility() {
-    if (document.hidden || destroyed || exited || !term) return;
-    if (!ctrl || statusEl.classList.contains('reconnecting')) {
+    if (document.hidden) { hiddenAt = Date.now(); return; }
+    if (destroyed || exited || !term) return;
+    if (!ctrl || statusEl.classList.contains('reconnecting') || (hiddenAt && Date.now() - hiddenAt > 20000)) {
       backoff = 0;
       connect();
     }
