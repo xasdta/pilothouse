@@ -295,7 +295,7 @@ rules:
 		t.Fatalf("untrusted ask must apply: %+v", r)
 	}
 	st := e.Status()
-	if len(st.Files) != 3 || st.Files[2].Scope != ScopeRepo || st.Files[2].Trusted {
+	if len(st.Files) != 4 || st.Files[2].Scope != ScopeManaged || st.Files[3].Scope != ScopeRepo || st.Files[3].Trusted {
 		t.Fatalf("status = %+v", st.Files)
 	}
 
@@ -417,7 +417,7 @@ func TestInvalidAtFirstLoad(t *testing.T) {
 func TestMissingFilesAreFine(t *testing.T) {
 	te := newTestEnv(t)
 	e, st := te.load(t)
-	if len(st.Errors) != 0 || st.Rules != 1 || len(st.Files) != 2 {
+	if len(st.Errors) != 0 || st.Rules != 1 || len(st.Files) != 3 {
 		t.Fatalf("status %+v", st)
 	}
 	if e.Changed() {

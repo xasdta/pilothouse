@@ -28,7 +28,7 @@ var adminCommands = map[string]bool{
 
 // readOnlyPolicy are `pilothouse policy` subcommands that only read: an agent
 // helping someone write rules may run them freely.
-var readOnlyPolicy = map[string]bool{"check": true, "test": true, "status": true, "replay": true, "help": true}
+var readOnlyPolicy = map[string]bool{"check": true, "test": true, "status": true, "replay": true, "help": true, "rules": true}
 
 // otherCommands are the remaining pilothouse subcommands; seeing one ends the
 // search for a subcommand (so `pilothouse log --grep approve` is not a hit).
