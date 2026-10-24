@@ -18,8 +18,11 @@ One inbox for Claude Code and Codex. Your rules run before every tool call,<br>a
 
 ```sh
 curl -fsSL https://pilothouse.dev/install.sh | sh     # or: brew install xasdta/tap/pilothouse
-pilothouse setup
+pilothouse demo      # optional: try the phone app with pretend agents (touches nothing)
+pilothouse setup     # hooks (shows the diff first), daemon, phone, test notification
 ```
+
+See [Getting started](docs/GETTING-STARTED.md) for what setup and the demo do.
 
 <p align="center"><img src="docs/assets/demo.gif" width="900" alt="Pilothouse demo: a rule blocks a force-push, then the inbox holds a git push to main while you're away and you approve it with y"></p>
 
@@ -59,13 +62,13 @@ and one of them force-pushes. Pilothouse fixes both:
  Claude Code / Codex ──hook──▶ pilothouse daemon ──▶ policy (allow / ask / deny)
                                      │
                      needs a person? ├─ at desk ─▶ the agent's own prompt
-                                     └─ away ────▶ phone (Web Push / ntfy) ─▶ signed Allow / Deny
+                                     └─ away ────▶ phone (Web Push / ntfy / Telegram) ─▶ Allow / Deny
 ```
 
 1. `pilothouse setup` installs hooks into Claude Code (`~/.claude/settings.json`)
-   and Codex (`~/.codex/hooks.json`). It merges them with your existing hooks
-   and writes a backup first. It then starts a small per-user daemon (launchd or
-   systemd).
+   and Codex (`~/.codex/hooks.json`). It shows the exact diff, merges with your
+   existing hooks and writes a backup first. It then starts a small per-user
+   daemon (launchd or systemd) and helps your phone reach you.
 2. Every hook call goes to the daemon over a Unix socket. Policy checks take
    microseconds, and the whole round trip is about 1 ms.
 3. Permission requests are routed by presence (OS idle time, or `pilothouse
@@ -115,11 +118,21 @@ counted and where the prices come from.
 ```sh
 pilothouse remote tailscale      # HTTPS on your tailnet via Tailscale Serve (nothing public)
 pilothouse pair                  # scan the QR code with your phone, add it to the home screen
+pilothouse notify telegram       # answer from Telegram: buttons, replies; no Tailscale needed
+pilothouse notify ntfy           # or the ntfy app (Allow / Deny buttons with remote access)
+pilothouse notify test           # check what reaches you
 ```
 
-Notifications go out over Web Push. You can also use [ntfy](https://ntfy.sh),
-whose notifications have Allow and Deny buttons, Slack or Discord webhooks, or
-desktop notifications.
+Notifications go out over Web Push from the paired web app, the
+[ntfy](https://ntfy.sh) app, a Telegram bot you create, Slack or Discord
+webhooks, or desktop notifications. They say what is asked (the command, the
+question and its options, the plan), with risk labels and the agent's last
+words when Pilothouse has them. When a request is answered anywhere, the
+phone's notification is replaced ("✓ Allowed from iPhone") instead of
+lingering with stale buttons. In Telegram, requests arrive with buttons
+(Allow / Allow for session / Deny, question options, plan Approve / Request
+changes), and replying to a "finished" message sends that agent a follow-up.
+See [docs/NOTIFICATIONS.md](docs/NOTIFICATIONS.md).
 
 ### Rules
 
@@ -165,6 +178,11 @@ pilothouse task done t_8d1x --pr          # push and open a PR with gh
   web app. Remote access goes through Tailscale Serve only.
 - Remote decisions must carry an ECDSA P-256 signature from a paired device,
   with a timestamp and a single-use nonce.
+- Telegram answers only the one private chat that opened the one-time pairing
+  link; every other chat is ignored. Its buttons carry single-use tokens bound
+  to the chat, message, request and action. The bot token stays in
+  `~/.pilothouse/keys/telegram.json` (0600), never in config, logs or events.
+  `notify.telegram.decisions: false` makes it notify-only.
 - **Agents can't approve themselves.**
   - Local decisions are refused when the caller descends from an agent process.
   - A built-in rule forces a person to confirm any agent command that runs
@@ -178,9 +196,11 @@ pilothouse task done t_8d1x --pr          # push and open a PR with gh
 - Transcripts are read only from the agents' own folders (`~/.claude/projects`,
   `$CODEX_HOME/sessions`), with symlinks resolved, and only as regular `.jsonl`
   files with bounded reads: a hook payload can't point Pilothouse at anything else.
-- Telemetry: none. The only network call is a daily anonymous update check,
-  sending the version, OS, arch and an ID that changes every month. Turn it off
-  with `update_check: false` or `PILOTHOUSE_NO_UPDATE_CHECK=1`.
+- Telemetry: none. Apart from the notification services you configure (Web
+  Push, ntfy, Telegram, webhooks), the only network call is a daily anonymous
+  update check, sending the version, OS, arch and an ID that changes every
+  month. Turn it off with `update_check: false` or
+  `PILOTHOUSE_NO_UPDATE_CHECK=1`.
 
 ## Status
 

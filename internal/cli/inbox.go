@@ -27,10 +27,12 @@ import (
 	"github.com/xasdta/pilothouse/internal/adapters"
 	"github.com/xasdta/pilothouse/internal/adapters/all"
 	"github.com/xasdta/pilothouse/internal/adapters/codex"
+	"github.com/xasdta/pilothouse/internal/adapters/hookkit"
 	"github.com/xasdta/pilothouse/internal/api"
 	"github.com/xasdta/pilothouse/internal/client"
 	"github.com/xasdta/pilothouse/internal/config"
 	"github.com/xasdta/pilothouse/internal/notify"
+	"github.com/xasdta/pilothouse/internal/notify/telegram"
 	"github.com/xasdta/pilothouse/internal/paths"
 	"github.com/xasdta/pilothouse/internal/presence"
 	"github.com/xasdta/pilothouse/internal/service"
@@ -1084,6 +1086,7 @@ func newNotifyCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE:  func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
+	cmd.AddCommand(newNotifyTelegramCmd(), newNotifyNtfyCmd()) // notify_telegram.go
 	cmd.AddCommand(&cobra.Command{
 		Use:   "test",
 		Short: "Send a test notification to every configured channel",
@@ -1137,15 +1140,32 @@ func notifyChannels(ctx context.Context) []string {
 	if cfg.Notify.Ntfy.Topic != "" {
 		ch = append(ch, "ntfy topic "+cfg.Notify.Ntfy.Topic)
 	}
+	if bot, ok := telegramReady(cfg); ok {
+		ch = append(ch, "Telegram @"+bot)
+	}
 	if n := len(cfg.Notify.Webhooks); n > 0 {
 		ch = append(ch, fmt.Sprintf("%d webhook(s)", n))
 	}
 	return ch
 }
 
+// telegramReady reports whether Telegram is on, paired and has a token,
+// and names the bot.
+func telegramReady(cfg *config.Config) (string, bool) {
+	t := cfg.Notify.Telegram
+	if !t.Enabled || t.ChatID == 0 {
+		return "", false
+	}
+	k, err := telegram.LoadKeys(telegram.KeysPath())
+	if err != nil || k.Token == "" {
+		return "", false
+	}
+	return inboxOr(k.BotUsername, "bot"), true
+}
+
 // noChannelsHint is printed when nothing can reach the person yet.
 const noChannelsHint = "no notification channel can reach you yet — pair a phone with `pilothouse pair`" +
-	" (or install notify-send, or set notify.ntfy.topic)"
+	" (or `pilothouse notify telegram`, or `pilothouse notify ntfy`)"
 
 type versionInfo struct {
 	Version  string `json:"version"`
@@ -1180,18 +1200,24 @@ func newVersionCmd() *cobra.Command {
 // ---------------------------------------------------------------- setup
 
 func newSetupCmd() *cobra.Command {
-	var yes bool
+	var yes, noPhone bool
 	cmd := &cobra.Command{
 		Use:   "setup [--yes]",
-		Short: "Get going: install hooks, start the daemon, check notifications",
-		Long: `Setup finds your coding agents, shows what it will change, installs
-Pilothouse's hooks (backing up each settings file first), runs the daemon as a
-login service, and sends a test notification. Run it again any time: it
-only changes what is missing or out of date.`,
+		Short: "Get going: install hooks, start the daemon, reach your phone",
+		Long: `Setup finds your coding agents, shows the exact change to each settings file,
+installs Pilothouse's hooks (backing up each file first), runs the daemon as a
+login service, then helps your phone reach you: remote access with Tailscale
+and pairing (QR code right here), Telegram, or the ntfy app. It ends with a
+test notification and a short checklist. Run it again any time: it only
+changes what is missing or out of date.
+
+--yes accepts the defaults without asking and skips the phone steps (they
+need you to scan or tap something).`,
 		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error { return runSetup(cmd, yes) },
+		RunE: func(cmd *cobra.Command, _ []string) error { return runSetup(cmd, yes, noPhone) },
 	}
-	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "accept the defaults without asking")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "accept the defaults without asking (skips the phone steps)")
+	cmd.Flags().BoolVar(&noPhone, "no-phone", false, "skip remote access, pairing, Telegram and ntfy")
 	return cmd
 }
 
@@ -1199,6 +1225,47 @@ type setupUI struct {
 	w   io.Writer
 	in  *bufio.Reader
 	yes bool
+}
+
+// askNo asks a yes/no question whose default is no (optional extras).
+func (u *setupUI) askNo(q string) bool {
+	if u.yes {
+		fmt.Fprintf(u.w, "? %s [y/N] no\n", q)
+		return false
+	}
+	fmt.Fprintf(u.w, "? %s [y/N] ", q)
+	line, err := u.in.ReadString('\n')
+	if err != nil && line == "" {
+		fmt.Fprintln(u.w)
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "y", "yes":
+		return true
+	}
+	return false
+}
+
+// maxSetupDiff bounds the lines of each settings diff shown before asking.
+const maxSetupDiff = 40
+
+// printSetupDiff shows the change a dry run would make to each file.
+func printSetupDiff(w io.Writer, ch adapters.Change) {
+	for _, c := range append([]adapters.Change{ch}, ch.More...) {
+		if !c.Changed && c.Before == c.After {
+			continue
+		}
+		d := hookkit.Diff(tui.ShortPath(c.Path), c.Before, c.After)
+		if d == "" {
+			continue
+		}
+		lines := strings.Split(strings.TrimRight(d, "\n"), "\n")
+		if len(lines) > maxSetupDiff {
+			n := len(lines) - maxSetupDiff
+			lines = append(lines[:maxSetupDiff], fmt.Sprintf("… %d more line(s): `pilothouse hooks install --dry-run` shows everything", n))
+		}
+		fmt.Fprintln(w, indent(strings.Join(lines, "\n"), "      "))
+	}
 }
 
 // ask asks a yes/no question; the default is yes. With --yes it answers
@@ -1221,7 +1288,7 @@ func (u *setupUI) ask(q string) bool {
 	return false
 }
 
-func runSetup(cmd *cobra.Command, yes bool) error {
+func runSetup(cmd *cobra.Command, yes, noPhone bool) error {
 	ctx := cmd.Context()
 	w := cmd.OutOrStdout()
 	if !yes && !inboxStdinTerminal() {
@@ -1282,6 +1349,7 @@ func runSetup(cmd *cobra.Command, yes bool) error {
 		}
 		fmt.Fprintf(w, "  • %s%s  %s\n", a.DisplayName(), ver, inboxOr(ch.Summary, "will add Pilothouse hooks"))
 		fmt.Fprintf(w, "      file: %s (a backup is written first)\n", tui.ShortPath(ch.Path))
+		printSetupDiff(w, ch)
 		toInstall = append(toInstall, a)
 	}
 	if found == 0 {
@@ -1362,7 +1430,38 @@ func runSetup(cmd *cobra.Command, yes bool) error {
 		note("✗ daemon not running — see `pilothouse doctor`")
 	}
 
-	// 3. Notifications.
+	// 3. Phone: remote access, pairing, Telegram, ntfy.
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Phone")
+	paired := pairedDevices(ctx, daemonOK)
+	switch {
+	case noPhone:
+		fmt.Fprintln(w, "  · skipped (--no-phone)")
+		note("· phone steps skipped")
+	case yes:
+		fmt.Fprintln(w, "  · skipped with --yes: these need you to scan or tap something")
+		note("· phone: `pilothouse pair`, `pilothouse notify telegram` or `pilothouse notify ntfy` when you're ready")
+	default:
+		restart := setupPhone(ctx, ui, w, daemonOK, paired, note)
+		if restart && daemonOK {
+			// The daemon reads ntfy settings at start.
+			if usedService {
+				if err := mgr.Restart(ctx); err != nil {
+					fmt.Fprintf(w, "  ! restart the daemon to use ntfy: %v\n", err)
+				}
+			} else {
+				fmt.Fprintln(w, "  ! restart the daemon to use ntfy: `pilothouse stop && pilothouse start`")
+			}
+			if _, err := waitForHealth(ctx, inboxHealthWait); err != nil {
+				fmt.Fprintf(w, "  ✗ the daemon isn't answering after the restart: %v\n", err)
+			}
+		}
+		paired = pairedDevices(ctx, daemonOK)
+	}
+
+	// 4. Test notification.
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Notifications")
 	if daemonOK {
 		if err := inboxClient().NotifyTest(ctx); err != nil {
 			fmt.Fprintf(w, "  ! test notification failed: %v\n", inboxErr(err, ""))
@@ -1370,16 +1469,19 @@ func runSetup(cmd *cobra.Command, yes bool) error {
 		} else {
 			if ch := notifyChannels(ctx); len(ch) > 0 {
 				fmt.Fprintln(w, "  ✓ test notification sent ("+strings.Join(ch, ", ")+")")
+				note("✓ test notification sent")
 			} else {
 				fmt.Fprintln(w, "  ! "+noChannelsHint)
-				note("! no notification channel yet")
+				note("! no notification channel can reach you yet")
 			}
 		}
+	} else {
+		fmt.Fprintln(w, "  · skipped: the daemon isn't running")
 	}
 
-	// 4. Summary and next steps.
+	// 5. Checklist and next steps.
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Summary")
+	fmt.Fprintln(w, "Checklist")
 	for _, s := range summary {
 		fmt.Fprintln(w, "  "+s)
 	}
@@ -1389,7 +1491,10 @@ func runSetup(cmd *cobra.Command, yes bool) error {
 	if _, err := os.Stat(paths.Policy()); errors.Is(err, os.ErrNotExist) {
 		fmt.Fprintln(tw, "  pilothouse policy init\twrite a starter policy (block force-push, ask before deploys, …)")
 	}
-	fmt.Fprintln(tw, "  pilothouse pair\tpair your phone to approve when you're away")
+	if paired == 0 {
+		fmt.Fprintln(tw, "  pilothouse pair\tpair your phone to approve when you're away")
+	}
+	fmt.Fprintln(tw, "  pilothouse demo\ttry the phone app with pretend agents")
 	fmt.Fprintln(tw, "  pilothouse\topen the inbox")
 	fmt.Fprintln(tw, "  pilothouse doctor\tcheck everything is wired up")
 	tw.Flush()
@@ -1397,6 +1502,147 @@ func runSetup(cmd *cobra.Command, yes bool) error {
 		return ExitError{Code: 1}
 	}
 	return nil
+}
+
+// pairedDevices counts paired, unrevoked devices (0 without a daemon).
+func pairedDevices(ctx context.Context, daemonOK bool) int {
+	n := 0
+	if !daemonOK {
+		return 0
+	}
+	if ds, err := inboxClient().Devices(ctx); err == nil {
+		for _, d := range ds {
+			if d.RevokedAt == nil {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+// setupPhone offers remote access (Tailscale), pairing, Telegram and ntfy.
+// It reports whether the daemon must restart to pick up ntfy.
+func setupPhone(ctx context.Context, ui *setupUI, w io.Writer, daemonOK bool, paired int, note func(string)) (restart bool) {
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(w, "  ✗ %v\n", err)
+		return false
+	}
+	remote := cfg.Web.PublicURL != ""
+	if remote {
+		fmt.Fprintf(w, "  ✓ remote access: %s\n", cfg.Web.PublicURL)
+	} else if setupTailscale(ctx, ui, w) {
+		remote = true
+		note("✓ remote access over Tailscale")
+	}
+	switch {
+	case !daemonOK:
+	case paired > 0:
+		fmt.Fprintf(w, "  ✓ %d paired device(s)\n", paired)
+		if remote && ui.askNo("Pair another phone or browser?") {
+			setupPair(ctx, ui, w, note)
+		}
+	case remote:
+		if ui.ask("Pair your phone now (scan a QR code)?") {
+			setupPair(ctx, ui, w, note)
+		} else {
+			note("· phone not paired (`pilothouse pair`)")
+		}
+	}
+
+	k, _ := telegram.LoadKeys(telegram.KeysPath())
+	if cfg.Notify.Telegram.Enabled && cfg.Notify.Telegram.ChatID != 0 && k.Token != "" {
+		fmt.Fprintf(w, "  ✓ Telegram: @%s\n", k.BotUsername)
+	} else if ui.askNo("Answer requests from Telegram too (buttons; works without Tailscale)?") {
+		fmt.Fprintln(w)
+		if ok, err := runNotifyTelegram(ctx, w, ui.in, tgOptions{}); err != nil {
+			fmt.Fprintf(w, "  ✗ Telegram: %v\n", err)
+			note("✗ Telegram not set up: " + err.Error())
+		} else if ok {
+			note("✓ Telegram connected")
+		}
+	}
+
+	if cfg.Notify.Ntfy.Topic != "" {
+		fmt.Fprintf(w, "  ✓ ntfy topic %s\n", cfg.Notify.Ntfy.Topic)
+	} else if ui.askNo("Send notifications to the ntfy app?") {
+		if topic, err := runNotifyNtfy(w, "", "", false); err != nil {
+			fmt.Fprintf(w, "  ✗ ntfy: %v\n", err)
+		} else {
+			note("✓ ntfy topic " + topic)
+			restart = true
+		}
+	}
+	return restart
+}
+
+// setupTailscale detects Tailscale and offers to serve the web app on the
+// tailnet. It reports whether remote access is now on.
+func setupTailscale(ctx context.Context, ui *setupUI, w io.Writer) bool {
+	bin, err := rmtTailscale.binary()
+	if err != nil {
+		fmt.Fprintln(w, "  · Tailscale isn't installed: your phone can reach this computer once it is (https://tailscale.com/download),")
+		fmt.Fprintln(w, "    then `pilothouse remote tailscale`. Telegram and ntfy work without it.")
+		return false
+	}
+	st, err := rmtTailscale.status(ctx, bin)
+	host := strings.TrimSuffix(st.Self.DNSName, ".")
+	switch {
+	case err != nil:
+		fmt.Fprintf(w, "  ! Tailscale: %v\n", err)
+		return false
+	case st.BackendState != "Running":
+		fmt.Fprintf(w, "  ! Tailscale is installed but %s — sign in (`tailscale up` or the Tailscale app), then `pilothouse remote tailscale`\n", rmtOr(st.BackendState, "stopped"))
+		return false
+	case host == "" || (st.CurrentTailnet != nil && !st.CurrentTailnet.MagicDNSEnabled):
+		fmt.Fprintln(w, "  ! Tailscale is connected, but MagicDNS is off: turn it on at https://login.tailscale.com/admin/dns, then `pilothouse remote tailscale`")
+		return false
+	case len(st.CertDomains) == 0:
+		fmt.Fprintln(w, "  ! Tailscale is connected, but HTTPS certificates are off (phones need HTTPS):")
+		fmt.Fprintln(w, "    enable them at https://login.tailscale.com/admin/dns → HTTPS Certificates, then `pilothouse remote tailscale`")
+		return false
+	}
+	fmt.Fprintf(w, "  ✓ Tailscale connected (%s), HTTPS certificates on\n", host)
+	if !ui.ask("Serve the web app on your tailnet at https://" + host + " (only your devices can reach it)?") {
+		return false
+	}
+	if err := rmtTailscaleOn(ctx, w); err != nil {
+		fmt.Fprintf(w, "  ✗ %v\n", err)
+		return false
+	}
+	return true
+}
+
+// setupPair shows a pairing QR code and waits for Enter, then reports
+// whether a new device paired.
+func setupPair(ctx context.Context, ui *setupUI, w io.Writer, note func(string)) {
+	c := rmtClient()
+	known := map[string]bool{}
+	if ds, err := c.Devices(ctx); err == nil {
+		for _, d := range ds {
+			known[d.ID] = true
+		}
+	}
+	p, err := c.Pair(ctx)
+	if err != nil {
+		fmt.Fprintf(w, "  ✗ pairing: %v\n", rmtErr(err, "pairing"))
+		return
+	}
+	rmtPrintPair(w, p, true)
+	fmt.Fprint(w, "  Scan it with your phone's camera and finish pairing there, then press Enter here. ")
+	_, _ = ui.in.ReadString('\n')
+	ds, err := c.Devices(ctx)
+	if err == nil {
+		for _, d := range ds {
+			if !known[d.ID] && d.RevokedAt == nil {
+				fmt.Fprintf(w, "  ✓ Paired %q. Turn on notifications in its Settings tab.\n", d.Name)
+				note("✓ paired " + d.Name)
+				return
+			}
+		}
+	}
+	fmt.Fprintln(w, "  · not paired yet: the code works for 10 minutes, or run `pilothouse pair` any time")
+	note("· phone not paired yet (`pilothouse pair`)")
 }
 
 func inboxOr(s, def string) string {
@@ -1700,7 +1946,11 @@ func runDoctor(ctx context.Context) []doctorCheck {
 	if devices > 0 {
 		ch = append(ch, fmt.Sprintf("%d paired device(s)", devices))
 	}
-	remote := cfg.Notify.Ntfy.Topic != "" || len(cfg.Notify.Webhooks) > 0 || devices > 0
+	tgBot, tgOK := telegramReady(cfg)
+	if tgOK {
+		ch = append(ch, "Telegram @"+tgBot)
+	}
+	remote := cfg.Notify.Ntfy.Topic != "" || len(cfg.Notify.Webhooks) > 0 || devices > 0 || tgOK
 	switch {
 	case len(ch) == 0:
 		add("notifications", checkWarn, "no channels configured", "`pilothouse pair` to get pushes on your phone")
@@ -1708,6 +1958,18 @@ func runDoctor(ctx context.Context) []doctorCheck {
 		add("notifications", checkWarn, strings.Join(ch, ", ")+" — nothing reaches you when you're away", "`pilothouse pair` to approve from your phone")
 	default:
 		add("notifications", checkOK, strings.Join(ch, ", "), "")
+	}
+
+	// Telegram.
+	if c := doctorTelegram(ctx, cfg); c != nil {
+		add(c.Name, c.level, c.Detail, c.Fix)
+	}
+
+	// Keep-awake (workstream B fills doctorKeepAwake).
+	if doctorKeepAwake != nil {
+		if c := doctorKeepAwake(ctx, cfg); c != nil {
+			add(c.Name, c.level, c.Detail, c.Fix)
+		}
 	}
 
 	// Remote URL.
