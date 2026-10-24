@@ -143,7 +143,13 @@ try:
     A = Term([PH, "attach", sid], env=env(), cwd=REPO, log=f"{ROOT}/s7.raw")
     time.sleep(5)
     scr = A.text()
-    results["trust-prompt-surfaced"] = ("trust" in scr.lower()) == ("trust this folder" in (t.get("note") or ""))
+    # When Claude asks, Pilothouse must have said so. (It may predict a
+    # question Claude doesn't ask here: Pilothouse reads the isolated
+    # home's ~/.claude.json, Claude the real one, where an earlier run of
+    # this script may have recorded the answer.)
+    asked = "trust this folder" in scr.lower()
+    say("claude asked about folder trust:", asked)
+    results["trust-prompt-surfaced"] = not asked or "trust this folder" in (t.get("note") or "")
     if "Yes, I trust this folder" in scr:
         if "❯ Yes, I trust" not in scr:
             A.send("\x1b[B"); time.sleep(0.5)
