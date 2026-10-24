@@ -114,10 +114,13 @@ func TestHolderEnvironment(t *testing.T) {
 	s := attachSession(t, h.sock, true)
 	s.waitOutput("env:1:" + h.sid + ":t_abc:xterm-256color")
 	// Attaching resizes to the client's size (100x30); the initial size
-	// (27 91) may already have been printed.
-	if !strings.Contains(s.output(), "27 91") && !strings.Contains(s.output(), "30 100") {
-		t.Fatalf("no size in %q", s.output())
-	}
+	// (27 91) may already have been printed. `stty size` runs after the
+	// echo, so under load its line can arrive in a later read: wait for
+	// it instead of checking right after the env line.
+	waitFor(t, 10*time.Second, "stty size output", func() bool {
+		out := s.output()
+		return strings.Contains(out, "27 91") || strings.Contains(out, "30 100")
+	})
 	s.send("\r")
 	h.wait(t)
 }
