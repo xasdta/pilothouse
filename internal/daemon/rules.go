@@ -300,7 +300,7 @@ func behaviorRank(b api.Behavior) int {
 
 const (
 	suggestWindow  = 7 * 24 * time.Hour
-	suggestHistory = 2000 // closed requests looked at for repeated approvals
+	suggestHistory = 500 // closed requests looked at for repeated approvals
 	minRepeats     = 2
 )
 
@@ -367,13 +367,15 @@ func requestInput(req api.Request, repo, branch string) policy.Input {
 // person allowed in the last week that it would have covered, and moves
 // the ones with repeats to the front.
 func (d *Daemon) rankByApprovals(ctx context.Context, sg []api.RuleSuggestion, home string) {
-	var allowIdx []int
+	matchers := map[int]*policy.SpecMatcher{}
 	for i, s := range sg {
 		if s.Rule.Action == api.BehaviorAllow {
-			allowIdx = append(allowIdx, i)
+			if m, err := policy.NewSpecMatcher(s.Rule, home); err == nil {
+				matchers[i] = m
+			}
 		}
 	}
-	if len(allowIdx) == 0 {
+	if len(matchers) == 0 {
 		return
 	}
 	past, err := d.db.Requests(ctx, store.RequestFilter{Closed: true, Limit: suggestHistory})
@@ -395,8 +397,8 @@ func (d *Daemon) rankByApprovals(ctx context.Context, sg []api.RuleSuggestion, h
 			sessions[r.SessionID] = s
 		}
 		in := requestInput(r, s.RepoRoot, s.Branch)
-		for _, i := range allowIdx {
-			if ok, _ := policy.MatchSpec(sg[i].Rule, in, home); ok {
+		for i, m := range matchers {
+			if m.Match(in) {
 				counts[i]++
 			}
 		}

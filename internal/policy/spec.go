@@ -12,19 +12,43 @@ import (
 // for rule suggestions: checking a suggestion against the call it came
 // from, and counting past approvals it would have covered. home expands ~.
 func MatchSpec(spec api.RuleSpec, in Input, home string) (bool, error) {
-	rules, err := compileSpecs("suggestion", []api.RuleSpec{spec}, home)
-	if err != nil || len(rules) != 1 {
+	m, err := NewSpecMatcher(spec, home)
+	if err != nil {
 		return false, err
 	}
-	c := evalCtx{in: &in, home: home, now: in.Now}
+	return m.Match(in), nil
+}
+
+// SpecMatcher is a compiled spec, for matching many calls.
+type SpecMatcher struct {
+	r    *rule
+	home string
+}
+
+// NewSpecMatcher compiles spec as a managed rule.
+func NewSpecMatcher(spec api.RuleSpec, home string) (*SpecMatcher, error) {
+	rules, err := compileSpecs("suggestion", []api.RuleSpec{spec}, home)
+	if err != nil {
+		return nil, err
+	}
+	if len(rules) != 1 {
+		return nil, invalidf("not one rule")
+	}
+	return &SpecMatcher{r: rules[0], home: home}, nil
+}
+
+// Match reports whether the rule matches in (a `when:` that fails at run
+// time doesn't).
+func (m *SpecMatcher) Match(in Input) bool {
+	c := evalCtx{in: &in, home: m.home, now: in.Now}
 	if in.Cwd != "" {
-		c.cwd = filepath.Clean(expandHome(in.Cwd, home))
+		c.cwd = filepath.Clean(expandHome(in.Cwd, m.home))
 	}
 	if in.Repo != "" {
-		c.repo = filepath.Clean(expandHome(in.Repo, home))
+		c.repo = filepath.Clean(expandHome(in.Repo, m.home))
 	}
-	ok, _, err := rules[0].eval(&c)
-	return ok, err
+	ok, _, err := m.r.eval(&c)
+	return ok && err == nil
 }
 
 // GuessToolKind classifies the common vendor tool names like the
