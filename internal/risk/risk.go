@@ -263,6 +263,14 @@ func (f *finder) read(p string, listing bool) {
 	f.add(api.RiskSecrets, api.RiskHigh, "Reads "+what)
 }
 
+// IsSecretPath reports whether p (absolute) holds credentials: .env files,
+// private keys, ~/.ssh, ~/.aws and the like. home is the user's home.
+func IsSecretPath(p, home string) bool {
+	f := &finder{home: filepath.Clean(home)}
+	_, ok := f.secretPath(filepath.Clean(p), true)
+	return ok
+}
+
 // secretFileNames are base names that hold credentials wherever they are.
 var secretFileNames = map[string]bool{
 	".env": true, ".envrc": true, ".netrc": true, "_netrc": true, ".pgpass": true, ".git-credentials": true,
