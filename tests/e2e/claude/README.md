@@ -42,7 +42,11 @@ $R/venv/bin/python s3_grant.py     # allow-for-session grant; deny/ask rules bea
 $R/venv/bin/python s4_wrap.py      # pilothouse run: OSC 7501, detach/attach, daemon kill/restart, exit codes
 $R/venv/bin/python s5_task.py      # task new / ls / diff / done --keep / abandon (always_hold + phone)
 $R/venv/bin/python s6_observe.py   # TUI shows held request live and answers with y; CLI approve/deny; guard
+$R/venv/bin/python s7_reply.py     # 0.2: replies to wrapped (PTY) and observed (messaging socket) Claude, --interrupt,
+                                   # the phone's live terminal (phone_terminal.mjs), keep-awake while working
 ```
+
+s7 needs the paired phone state at `$R/phone.json` (the `phone.mjs pair` step above).
 
 Each prints `[e2e] RESULTS {...}` at the end, plus `pilothouse log`/`explain` output.
 
@@ -52,6 +56,7 @@ Each prints `[e2e] RESULTS {...}` at the end, plus `pilothouse log`/`explain` ou
 - `common.py` – env isolation (strips the parent's `CLAUDECODE`/`CLAUDE_*` vars), `ph()`, `ph_person()`, `claude()` launcher (`--permission-mode default` so dialogs appear even if the user's default mode is auto), folder-trust handling.
 - `detach.py` – runs a command double-forked so it is not a descendant of an agent. Pilothouse refuses `approve/deny/here/away/pair/stop` from inside an agent's process tree by design; a harness running under Claude Code acts as "the person" through this.
 - `phone.mjs` – simulated paired phone (WebCrypto P-256, signed decisions, replay check).
+- `phone_terminal.mjs` – the phone's live terminal: signed `terminal` action → token, SSE stream with replay, typed input and resize, token scoping.
 - `tui_driver.py` – drives the inbox TUI in a PTY (run via `detach.py`).
 
 Isolation: never run these without the `PILOTHOUSE_*` variables; `claude` is
