@@ -282,10 +282,12 @@ export function openPalette() {
     active = Math.min(active, Math.max(0, shown.length - 1));
     const groups = [];
     let cur = null;
+    // While searching, results are ranked across kinds: one list, the kind on each row.
+    const flat = !!q;
     shown.forEach((c, i) => {
-      if (!cur || cur.name !== c.group) {
+      if (!cur || (!flat && cur.name !== c.group)) {
         const hid = uid('pg');
-        cur = { name: c.group, el: h('div', { role: 'group', 'aria-labelledby': hid }, h('div', { class: 'palette-group', id: hid, role: 'presentation' }, c.group)) };
+        cur = { name: c.group, el: h('div', { role: 'group', 'aria-labelledby': hid }, h('div', { class: 'palette-group', id: hid, role: 'presentation' }, flat ? 'Best matches' : c.group)) };
         groups.push(cur);
       }
       const id = listId + '-' + i;
@@ -293,7 +295,8 @@ export function openPalette() {
         ? h('span', { class: 'ico agent-ico ' + agentClass(c.agent), 'aria-hidden': 'true' }, agentInitials(c.agent))
         : h('span', { class: 'ico', 'aria-hidden': 'true' }, icon(c.ico || 'chev', 'sm'));
       const item = h('div', { class: 'palette-item', role: 'option', id, 'aria-selected': String(i === active) },
-        ico, h('span', { class: 'txt' }, h('b', null, highlight(c.title, c.hits && c.hits.hits)), c.sub ? h('span', null, c.sub) : null));
+        ico, h('span', { class: 'txt' }, h('b', null, highlight(c.title, c.hits && c.hits.hits)), c.sub ? h('span', null, c.sub) : null),
+        flat ? h('span', { class: 'kind' }, c.group) : null);
       item.addEventListener('mousemove', () => { if (active !== i) { active = i; mark(); } });
       item.addEventListener('click', () => run(i));
       add(cur.el, item);

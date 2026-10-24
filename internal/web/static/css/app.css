@@ -1011,6 +1011,7 @@ dialog::backdrop { background: var(--scrim); }
 .palette-item .txt b { display: block; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .palette-item .txt span { display: block; color: var(--text-3); font-size: var(--fs-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .palette-item mark { background: none; color: var(--brand-text); font-weight: 750; }
+.palette-item .kind { flex: none; color: var(--text-3); font-size: var(--fs-xs); font-weight: 600; }
 .palette-empty { padding: 28px 16px; text-align: center; color: var(--text-3); }
 .palette-foot { display: flex; gap: 14px; padding: 9px 16px; border-top: 0.5px solid var(--border-strong); color: var(--text-3); font-size: var(--fs-xs); flex: none; }
 .palette-foot span { display: inline-flex; align-items: center; gap: 5px; }
@@ -1054,6 +1055,11 @@ dialog::backdrop { background: var(--scrim); }
   .actions.wide-row { grid-template-columns: 1fr 1fr 1.5fr; }
   .actions.wide-row .btn.primary { grid-column: auto; min-height: 48px; font-size: 16px; }
 }
+@media (min-width: 1024px) and (max-width: 1279px) {
+  .shell { grid-template-columns: 224px minmax(0, 1fr) 360px; }
+  .banner, .toasts { left: calc(224px + (100vw - 224px - 360px) / 2); }
+  main { padding-left: 22px; padding-right: 22px; }
+}
 @media (min-width: 1440px) {
   .shell { grid-template-columns: 272px minmax(0, 1fr) 440px; }
   .banner, .toasts { left: calc(272px + (100vw - 272px - 440px) / 2); }
@@ -1068,7 +1074,7 @@ dialog::backdrop { background: var(--scrim); }
   border: 1px solid var(--border-strong); background: var(--surface); color: var(--text-3); font-size: var(--fs-base); text-align: left;
 }
 .search-btn:hover { color: var(--text-2); border-color: color-mix(in srgb, var(--text) 25%, transparent); }
-.search-btn span { flex: 1; }
+.search-btn span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .search-btn kbd { height: 20px; font-size: 11px; }
 .nav-item {
   display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 10px; border-radius: 10px;
@@ -1100,6 +1106,10 @@ dialog::backdrop { background: var(--scrim); }
 .queue-empty b { display: block; margin-bottom: 4px; color: var(--text); font-size: var(--fs-md); }
 .queue-empty svg.ic { width: 28px; height: 28px; color: var(--allow-text); margin-bottom: 6px; }
 .queue .req { padding: 14px 14px 12px; }
+
+/* Keyboard selection scrolls items clear of the fixed bars. */
+[data-nav] { scroll-margin-top: calc(var(--safe-top) + var(--bar-h) + 16px); scroll-margin-bottom: calc(var(--safe-bottom) + var(--tab-h) + 16px); }
+.queue [data-nav] { scroll-margin-top: 68px; scroll-margin-bottom: 16px; }
 
 /* ---------- Shell variants ---------- */
 .bare-shell { display: block !important; }

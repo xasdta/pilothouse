@@ -104,7 +104,7 @@ await page.bringToFront();
 hold('sec', `echo qa-sec-${RUN}`);
 await page.waitForFunction((n) => document.body.innerText.includes(n), {}, `qa-sec-${RUN}`);
 let captured = null;
-page.on('request', (r) => { if (r.url().includes('/decide')) captured = { url: r.url(), body: r.postData() }; });
+page.on('request', (r) => { if (r.url().includes('/decide') || r.url().includes('/respond')) captured = { url: r.url(), body: r.postData() }; });
 const card = await page.waitForSelector(`xpath///article[contains(@class,'req')][.//pre[contains(., 'qa-sec-${RUN}')]]`);
 await (await card.$('.actions .btn.primary')).click();
 const out = await readOut('sec');
@@ -124,8 +124,11 @@ const res = await page.evaluate(async (c, id2) => {
   const b = JSON.parse(c.body);
   const post = async (id, body) => { const r = await fetch('/api/requests/' + id + '/decide', { method: 'POST', headers: { 'X-Pilothouse': '1', 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); return r.status + ' ' + (await r.json()).code; };
   const o = {};
-  o.otherId = await post(id2, b); // signature for another id
-  o.flip = await post(id2, { ...b, behavior: 'deny', nonce: 'A'.repeat(24) });
+  // The card's own answer: v2 (signed payload, /respond) from 0.2 on.
+  const v2 = typeof b.payload === 'string';
+  const postAs = async (id, body) => { const r = await fetch('/api/requests/' + id + (v2 ? '/respond' : '/decide'), { method: 'POST', headers: { 'X-Pilothouse': '1', 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); return r.status + ' ' + (await r.json()).code; };
+  o.otherId = await postAs(id2, b); // signature for another id
+  o.flip = await postAs(id2, v2 ? { ...b, payload: JSON.stringify({ behavior: 'deny' }), nonce: 'A'.repeat(24) } : { ...b, behavior: 'deny', nonce: 'A'.repeat(24) });
   // Stale but correctly signed.
   const rec = await self.PilothouseKeys.load();
   const sign = async (id, beh, sc, ts, nonce) => {

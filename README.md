@@ -91,6 +91,14 @@ Notifications go out over Web Push. You can also use [ntfy](https://ntfy.sh),
 whose notifications have Allow and Deny buttons, Slack or Discord webhooks, or
 desktop notifications.
 
+The inbox shows each request with what the agent last said, the command
+highlighted, a diff for file edits, risk labels and the rule that asked. You
+can answer agents' questions and approve or send back their plans. **Make it
+a rule** turns an answer into a rule with one tap. On a computer, the web app
+has three panes (sessions · current view · needs you) and keyboard shortcuts:
+`j`/`k` to move, `a` to allow, `d` to deny, `⌘K` to search, `?` to list them all.
+Light and dark mode follow your device unless you pick one in Settings.
+
 ### Rules
 
 ```yaml
