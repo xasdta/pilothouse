@@ -1,0 +1,18 @@
+{
+  "kind": "pre_tool",
+  "vendor_event": "tool.execute.before",
+  "agent_session_id": "ses_e94dcca81ffed3xpV80ryjnePM",
+  "cwd": "/work/repo",
+  "tool_use_id": "call_5",
+  "tool": "apply_patch",
+  "tool_kind": "edit",
+  "paths": [
+    "/work/repo/a.txt",
+    "/work/repo/b.txt",
+    "/work/repo/c.txt"
+  ],
+  "input": {
+    "patchText": "*** Begin Patch\n*** Add File: a.txt\n+hi\n*** Update File: b.txt\n@@\n-x\n+y\n*** Delete File: c.txt\n*** End Patch"
+  },
+  "summary": "Edit: a.txt, b.txt, c.txt"
+}

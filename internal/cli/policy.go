@@ -194,7 +194,7 @@ func newPolicyTestCmd() *cobra.Command {
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&f.agent, "agent", string(api.AgentClaude), "agent: claude, codex or generic")
+	fl.StringVar(&f.agent, "agent", string(api.AgentClaude), "agent: claude, codex, opencode or generic")
 	fl.StringVar(&f.tool, "tool", "", "vendor tool name, e.g. Bash, Edit, Read (inferred when omitted)")
 	fl.StringVar(&f.kind, "kind", "", "shell, edit, read, web, mcp or other (inferred from --tool/--command)")
 	fl.StringVar(&f.command, "command", "", "shell command line")
@@ -266,9 +266,9 @@ func polBuildInput(cmd *cobra.Command, f polTestFlags) (policy.Input, []string, 
 	}
 	agent := api.AgentKind(f.agent)
 	switch agent {
-	case api.AgentClaude, api.AgentCodex, api.AgentGeneric:
+	case api.AgentClaude, api.AgentCodex, api.AgentOpenCode, api.AgentGeneric:
 	default:
-		return policy.Input{}, nil, fmt.Errorf("unknown --agent %q (claude, codex or generic)", f.agent)
+		return policy.Input{}, nil, fmt.Errorf("unknown --agent %q (claude, codex, opencode or generic)", f.agent)
 	}
 	kind := api.ToolKind(f.kind)
 	tool := f.tool
@@ -337,13 +337,13 @@ func polBuildInput(cmd *cobra.Command, f polTestFlags) (policy.Input, []string, 
 // adapters, so `--tool Edit` alone is enough.
 func polToolKind(tool string) api.ToolKind {
 	switch tool {
-	case "Bash", "shell", "exec_command", "local_shell", "unified_exec":
+	case "Bash", "shell", "exec_command", "local_shell", "unified_exec", "bash":
 		return api.ToolShell
-	case "Write", "Edit", "MultiEdit", "NotebookEdit", "apply_patch":
+	case "Write", "Edit", "MultiEdit", "NotebookEdit", "apply_patch", "write", "edit", "multiedit", "patch":
 		return api.ToolEdit
-	case "Read", "Glob", "Grep", "LS", "NotebookRead", "view_image":
+	case "Read", "Glob", "Grep", "LS", "NotebookRead", "view_image", "read", "glob", "grep", "list":
 		return api.ToolRead
-	case "WebFetch", "WebSearch", "web_search":
+	case "WebFetch", "WebSearch", "web_search", "webfetch", "websearch", "codesearch":
 		return api.ToolWeb
 	}
 	if strings.HasPrefix(tool, "mcp__") {
@@ -353,6 +353,21 @@ func polToolKind(tool string) api.ToolKind {
 }
 
 func polDefaultTool(agent api.AgentKind, kind api.ToolKind) string {
+	if agent == api.AgentOpenCode {
+		switch kind {
+		case api.ToolShell:
+			return "bash"
+		case api.ToolEdit:
+			return "edit"
+		case api.ToolRead:
+			return "read"
+		case api.ToolWeb:
+			return "webfetch"
+		case api.ToolMCP:
+			return "server_tool"
+		}
+		return "tool"
+	}
 	codex := agent == api.AgentCodex
 	switch kind {
 	case api.ToolShell:

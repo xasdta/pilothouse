@@ -1,0 +1,13 @@
+{
+  "v": 1,
+  "session_id": "ses_e94dcca81ffed3xpV80ryjnePM",
+  "agent_session_id": "ses_child",
+  "directory": "/work/repo",
+  "event": "tool.execute.before",
+  "tool": "bash",
+  "call_id": "call_16",
+  "args": {
+    "command": "ls",
+    "description": "list"
+  }
+}

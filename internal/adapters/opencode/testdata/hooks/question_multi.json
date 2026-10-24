@@ -1,0 +1,45 @@
+{
+  "v": 1,
+  "session_id": "ses_e94dcca81ffed3xpV80ryjnePM",
+  "agent_session_id": "ses_e94dcca81ffed3xpV80ryjnePM",
+  "directory": "/work/repo",
+  "event": "question.asked",
+  "request_id": "que_multi",
+  "call_id": "call_14",
+  "questions": [
+    {
+      "question": "Which checks?",
+      "header": "Checks",
+      "multiple": true,
+      "custom": false,
+      "options": [
+        {
+          "label": "Lint",
+          "description": ""
+        },
+        {
+          "label": "Unit, fast",
+          "description": "commas in a label"
+        },
+        {
+          "label": "E2E",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "question": "Ship it?",
+      "header": "Ship",
+      "options": [
+        {
+          "label": "Yes",
+          "description": ""
+        },
+        {
+          "label": "No",
+          "description": ""
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "v": 1,
+  "session_id": "ses_e94dcca81ffed3xpV80ryjnePM",
+  "agent_session_id": "ses_e94dcca81ffed3xpV80ryjnePM",
+  "directory": "/work/repo",
+  "event": "permission.asked",
+  "request_id": "per_16b2338ac001vcFIqYJbypy2WI",
+  "permission": {
+    "permission": "bash",
+    "patterns": [
+      "git push origin main"
+    ],
+    "metadata": {
+      "command": "git push origin main"
+    },
+    "always": [
+      "git push *"
+    ]
+  },
+  "tool": "bash",
+  "call_id": "call_1792798832771",
+  "args": {
+    "command": "git push origin main",
+    "description": "Push"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "v": 1,
+  "session_id": "ses_e94dcca81ffed3xpV80ryjnePM",
+  "agent_session_id": "ses_e94dcca81ffed3xpV80ryjnePM",
+  "directory": "/work/repo",
+  "event": "tool.execute.before",
+  "tool": "edit",
+  "call_id": "call_3",
+  "args": {
+    "filePath": "/work/repo/src/app.ts",
+    "oldString": "a",
+    "newString": "b"
+  }
+}

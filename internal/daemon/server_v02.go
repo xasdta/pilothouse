@@ -30,6 +30,11 @@ func (d *Daemon) routesV02(mux *http.ServeMux, guarded func(http.HandlerFunc) ht
 	mux.Handle("POST /v1/tasks/start", guarded(d.handleStartTask))
 	mux.HandleFunc("GET /v1/tasks/{id}/diff", d.handleTaskDiff)
 	mux.Handle("POST /v1/tasks/{id}/finish", guarded(d.handleFinishTask))
+
+	// Plugin agents (OpenCode): hooks and the reply channel. Unguarded like
+	// /v1/hook — the plugin runs inside the agent; see plugin.go for what
+	// keeps a session's replies to its own plugin.
+	d.routesPlugin(mux)
 }
 
 // localBy names the local caller like handleDecide does.
