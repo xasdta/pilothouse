@@ -245,7 +245,7 @@ func (d *Daemon) Tasks(ctx context.Context) ([]api.Task, error) {
 	for _, t := range byID {
 		if (t.Status == api.TaskRunning || t.Status == api.TaskReview) && t.SessionID != "" {
 			if s, err := d.db.Session(ctx, t.SessionID); err == nil {
-				t.Status = task.StatusFor(s.State)
+				t.Status = d.taskStatusFor(ctx, s)
 			}
 		}
 		out = append(out, t)
@@ -512,9 +512,29 @@ func (d *Daemon) syncTaskStatuses(ctx context.Context) {
 	}
 }
 
+// taskStatusFor is the status of an open task whose agent is in session
+// s. An interactive agent that has just started also sits "waiting" at
+// its input box: that is not review until it has worked on the prompt.
+func (d *Daemon) taskStatusFor(ctx context.Context, s api.Session) api.TaskStatus {
+	st := task.StatusFor(s.State)
+	if st != api.TaskReview || s.State != api.StateWaiting {
+		return st
+	}
+	evs, err := d.db.Evidence(ctx, s.ID, evidenceWindow)
+	if err != nil {
+		return st
+	}
+	for _, e := range evs {
+		if e.State == api.StateWorking {
+			return st
+		}
+	}
+	return api.TaskRunning
+}
+
 // taskSessionChanged moves the session's task between running and review.
 func (d *Daemon) taskSessionChanged(ctx context.Context, s api.Session, notifyReview bool) {
-	want := task.StatusFor(s.State)
+	want := d.taskStatusFor(ctx, s)
 	var (
 		t       api.Task
 		changed bool

@@ -333,6 +333,18 @@ func TestTaskReadyForReview(t *testing.T) {
 		t.Fatal(err)
 	}
 	env := map[string]string{"PILOTHOUSE_SESSION_ID": tk.SessionID}
+	// Freshly started, idle at its input box: not ready for review yet.
+	if err := h.c.ReportOSC(bg, tk.SessionID, api.OSCBody{State: "idle", App: "claude"}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "idle", func() bool { s, _ := h.c.Session(bg, tk.SessionID); return s.State == api.StateWaiting })
+	time.Sleep(100 * time.Millisecond)
+	if st, _ := h.c.Task(bg, tk.ID); st.Status != api.TaskRunning || len(h.notes.all()) != 0 {
+		t.Fatalf("idle before any work: status %s, notifications %+v", st.Status, h.notes.all())
+	}
+	if ts, _ := h.c.Tasks(bg); ts[0].Status != api.TaskRunning {
+		t.Fatalf("listed as %s before any work", ts[0].Status)
+	}
 	if _, err := h.hookEnv(bg, shell("go test ./..."), env); err != nil {
 		t.Fatal(err)
 	}
@@ -399,7 +411,11 @@ func TestTaskReadyForReview(t *testing.T) {
 		t.Fatal(err)
 	}
 	before = len(h.notes.all())
-	if _, err := h.hookEnv(bg, adapters.HookEvent{Kind: adapters.HookStop}, map[string]string{"PILOTHOUSE_SESSION_ID": tk2.SessionID}); err != nil {
+	env2 := map[string]string{"PILOTHOUSE_SESSION_ID": tk2.SessionID}
+	if _, err := h.hookEnv(bg, shell("ls"), env2); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.hookEnv(bg, adapters.HookEvent{Kind: adapters.HookStop}, env2); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, "review at the desk", func() bool {
