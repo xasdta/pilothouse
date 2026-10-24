@@ -24,8 +24,10 @@ await shot(A, '02-inbox-empty-mobile');
 
 // Track decide responses per page.
 const decides = { A: [], B: [] };
-A.on('response', (r) => { if (r.url().includes('/decide')) decides.A.push(r.status()); });
-B.on('response', (r) => { if (r.url().includes('/decide')) decides.B.push(r.status()); });
+// 0.2 cards answer with the signed v2 /respond (0.1 used /decide).
+const isAnswer = (u) => u.includes('/decide') || u.includes('/respond');
+A.on('response', (r) => { if (isAnswer(r.url())) decides.A.push(r.status()); });
+B.on('response', (r) => { if (isAnswer(r.url())) decides.B.push(r.status()); });
 
 const cardSel = (needle) => `//article[contains(@class,'req')][.//pre[contains(., '${needle}')]]`;
 async function card(page, needle, timeout = 8000) {

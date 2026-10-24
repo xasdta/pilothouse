@@ -24,6 +24,7 @@ type FakeCore struct {
 	events   []api.Event
 	sessions map[string]api.Session
 	requests map[string]api.Request
+	tasks    map[string]api.Task
 	presence api.Presence
 	subs     map[*sub]struct{}
 
@@ -49,6 +50,7 @@ func New() *FakeCore {
 	f := &FakeCore{
 		sessions:  map[string]api.Session{},
 		requests:  map[string]api.Request{},
+		tasks:     map[string]api.Task{},
 		subs:      map[*sub]struct{}{},
 		SubBuffer: 256,
 		Machine:   "devbox",
@@ -88,6 +90,101 @@ func (f *FakeCore) PutRequest(r api.Request) {
 	f.mu.Unlock()
 }
 
+// UpdateSession applies fn to a stored session and emits session.updated
+// (session.exited when fn moved it to exited). It reports false when the
+// session doesn't exist.
+func (f *FakeCore) UpdateSession(id string, fn func(*api.Session)) (api.Session, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	s, ok := f.sessions[id]
+	if !ok {
+		return api.Session{}, false
+	}
+	was := s.State
+	fn(&s)
+	f.sessions[id] = s
+	t := api.EventSessionUpdated
+	if s.State == api.StateExited && was != api.StateExited {
+		t = api.EventSessionExited
+	}
+	f.emitLocked(t, s.ID, "", s)
+	return s, true
+}
+
+// Sessions returns every session, most recently updated first.
+func (f *FakeCore) Sessions() []api.Session {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]api.Session, 0, len(f.sessions))
+	for _, s := range f.sessions {
+		out = append(out, s)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].UpdatedAt.After(out[j].UpdatedAt) })
+	return out
+}
+
+// Requests returns every request, newest first.
+func (f *FakeCore) Requests() []api.Request {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]api.Request, 0, len(f.requests))
+	for _, r := range f.requests {
+		out = append(out, r)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	return out
+}
+
+// ExpireRequests closes every open request whose ExpiresAt is before now
+// (status expired, handed back to the terminal), as the daemon's hold
+// limit does, and returns them.
+func (f *FakeCore) ExpireRequests(now time.Time) []api.Request {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []api.Request
+	for id, r := range f.requests {
+		if r.Status != api.RequestOpen || r.ExpiresAt.IsZero() || r.ExpiresAt.After(now) {
+			continue
+		}
+		r.Status = api.RequestExpired
+		t := now
+		r.ClosedAt = &t
+		f.requests[id] = r
+		f.emitLocked(api.EventRequestClosed, r.SessionID, r.ID, r)
+		out = append(out, r)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
+	return out
+}
+
+// PutTask inserts or replaces a task and emits task.updated.
+func (f *FakeCore) PutTask(t api.Task) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.tasks[t.ID] = t
+	f.emitLocked(api.EventTaskUpdated, t.SessionID, "", t)
+}
+
+// Task returns one task.
+func (f *FakeCore) Task(id string) (api.Task, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	t, ok := f.tasks[id]
+	return t, ok
+}
+
+// Tasks returns every task, most recently updated first.
+func (f *FakeCore) Tasks() []api.Task {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]api.Task, 0, len(f.tasks))
+	for _, t := range f.tasks {
+		out = append(out, t)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].UpdatedAt.After(out[j].UpdatedAt) })
+	return out
+}
+
 // Decisions returns every decision accepted so far.
 func (f *FakeCore) Decisions() []api.Decision {
 	f.mu.Lock()
@@ -125,8 +222,12 @@ func (f *FakeCore) Snapshot(context.Context) (api.Snapshot, error) {
 	for _, r := range f.requests {
 		snap.Requests = append(snap.Requests, r)
 	}
+	for _, t := range f.tasks {
+		snap.Tasks = append(snap.Tasks, t)
+	}
 	sort.Slice(snap.Sessions, func(i, j int) bool { return snap.Sessions[i].UpdatedAt.After(snap.Sessions[j].UpdatedAt) })
 	sort.Slice(snap.Requests, func(i, j int) bool { return snap.Requests[i].CreatedAt.After(snap.Requests[j].CreatedAt) })
+	sort.Slice(snap.Tasks, func(i, j int) bool { return snap.Tasks[i].UpdatedAt.After(snap.Tasks[j].UpdatedAt) })
 	return snap, nil
 }
 

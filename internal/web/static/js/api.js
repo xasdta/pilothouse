@@ -1,4 +1,16 @@
 // Device API client and the live state store (snapshot + SSE).
+//
+// Exported API (stable; workstream I builds on it):
+//   api(method, path, body?)      JSON fetch; throws ApiError {status, code, message}
+//   signed(path, action, target, payload)  signed v2 action (keystore.js); resolves to
+//                                 the response JSON (null on 204), throws ApiError
+//   store                         live state: me, seq, machine, sessions (Map), requests
+//                                 (Map), tasks (Map), presence, conn, loaded, rulesRev
+//                                 (bumped on policy.changed)
+//   subscribe(fn)                 fn(kind) once per frame after changes; returns unsubscribe
+//   onEvent(fn)                   every raw event as it arrives; returns unsubscribe
+//   changed(kind)                 schedule a notification (after local store edits)
+//   resync() connect()            used by app.js
 
 export class ApiError extends Error {
   constructor(status, code, message) {
@@ -6,6 +18,20 @@ export class ApiError extends Error {
     this.status = status;
     this.code = code;
   }
+}
+
+/**
+ * Signs and posts a 0.2 action (see internal/web/signed.go). Same errors
+ * as api(); a device without a key gets code 'no_key'.
+ */
+export async function signed(path, action, target, payload) {
+  const res = await self.PilothouseKeys.postSigned(path, action, target, payload);
+  if (res.ok) return res.data;
+  const d = res.data || {};
+  if (res.status === 401) location.assign('/pair');
+  throw new ApiError(res.status, d.code, d.code === 'stale_signature'
+    ? 'This device’s clock is off — fix the time and try again.'
+    : d.error || (res.status === 0 ? 'Can’t reach your computer.' : 'Request failed'));
 }
 
 export async function api(method, path, body) {
@@ -37,7 +63,9 @@ export const store = {
   machine: '',
   sessions: new Map(),
   requests: new Map(),
+  tasks: new Map(),
   presence: null,
+  rulesRev: 0,
   conn: 'connecting', // live | connecting | offline
   loaded: false,
 };
@@ -76,6 +104,7 @@ export function loadSnapshot(snap) {
   store.presence = snap.presence;
   store.sessions = new Map(snap.sessions.map((s) => [s.id, s]));
   store.requests = new Map(snap.requests.map((r) => [r.id, r]));
+  store.tasks = new Map((snap.tasks || []).map((t) => [t.id, t]));
   store.loaded = true;
   changed();
 }
@@ -96,6 +125,12 @@ function applyEvent(ev) {
       break;
     case 'presence.changed':
       if (d) store.presence = d;
+      break;
+    case 'task.updated':
+      if (d && d.id) store.tasks.set(d.id, d);
+      break;
+    case 'policy.changed':
+      store.rulesRev++;
       break;
     case 'device.changed':
       if (d && store.me && d.id === store.me.device.id) {
