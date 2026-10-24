@@ -184,6 +184,20 @@ func TestWriteCreateOverwriteBinaryHuge(t *testing.T) {
 	if !fp.Truncated || len(fp.Diff) > MaxDiffBytes || fp.Added != 4000 {
 		t.Fatalf("huge diff: truncated=%v len=%d added=%d", fp.Truncated, len(fp.Diff), fp.Added)
 	}
+	// Megabytes of content: counted, the start shown, no full diff.
+	huge := strings.Repeat("0123456789abcdef\n", 120000) // ~2 MB
+	start := time.Now()
+	fp = one(t, f.build("Write", map[string]any{"file_path": "huge.txt", "content": huge}))
+	if !fp.Truncated || fp.Added != 120000 || len(fp.Diff) > MaxDiffBytes || fp.Diff == "" || time.Since(start) > time.Second {
+		t.Fatalf("2 MB write: truncated=%v added=%d len=%d took %v", fp.Truncated, fp.Added, len(fp.Diff), time.Since(start))
+	}
+	fp = one(t, f.build("Edit", map[string]any{"file_path": "huge.txt", "old_string": huge, "new_string": "x\n"}))
+	if !fp.Truncated || fp.Removed != 120000 || fp.Added != 1 {
+		t.Fatalf("2 MB edit: truncated=%v +%d -%d", fp.Truncated, fp.Added, fp.Removed)
+	}
+	if p := Build(Call{Tool: "Write", Input: json.RawMessage(`{"file_path":"x","content":"` + strings.Repeat("a", MaxInputBytes) + `"}`), Home: f.home}); p != nil {
+		t.Fatal("oversized input previewed")
+	}
 }
 
 func TestCRLFAndNoTrailingNewline(t *testing.T) {

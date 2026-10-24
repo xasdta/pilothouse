@@ -44,3 +44,9 @@ func (f *finder) tokens(s, text string) {
 		f.add(api.RiskSecrets, api.RiskHigh, text)
 	}
 }
+
+// Redact replaces what looks like a credential in s with "[redacted]",
+// for text that is stored and shown on devices (an agent's last words).
+func Redact(s string) string {
+	return tokenRE.ReplaceAllString(s, "[redacted]")
+}

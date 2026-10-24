@@ -33,6 +33,11 @@ const (
 	MaxFiles     = 20        // files per preview
 	contextLines = 3
 	binarySniff  = 8 << 10
+	// MaxInputBytes bounds the tool input a preview decodes (hook payloads
+	// can carry many megabytes); larger calls get no preview.
+	MaxInputBytes = 4 << 20
+	// maxDiffInput bounds the text one file's diff works on.
+	maxDiffInput = 1 << 20
 )
 
 // Call is the tool call to preview.
@@ -53,6 +58,9 @@ type Call struct {
 // Build returns the preview, or nil when the call changes no files or its
 // input can't be understood. It never fails.
 func Build(c Call) *api.Preview {
+	if len(c.Input) > MaxInputBytes || len(c.Command) > MaxInputBytes {
+		return nil
+	}
 	b := newBuilder(c)
 	var in map[string]any
 	if len(c.Input) > 0 {
@@ -277,8 +285,33 @@ func diffFile(fp *api.FilePreview, before, after string) {
 		fp.Lang = ""
 		return // binary: no text diff
 	}
+	if len(before)+len(after) > maxDiffInput {
+		// Too big to diff on the hook path: a new file shows its start,
+		// anything else just its size in lines.
+		fp.Truncated = true
+		fp.Added, fp.Removed = lineCount(after), lineCount(before)
+		if before == "" {
+			start := after[:MaxDiffBytes]
+			if i := strings.LastIndexByte(start, '\n'); i > 0 {
+				start = start[:i+1]
+			}
+			fp.Diff = unifiedDiff("", normalize(start), contextLines, MaxDiffBytes).text
+		}
+		return
+	}
 	u := unifiedDiff(normalize(before), normalize(after), contextLines, MaxDiffBytes)
 	fp.Diff, fp.Added, fp.Removed, fp.Truncated = u.text, u.added, u.removed, u.truncated
+}
+
+func lineCount(s string) int {
+	if s == "" {
+		return 0
+	}
+	n := strings.Count(s, "\n")
+	if !strings.HasSuffix(s, "\n") {
+		n++
+	}
+	return n
 }
 
 // ---- Edit / MultiEdit / write ----------------------------------------------
@@ -333,6 +366,10 @@ func (b *builder) edits(path string, cs []change) {
 	// From the input alone: one diff per change, numbered from its start.
 	var text strings.Builder
 	for _, c := range cs {
+		if len(c.old)+len(c.new) > maxDiffInput {
+			fp.Added, fp.Removed, fp.Truncated = fp.Added+lineCount(c.new), fp.Removed+lineCount(c.old), true
+			continue
+		}
 		var u unified
 		if !isBinary([]byte(c.old)) && !isBinary([]byte(c.new)) {
 			u = unifiedDiff(normalize(withEOL(c.old)), normalize(withEOL(c.new)), contextLines, MaxDiffBytes)

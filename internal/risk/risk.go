@@ -37,8 +37,9 @@ type Call struct {
 }
 
 const (
-	maxDepth = 6        // nested shells, substitutions and ssh commands
-	maxScan  = 64 << 10 // bytes of a command or tool input scanned for tokens
+	maxDepth   = 6         // nested shells, substitutions and ssh commands
+	maxScan    = 64 << 10  // bytes of a command or tool input scanned for tokens
+	maxCommand = 256 << 10 // bytes of a shell command classified
 )
 
 // Classify returns the call's risk labels, most severe first, at most one
@@ -47,9 +48,12 @@ func Classify(c Call) []api.RiskLabel {
 	f := newFinder(c)
 	switch c.Kind {
 	case api.ToolShell:
-		if c.Command != "" {
-			f.script(c.Command, f.cwd, 0, false)
-			f.tokens(c.Command, "Passes what looks like a credential on the command line")
+		if cmd := c.Command; cmd != "" {
+			if len(cmd) > maxCommand {
+				cmd = cmd[:maxCommand]
+			}
+			f.script(cmd, f.cwd, 0, false)
+			f.tokens(cmd, "Passes what looks like a credential on the command line")
 		}
 		// A shell command's paths are the files an apply_patch heredoc in
 		// it names: written.
@@ -64,7 +68,7 @@ func Classify(c Call) []api.RiskLabel {
 				f.write(abs)
 			}
 		}
-		f.tokens(string(c.Input), "Writes what looks like a credential")
+		f.tokens(head(c.Input), "Writes what looks like a credential")
 	case api.ToolRead:
 		for _, p := range c.Paths {
 			if abs, ok := f.resolve(p, f.cwd); ok {
@@ -72,9 +76,15 @@ func Classify(c Call) []api.RiskLabel {
 			}
 		}
 	default:
-		f.tokens(string(c.Input), "Sends what looks like a credential")
+		f.tokens(head(c.Input), "Sends what looks like a credential")
 	}
 	return f.result()
+}
+
+// head is the start of a tool input, as much as the token scan reads
+// (tool inputs can be many megabytes).
+func head(in json.RawMessage) string {
+	return string(in[:min(len(in), maxScan)])
 }
 
 // finder collects labels for one call.
