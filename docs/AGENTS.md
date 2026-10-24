@@ -7,23 +7,24 @@ prints the daemon's answer; if the daemon is down or slow it prints nothing and
 exits 0, so the agent behaves as if Pilothouse were not installed (fail open).
 
 This page records what each agent really supports, with sources, as of
-2026-10-22. It is the reference for `internal/adapters/claude` and
-`internal/adapters/codex`.
+2026-10-24. It is the reference for `internal/adapters/claude`,
+`internal/adapters/codex` and `internal/adapters/opencode`. OpenCode has no
+command hooks; Pilothouse reaches it through a plugin instead (see OpenCode).
 
 ## At a glance
 
-| | Claude Code | Codex CLI |
-|---|---|---|
-| Hook config Pilothouse edits | `~/.claude/settings.json` | `~/.codex/hooks.json` + trust entries in `~/.codex/config.toml` |
-| State detection | Full: session start/end, prompt, every tool call, permission prompts, notifications (idle, permission waiting), stop | Full except notifications: session start/end, prompt, tool calls, permission prompts, stop, **interrupt** |
-| Policy `deny` (before every tool call) | Yes (`PreToolUse` → `permissionDecision: "deny"`) | Yes (`PreToolUse` → exit code 2, reason on stderr) |
-| Policy `ask` (force the agent's prompt) | Yes (`permissionDecision: "ask"`) | **No prompt** — Codex has no `ask` at `PreToolUse`, so Pilothouse **denies** the call and tells the agent a person must do it (see Responses) |
-| Policy / grant `allow` (skip the prompt) | Yes (`permissionDecision: "allow"`; the agent's own deny/ask rules still win) | **No** at `PreToolUse` (Codex rejects `allow` without `updatedInput`); see Caveats |
-| Remote approvals (phone answers the prompt) | Yes (`PermissionRequest` → `decision.behavior` allow/deny), held up to 600 s | Yes (`PermissionRequest` → `decision.behavior` allow/deny), held up to 600 s |
-| Questions and plans from anywhere (0.2) | Yes: `AskUserQuestion` answers and `ExitPlanMode` approve / request changes through `PermissionRequest` (see Questions and plans) | Read-only: `request_user_input` shows as "blocked (question)"; answer it in Codex (no hook can) |
-| Resume a session | `claude --resume <session_id>` | `codex resume <session_id>` |
-| Activity feed and usage (read from the transcript, see [USAGE.md](USAGE.md)) | `~/.claude/projects/…/<session>.jsonl` + subagent files; usage per response | `~/.codex/sessions/…/rollout-*.jsonl`, found by thread id until hooks name it; usage from `token_count` |
-| OSC 7501 status (wrap mode, L1) | Emits it (v2.1.295+) when it detects terminal support | Emits it whenever stdout is a terminal |
+| | Claude Code | Codex CLI | OpenCode (1.x) |
+|---|---|---|---|
+| Hook config Pilothouse edits | `~/.claude/settings.json` | `~/.codex/hooks.json` + trust entries in `~/.codex/config.toml` | Installs a plugin: `~/.config/opencode/plugins/pilothouse.js` |
+| State detection | Full: session start/end, prompt, every tool call, permission prompts, notifications (idle, permission waiting), stop | Full except notifications: session start/end, prompt, tool calls, permission prompts, stop, **interrupt** | Session start/end, prompt, tool calls, permission prompts, questions, idle (with the last message), compaction |
+| Policy `deny` (before every tool call) | Yes (`PreToolUse` → `permissionDecision: "deny"`) | Yes (`PreToolUse` → exit code 2, reason on stderr) | Yes (`tool.execute.before` throws; the model reads the reason) |
+| Policy `ask` (force the agent's prompt) | Yes (`permissionDecision: "ask"`) | **No prompt** — Codex has no `ask` at `PreToolUse`, so Pilothouse **denies** the call and tells the agent a person must do it (see Responses) | **No prompt** a plugin can raise, so the call is **held for a person in Pilothouse, at the desk too** (inbox, CLI, phone); unanswered means denied |
+| Policy / grant `allow` (skip the prompt) | Yes (`permissionDecision: "allow"`; the agent's own deny/ask rules still win) | **No** at `PreToolUse` (Codex rejects `allow` without `updatedInput`); see Caveats | Policy allow: no (OpenCode's own permission settings decide). Grants: yes, at OpenCode's permission prompt |
+| Remote approvals (phone answers the prompt) | Yes (`PermissionRequest` → `decision.behavior` allow/deny), held up to 600 s | Yes (`PermissionRequest` → `decision.behavior` allow/deny), held up to 600 s | Yes (`permission.asked` → `/permission/{id}/reply`), held up to `approvals.hold_limit`; OpenCode asks only for what its `permission` settings say (setup offers bash/edit = ask) |
+| Questions and plans from anywhere (0.2) | Yes: `AskUserQuestion` answers and `ExitPlanMode` approve / request changes through `PermissionRequest` (see Questions and plans) | Read-only: `request_user_input` shows as "blocked (question)"; answer it in Codex (no hook can) | Questions: yes (`question.asked` → `/question/{id}/reply`, multi-select and free text). OpenCode has no plan approval |
+| Resume a session | `claude --resume <session_id>` | `codex resume <session_id>` | `opencode --session <session_id>` |
+| Activity feed and usage (read from the transcript, see [USAGE.md](USAGE.md)) | `~/.claude/projects/…/<session>.jsonl` + subagent files; usage per response | `~/.codex/sessions/…/rollout-*.jsonl`, found by thread id until hooks name it; usage from `token_count` | Not yet (OpenCode keeps sessions in its SQLite database) |
+| OSC 7501 status (wrap mode, L1) | Emits it (v2.1.295+) when it detects terminal support | Emits it whenever stdout is a terminal | No |
 
 "Remote approvals" means: when the person is away, the hook holds the agent's
 permission request while Pilothouse pushes it to a paired device, and the answer
@@ -363,6 +364,166 @@ Only answers without an exit-code form use JSON on stdout.
   program run after each turn with one JSON argument
   (`codex-rs/hooks/src/legacy_notify.rs`, marked for removal). It cannot block
   or answer anything and hooks cover it, so Pilothouse does not install it.
+
+## OpenCode
+
+Source: OpenCode **1.18.25** (`opencode`, the native binary; its bundled
+plugin loader and server routes) and the `@opencode-ai/plugin` /
+`@opencode-ai/sdk` 1.18.25 type definitions. Everything below was run end to
+end against the real CLI with a mock model (`tests/e2e/opencode`).
+
+### A plugin, not hooks
+
+OpenCode has no command hooks. It loads JavaScript plugins from
+`{plugin,plugins}/*.{js,ts}` in every config directory — the global one
+(`$XDG_CONFIG_HOME/opencode`, else `~/.config/opencode`, on every OS),
+`~/.opencode`, the project's `.opencode/` directories and
+`$OPENCODE_CONFIG_DIR` — and runs them **inside its own process** (the TUI,
+`opencode run` and `opencode serve` alike). `pilothouse hooks install --agent
+opencode` writes Pilothouse's plugin to
+`<global config>/plugins/pilothouse.js`. The global directory is loaded
+whether or not `OPENCODE_CONFIG_DIR` is set, so the plugin works from any
+shell; `hooks status` reports a second copy in another plugin directory
+(it would load twice). The file carries an `@pilothouse-managed` marker:
+install refuses to replace a `pilothouse.js` without it, uninstall removes
+only ours, and other plugins (herdr's, your own) are never read or touched.
+The plugin has no npm dependencies; OpenCode still installs
+`@opencode-ai/plugin` into the config directory at startup, as it does for
+every plugin directory. A plugin exports `default { id, server }`, the
+shape 1.x loads for file plugins; it does not export the 2.x
+(`@opencode/cli`) `setup` definition, whose plugin API is different and
+was not available to test.
+
+The plugin talks to the daemon over its Unix socket (Bun's `fetch` with the
+`unix` option; the path is resolved like Pilothouse's own:
+`$PILOTHOUSE_RUN_DIR`, else `$PILOTHOUSE_HOME/run`, else
+`~/.pilothouse/run`):
+
+- `POST /v1/plugin/hook` — a `HookEnvelope` (`agent: "opencode"`) whose
+  payload is the plugin's own normalized event (`internal/adapters/opencode`,
+  `parse.go`); the answer is a `HookResponse` whose stdout is a small JSON
+  object (`encode.go`). Timeouts: 2 s (plus 1 s per MB of payload, at most
+  20 s) for everything that doesn't wait for a person.
+- `POST /v1/plugin/commands` — a 25-second long poll that delivers replies a
+  person sends to the plugin's sessions (see Replies).
+
+With the daemon down every call fails at once and the plugin does nothing:
+OpenCode behaves as if it were not installed. `approvals.fail_closed: true`
+(read from `config.yaml`, as the hook shim does) makes it fail tool calls
+instead.
+
+### What the plugin forwards
+
+| OpenCode | Pilothouse kind | Notes |
+|---|---|---|
+| `tool.execute.before` (plugin hook) | `pre_tool` | Runs before every tool call and before OpenCode's own permission check; awaited |
+| `tool.execute.after` | `post_tool` | |
+| `chat.message` (plugin hook) | `prompt_submit` | The prompt's text parts |
+| `permission.asked` (event) | `permission` | Enriched with the tool call's arguments seen at `tool.execute.before` |
+| `question.asked` (event) | `permission` with questions | Becomes a question request |
+| `permission.replied`, `question.replied`, `question.rejected` | `post_tool`, matched by the dialog's id | The person answered OpenCode's own dialog |
+| `session.created` / `session.deleted` | `session_start` / `session_end` | |
+| `session.idle` | `stop` | With the turn's last assistant text (or `Error: …` after `session.error`) |
+| `session.updated` (title changed) | notification `title` | Logged; Pilothouse keeps the repo name as the title |
+| `experimental.session.compacting` | `pre_compact` | |
+
+Tools (`packages/opencode/src/tool`): `bash {command}` → shell; `edit`,
+`write {filePath}`, `apply_patch {patchText}` → edit (paths resolved
+against the session's directory); `read`, `glob`, `grep`, `list` → read;
+`webfetch`, `websearch`, `codesearch` → web; MCP tools are named
+`<server>_<tool>` → mcp. A `bash` call that is a whole `apply_patch` heredoc
+counts as an edit, as for Codex. Subagents (the `task` tool) run in child
+sessions; their calls are reported as the parent session's.
+
+### Responses
+
+- **`deny`** (policy, before a tool call): the plugin throws; OpenCode fails
+  the call with the rule's message, which the model reads.
+- **`ask`** (policy): OpenCode has no way for a plugin to show a permission
+  prompt (the `permission.ask` plugin hook exists in the types but is never
+  called), and its defaults ask for almost nothing. So the plugin **holds
+  the call** and asks the daemon again (`pilothouse.ask`); the daemon holds
+  that request for a person **even at the desk** (`HookEvent.Hold`): it
+  shows in the inbox (`pilothouse approve`/`deny`, the TUI) and on paired
+  devices, and OpenCode shows a "waiting for a person" toast. A session
+  grant never answers it. Allow lets the call run (and answers OpenCode's
+  own prompt for that same call, so the person isn't asked twice); deny or
+  no answer within `approvals.hold_limit` fails it.
+- **`allow`** (policy) is no opinion: OpenCode's own `permission` settings
+  still apply. Session grants ("allow for this session") are applied at
+  OpenCode's permission prompt, which the daemon answers without asking.
+- **Permission prompts** (`permission.asked`): at the desk the request
+  steps aside and OpenCode's own dialog is answered there; when you answer
+  it, `permission.replied` closes the request. Away, it is held for your
+  devices while OpenCode's dialog stays open too — whichever is answered
+  first wins. A device allow is sent as `reply: "once"`, a deny as
+  `reply: "reject"` with the message, which OpenCode passes to the model as
+  feedback (`POST /permission/{id}/reply`, through the plugin's in-process
+  client: the TUI has no listening server).
+- **Questions** (`question.asked`): one request per OpenCode question
+  request, one `Question` per question with id `<que_id>#<n>`; options,
+  `multiple` (multi-select) and `custom` (free text, OpenCode's default) are
+  kept. Answers go back in question order as lists of labels
+  (`POST /question/{id}/reply {"answers": [["Blue"], ["Lint", "E2E"]]}`); a
+  decline rejects the question. Sets Pilothouse can't ask (more than 8
+  questions, more than 16 options, unbounded labels) are left to OpenCode's
+  dialog and shown as "waiting on a question".
+
+### Permissions: what OpenCode asks by default
+
+OpenCode 1.18's default rules are `{"*": "allow", "doom_loop": "ask",
+"external_directory": "ask"}` (plus `.env` reads): it runs shell commands
+and edits files without asking, so there is no prompt Pilothouse could hold
+for you while you're away. `pilothouse setup` offers to set
+`"permission": {"bash": "ask", "edit": "ask"}` in the global config file
+that wins (`opencode.jsonc`, else `opencode.json`, else `config.json`, else
+a new `opencode.json`): it prints the exact diff, asks, writes a backup next
+to the file, and keeps your comments and formatting. A permission you set to
+`deny`, `ask` or a per-pattern object is left alone; `pilothouse doctor`
+mentions the suggestion until it is applied. (Project configs and the
+`OPENCODE_PERMISSION` environment variable can still override the global
+file.)
+
+### Replies
+
+A person can reply to an OpenCode session from the phone (a signed `reply`
+action) or any local client of `POST /v1/sessions/{id}/reply` (guarded
+against agents like decisions): the daemon queues the text for the session's plugin,
+whose long poll picks it up within a moment, runs
+`client.session.promptAsync` (or `client.session.abort` for an interrupt)
+and acknowledges it; the reply call reports OpenCode's error if it refused.
+`caps.reply` (via `plugin`) is set only while the plugin's channel is
+connected.
+
+Security: the plugin routes are open to any local process of the user,
+agents included (the plugin runs inside one). Each OpenCode process makes a
+random token and sends it with its hooks and polls; the daemon keeps only
+its SHA-256. The first token to report a session owns it and is the only
+one that can receive (or acknowledge) that session's replies. Another token
+reporting the same session while the owner is connected makes it
+**contested**: replies are refused and the daemon logs it. A new process
+takes over once the old one's channel has been gone for 15 s (OpenCode quit
+and the session was resumed). After a daemon restart the plugin re-announces
+its sessions with its first poll. The text of a reply is in the event log
+(`session.reply`), as for every agent; the token never is.
+
+### Caveats
+
+- OpenCode must be able to load plugins: `--pure` turns external plugins
+  off, and so does a config that can't be parsed.
+- Policy `allow` can't skip OpenCode's own prompt (only a person's grant
+  does, at the prompt).
+- No activity feed or usage for OpenCode sessions yet (they live in
+  OpenCode's database, not in a transcript file).
+- `pilothouse run opencode` names the session OpenCode and the plugin
+  forwards `PILOTHOUSE_SESSION_ID`, so its hooks join the wrapped session;
+  this path is not covered by the e2e suite yet.
+- `pilothouse task new --agent opencode` does not work yet: tasks pass the
+  prompt as the first argument, which OpenCode reads as a project path (it
+  takes a prompt with `--prompt`).
+- An `opencode serve` shared by several clients is one process: its
+  sessions share a PID and are expired after `session_idle_expiry` of
+  silence rather than by process liveness.
 
 ## OSC 7501 (for wrap mode)
 
