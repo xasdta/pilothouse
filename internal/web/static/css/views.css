@@ -394,21 +394,6 @@ textarea#task-prompt { min-height: 130px; }
 .task-actions p { margin: 8px 4px 0; color: var(--text-2); font-size: 12.5px; text-align: center; }
 .btn.danger.solid { background: var(--deny); color: #fff; }
 
-/* Local diff (until js/diff.js lands) */
-.tdiff { border-top: 0.5px solid var(--border-strong); padding: 6px 0; overflow-x: auto; font: 12.5px/1.55 var(--mono); tab-size: 2; }
-.tdiff > div { display: grid; grid-template-columns: 34px 34px minmax(0, 1fr); }
-.tdiff .ln { padding-right: 6px; color: var(--text-3); text-align: right; font-size: 11px; line-height: 19.4px; -webkit-user-select: none; user-select: none; font-variant-numeric: tabular-nums; }
-.tdiff code { padding: 0 12px 0 4px; font-size: inherit; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); }
-.tdiff .mk { display: inline-block; width: 1.2ch; color: var(--text-3); -webkit-user-select: none; user-select: none; }
-.tdiff .tl-add .ln, .tdiff .tl-del .ln { color: var(--text-2); }
-.tdiff .tl-add { background: color-mix(in srgb, var(--allow) 11%, transparent); }
-.tdiff .tl-add .mk { color: var(--allow); }
-.tdiff .tl-del { background: color-mix(in srgb, var(--deny) 10%, transparent); }
-.tdiff .tl-del .mk { color: var(--deny); }
-.tdiff .tl-hunk { margin: 4px 0; background: var(--info-soft); }
-.tdiff .tl-hunk code { color: var(--text-2); }
-.tdiff .tl-meta code { color: var(--text-3); font-style: italic; }
-.tdiff-none { margin: 0; padding: 8px 14px; color: var(--text-3); font-family: var(--font); font-size: 13px; }
 
 /* Confirm sheet */
 dialog.sheet {
