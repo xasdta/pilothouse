@@ -1,0 +1,6 @@
+{"$schema":"https://opencode.ai/config.json","model":"anthropic/claude-sonnet-4",
+  "permission": {
+    "bash": "ask",
+    "edit": "ask"
+  }
+}

@@ -1,0 +1,10 @@
+// My OpenCode config
+{
+  "$schema": "https://opencode.ai/config.json", // schema
+  /* models */
+  "model": "anthropic/claude", // trailing note
+  "permission": {
+    "bash": "ask",
+    "edit": "ask"
+  }
+}

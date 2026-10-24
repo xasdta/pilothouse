@@ -9,3 +9,4 @@ node_modules/
 .claude/worktrees/
 __pycache__/
 *.pyc
+!**/testdata/**/*.out
