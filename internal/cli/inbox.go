@@ -343,6 +343,9 @@ func printLs(w io.Writer, out lsOutput, allSessions []api.Session, live map[stri
 		for _, r := range out.Requests {
 			s := byID[r.SessionID]
 			answer := "pilothouse approve|deny " + inboxShortRef(r.ID)
+			if h, ok := askHint(r); ok {
+				answer = h
+			}
 			if r.Status == api.RequestSteppedAside {
 				answer = "in its terminal"
 				if live[s.ID] {
@@ -416,6 +419,9 @@ func inboxWhere(s api.Session, cwd string) string {
 }
 
 func inboxRequestWhat(r api.Request) string {
+	if s, ok := askWhat(r); ok {
+		return s
+	}
 	switch {
 	case r.Command != "":
 		return "$ " + oneLineText(r.Command)
@@ -520,22 +526,13 @@ func runInboxDecide(cmd *cobra.Command, ref string, body api.DecideBody) error {
 	if err != nil {
 		return err
 	}
-	switch req.Status {
-	case api.RequestOpen:
-	case api.RequestSteppedAside:
-		// The daemon handed this one to the agent's own dialog (the person
-		// was at the desk); an answer here would not reach that dialog.
-		hint := "answer it in the terminal where the agent runs"
-		if s, err := c.Session(ctx, req.SessionID); err == nil && s.Mode == api.ModeWrapped {
-			hint = "attach with `pilothouse attach " + inboxShortRef(s.ID) + "` and answer it there"
-		}
-		return fmt.Errorf("%s is showing in the agent's own permission dialog — %s", req.ID, hint)
-	default:
-		by := ""
-		if req.Decision != nil {
-			by = " by " + req.Decision.By
-		}
-		return fmt.Errorf("%s was already closed (%s%s) — the first answer wins", req.ID, strings.ReplaceAll(string(req.Status), "_", " "), by)
+	// A stepped-aside request is in the agent's own dialog (the person was
+	// at the desk); an answer here would not reach it (answer.go).
+	if err := requireOpen(ctx, c, req); err != nil {
+		return err
+	}
+	if err := askDecideCheck(req, body); err != nil {
+		return err
 	}
 	out, err := c.Decide(ctx, req.ID, body)
 	if err != nil {
@@ -547,6 +544,7 @@ func runInboxDecide(cmd *cobra.Command, ref string, body api.DecideBody) error {
 	w := cmd.OutOrStdout()
 	what := inboxRequestWhat(req)
 	switch {
+	case askDecidedLine(w, req, body):
 	case body.Behavior == api.BehaviorDeny:
 		fmt.Fprintf(w, "✗ Denied %s: %s\n", req.ID, what)
 		if body.Message != "" {

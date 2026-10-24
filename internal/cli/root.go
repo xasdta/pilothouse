@@ -50,6 +50,8 @@ the terminal at your desk, or your phone when you're away.`,
 	add("start", newSetupCmd(), newDoctorCmd())
 	add("work", newInboxCmd(), newLsCmd(), newApproveCmd(), newDenyCmd(), newLogCmd(), newExplainCmd())
 	add("work", newPresenceCmds()...)
+	// answer.go (0.2 workstream A)
+	add("work", newAnswerCmd())
 	add("admin", newServiceCmd(), newNotifyCmd(), newVersionCmd())
 	// daemon.go (workstream A)
 	add("admin", newDaemonCmd(), newStartCmd(), newStopCmd(), newStatusCmd())

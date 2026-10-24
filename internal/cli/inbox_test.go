@@ -51,7 +51,8 @@ type ibxDaemon struct {
 	decides  []ibxDecideCall
 	presence []string // mode|header
 	notified int
-	refuse   bool // simulate an agent caller (403)
+	refuse   bool   // simulate an agent caller (403)
+	invalid  string // answer decisions with 400 invalid and this message
 	policy   api.PolicyStatus
 	devices  []api.Device
 	explain  api.Explain
@@ -128,6 +129,10 @@ func (d *ibxDaemon) handler() http.Handler {
 			ibxError(w, 403, "agent_caller", "decisions are not accepted from agent processes")
 			return
 		}
+		if d.invalid != "" {
+			ibxError(w, 400, "invalid", d.invalid)
+			return
+		}
 		req, st := d.findRequest(r.PathValue("id"))
 		if st != 200 {
 			ibxError(w, 404, "not_found", "request not found")
@@ -138,7 +143,7 @@ func (d *ibxDaemon) handler() http.Handler {
 			return
 		}
 		req.Status = api.RequestDecided
-		req.Decision = &api.Decision{RequestID: req.ID, Behavior: b.Behavior, Scope: b.Scope, Message: b.Message, By: r.Header.Get(client.ClientHeader)}
+		req.Decision = &api.Decision{RequestID: req.ID, Behavior: b.Behavior, Scope: b.Scope, Message: b.Message, Answers: b.Answers, By: r.Header.Get(client.ClientHeader)}
 		ibxJSON(w, req)
 	})
 	mux.HandleFunc("GET /v1/sessions/{id}", func(w http.ResponseWriter, r *http.Request) {
