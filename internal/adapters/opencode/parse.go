@@ -94,7 +94,6 @@ type question struct {
 	Custom   *bool `json:"custom"` // free text allowed; OpenCode's default is true
 }
 
-
 // ParseHook normalizes one plugin payload.
 func (Adapter) ParseHook(env adapters.HookEnvelope) (adapters.HookEvent, error) {
 	var p payload
