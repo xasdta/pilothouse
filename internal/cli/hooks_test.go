@@ -18,6 +18,7 @@ import (
 
 	"github.com/xasdta/pilothouse/internal/adapters"
 	"github.com/xasdta/pilothouse/internal/adapters/all"
+	"github.com/xasdta/pilothouse/internal/api"
 	"github.com/xasdta/pilothouse/internal/paths"
 )
 
@@ -37,7 +38,10 @@ func hkEnv(t *testing.T) []string {
 	t.Setenv("CODEX_HOME", "")
 	var env []string
 	for _, kv := range os.Environ() {
-		if !strings.HasPrefix(kv, "PILOTHOUSE_") && !strings.HasPrefix(kv, "TMUX=") && !strings.HasPrefix(kv, "CODEX_HOME=") {
+		// The messaging endpoint of whatever Claude session runs the
+		// tests stays out: tests set their own.
+		if !strings.HasPrefix(kv, "PILOTHOUSE_") && !strings.HasPrefix(kv, "TMUX=") && !strings.HasPrefix(kv, "CODEX_HOME=") &&
+			!strings.HasPrefix(kv, "CLAUDE_CODE_MESSAGING_") {
 			env = append(env, kv)
 		}
 	}
@@ -216,6 +220,59 @@ func TestShimForwardsToDaemon(t *testing.T) {
 	}
 	if env1.Cwd == "" || env1.ReceivedAt.IsZero() {
 		t.Errorf("cwd/time: %+v", env1)
+	}
+}
+
+// Claude's messaging endpoint travels in its own field, never in Env.
+func TestShimForwardsMessagingEndpoint(t *testing.T) {
+	env := hkEnv(t)
+	env = append(env, "CLAUDE_CODE_MESSAGING_SOCKET=/tmp/cc-socks/123.sock", "CLAUDE_CODE_MESSAGING_TOKEN=tok-shim-test")
+	got := hkFakeDaemon(t, func(adapters.HookEnvelope) (adapters.HookResponse, time.Duration) {
+		return adapters.HookResponse{}, 0
+	})
+	if res := hkRunShim(t, env, hkFixture(t, "pre_tool_bash"), "claude", "PreToolUse"); res.code != 0 {
+		t.Fatalf("shim: %+v", res)
+	}
+	e := <-got
+	if e.Messaging == nil || e.Messaging.Socket != "/tmp/cc-socks/123.sock" || e.Messaging.Token != "tok-shim-test" {
+		t.Fatalf("messaging = %+v", e.Messaging)
+	}
+	for k, v := range e.Env {
+		if strings.Contains(k, "MESSAGING") || strings.Contains(v, "tok-shim-test") {
+			t.Fatalf("endpoint leaked into Env: %v", e.Env)
+		}
+	}
+}
+
+func TestMessagingEndpoint(t *testing.T) {
+	long := "/" + strings.Repeat("x", maxMessagingField)
+	for _, c := range []struct {
+		sock, tok string
+		ok        bool
+	}{
+		{"/tmp/cc-socks/1.sock", "t0k", true},
+		{"", "t0k", false},
+		{"/tmp/cc-socks/1.sock", "", false},
+		{"relative.sock", "t0k", false},
+		{long, "t0k", false},
+		{"/tmp/x.sock", strings.Repeat("t", maxMessagingField+1), false},
+		{"/tmp/x\n.sock", "t0k", false},
+		{"/tmp/x.sock", "t0k\nmore", false},
+	} {
+		env := map[string]string{envMessagingSocket: c.sock, envMessagingToken: c.tok}
+		got := messagingEndpoint(func(k string) string { return env[k] })
+		if (got != nil) != c.ok {
+			t.Errorf("messagingEndpoint(%q, %q) = %+v, want ok=%v", c.sock, c.tok, got, c.ok)
+		}
+	}
+	// Only Claude's envelopes carry it.
+	t.Setenv(envMessagingSocket, "/tmp/cc-socks/1.sock")
+	t.Setenv(envMessagingToken, "t0k")
+	if e := hookEnvelope(api.AgentCodex, nil, []byte(`{}`)); e.Messaging != nil {
+		t.Fatalf("codex envelope has messaging: %+v", e.Messaging)
+	}
+	if e := hookEnvelope(api.AgentClaude, nil, []byte(`{}`)); e.Messaging == nil {
+		t.Fatal("claude envelope lacks messaging")
 	}
 }
 
