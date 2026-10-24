@@ -1,0 +1,17 @@
+{
+  "kind": "pre_tool",
+  "vendor_event": "tool.execute.before",
+  "agent_session_id": "ses_e94dcca81ffed3xpV80ryjnePM",
+  "cwd": "/work/repo",
+  "tool_use_id": "call_4",
+  "tool": "write",
+  "tool_kind": "edit",
+  "paths": [
+    "/work/repo/notes/todo.md"
+  ],
+  "input": {
+    "filePath": "notes/todo.md",
+    "content": "hello"
+  },
+  "summary": "Write: notes/todo.md"
+}

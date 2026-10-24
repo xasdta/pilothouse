@@ -72,7 +72,8 @@ func (rs *replyState) sessionLock(id string) *sync.Mutex {
 	return l
 }
 
-// Reply delivers a follow-up prompt or an interrupt to a session.
+// Reply delivers a follow-up prompt or an interrupt to a session and
+// records it (one session.reply per delivered reply).
 func (d *Daemon) Reply(ctx context.Context, sessionID string, r api.Reply, by string) (api.ReplyResult, error) {
 	r.Text = strings.TrimRight(r.Text, " \t\r\n")
 	switch {
@@ -120,6 +121,16 @@ func (d *Daemon) Reply(ctx context.Context, sessionID string, r api.Reply, by st
 
 // deliverReply picks the channel for s and sends r through it.
 func (d *Daemon) deliverReply(ctx context.Context, s api.Session, r api.Reply, by string) (api.ReplyResult, error) {
+	if isPluginAgent(s.Agent) {
+		// The agent's own plugin knows best (and maps interrupt to its
+		// abort). Only a wrapped session whose plugin isn't there falls
+		// back to typing; any other answer (e.g. "may still arrive") is
+		// final, so nothing is delivered twice.
+		res, err := d.pluginReply(ctx, s, r, by)
+		if err == nil || s.Mode != api.ModeWrapped || (err != core.ErrUnsupported && !errors.Is(err, errPluginNotConnected)) {
+			return res, err
+		}
+	}
 	var termErr error
 	if s.Mode == api.ModeWrapped {
 		caps, known := d.replies.holderCaps(s.ID)
@@ -154,13 +165,6 @@ func (d *Daemon) deliverReply(ctx context.Context, s api.Session, r api.Reply, b
 			}
 			return api.ReplyResult{Via: api.ReplyMessage, Note: messagingNote}, nil
 		}
-	}
-	res, err := d.pluginReply(ctx, s, r, by)
-	if err == nil {
-		return res, nil
-	}
-	if err != core.ErrUnsupported { // a plugin's own reason (or failure) wins
-		return api.ReplyResult{}, err
 	}
 	if termErr != nil {
 		return api.ReplyResult{}, termErr

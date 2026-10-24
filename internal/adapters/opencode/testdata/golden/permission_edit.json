@@ -1,0 +1,18 @@
+{
+  "kind": "permission",
+  "vendor_event": "permission.asked",
+  "agent_session_id": "ses_e94dcca81ffed3xpV80ryjnePM",
+  "cwd": "/work/repo",
+  "tool_use_id": "per_edit1",
+  "tool": "edit",
+  "tool_kind": "edit",
+  "paths": [
+    "/work/repo/src/app.ts"
+  ],
+  "input": {
+    "filePath": "/work/repo/src/app.ts",
+    "oldString": "a",
+    "newString": "b"
+  },
+  "summary": "Edit: src/app.ts"
+}

@@ -416,12 +416,18 @@ type holderProc struct {
 // daemon, and waits until the daemon knows what it supports.
 func startWrapped(t *testing.T, h *harness, script string) *holderProc {
 	t.Helper()
+	return startWrappedAs(t, h, "", script)
+}
+
+// startWrappedAs is startWrapped for a given agent kind.
+func startWrappedAs(t *testing.T, h *harness, agent api.AgentKind, script string) *holderProc {
+	t.Helper()
 	hp := &holderProc{sid: wrap.NewSessionID(), done: make(chan struct{})}
 	ctx, cancel := context.WithCancel(context.Background())
 	hp.stop = cancel
 	go func() {
 		defer close(hp.done)
-		_, _ = wrap.RunHolder(ctx, wrap.HolderConfig{SessionID: hp.sid, Argv: []string{"/bin/sh", "-c", script},
+		_, _ = wrap.RunHolder(ctx, wrap.HolderConfig{SessionID: hp.sid, Agent: agent, Argv: []string{"/bin/sh", "-c", script},
 			Linger: 200 * time.Millisecond, Daemon: client.NewSocket(paths.Socket())})
 	}()
 	t.Cleanup(func() {
@@ -663,6 +669,32 @@ func TestReplyRefusedWhileBlocked(t *testing.T) {
 	}
 	w.waitOutput(t, "got:\x1b") // a plain shell reads Esc as part of the line
 	w.waitOutput(t, "do this instead")
+}
+
+// A plugin agent goes through its plugin first; a wrapped one whose plugin
+// isn't connected is typed into instead, and recorded once.
+func TestReplyPluginAgentFallsBackToTerminal(t *testing.T) {
+	h := newHarness(t)
+	h.start(t)
+	ctx := context.Background()
+	hp := startWrappedAs(t, h, api.AgentOpenCode, `echo ready; while read l; do echo "got:$l"; done`)
+	w := watchTerm(t, h, hp.sid, true)
+	w.waitOutput(t, "ready")
+	res, err := h.c.Reply(ctx, hp.sid, api.Reply{Text: "carry on"})
+	if err != nil || res.Via != api.ReplyTerminal {
+		t.Fatalf("reply %+v %v", res, err)
+	}
+	w.waitOutput(t, "got:carry on")
+	evs, _ := h.c.SessionEvents(ctx, hp.sid, 100)
+	n := 0
+	for _, e := range evs {
+		if e.Type == api.EventSessionReply {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("%d session.reply events, want 1", n)
+	}
 }
 
 // A generic program without bracketed paste gets the text typed.

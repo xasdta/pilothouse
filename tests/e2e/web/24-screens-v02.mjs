@@ -45,7 +45,10 @@ await run(async () => {
         await sleep(name === 'terminal' ? 900 : 500);
         await page.evaluate(() => scrollTo(0, 0));
         const label = `${name} ${size} ${scheme}`;
-        if (name === 'terminal') {
+        // Desktop: the viewport only. A full-page capture resizes the
+        // viewport across the shell's 1024 px breakpoint, which re-renders
+        // the view mid-capture (it comes out half faded in).
+        if (name === 'terminal' || vp === DESKTOP) {
           const p = `${SHOTS}/i-${name}-${size}-${scheme}.png`;
           await page.screenshot({ path: p });
           shots.push(p);

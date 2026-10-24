@@ -1,0 +1,48 @@
+{
+  "kind": "permission",
+  "vendor_event": "question.asked",
+  "agent_session_id": "ses_e94dcca81ffed3xpV80ryjnePM",
+  "cwd": "/work/repo",
+  "tool_use_id": "que_16b233996001qsrPGesT3b34ed",
+  "tool": "question",
+  "tool_kind": "other",
+  "input": {
+    "questions": [
+      {
+        "question": "Which color?",
+        "header": "Color",
+        "options": [
+          {
+            "label": "Red",
+            "description": "red"
+          },
+          {
+            "label": "Blue",
+            "description": "blue"
+          }
+        ],
+        "multiple": false,
+        "custom": null
+      }
+    ]
+  },
+  "summary": "Asks: Which color?",
+  "questions": [
+    {
+      "id": "que_16b233996001qsrPGesT3b34ed#1",
+      "header": "Color",
+      "question": "Which color?",
+      "options": [
+        {
+          "label": "Red",
+          "description": "red"
+        },
+        {
+          "label": "Blue",
+          "description": "blue"
+        }
+      ],
+      "allow_other": true
+    }
+  ]
+}

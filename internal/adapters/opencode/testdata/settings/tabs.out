@@ -1,0 +1,8 @@
+{
+	"model": "x",
+	"theme": "dark",
+	"permission": {
+		"bash": "ask",
+		"edit": "ask"
+	}
+}

@@ -108,7 +108,8 @@ type Daemon struct {
 	webURL   string
 	policy   atomic.Pointer[policyHolder]
 
-	pres presenceState
+	pres    presenceState
+	plugins pluginHub // command channels of plugin agents (plugin.go)
 
 	replies replyState // holders, terminal input, keep-awake (reply.go, terminal.go, keepawake.go)
 

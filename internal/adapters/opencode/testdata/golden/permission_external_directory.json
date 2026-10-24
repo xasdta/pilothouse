@@ -1,0 +1,18 @@
+{
+  "kind": "permission",
+  "vendor_event": "permission.asked",
+  "agent_session_id": "ses_e94dcca81ffed3xpV80ryjnePM",
+  "cwd": "/work/repo",
+  "tool_use_id": "per_ext1",
+  "tool": "bash",
+  "tool_kind": "shell",
+  "command": "ls /etc",
+  "paths": [
+    "/etc"
+  ],
+  "input": {
+    "command": "ls /etc",
+    "description": "list"
+  },
+  "summary": "Work outside the project (/etc/*): Run: ls /etc"
+}

@@ -1,0 +1,32 @@
+{
+  "v": 1,
+  "session_id": "ses_e94dcca81ffed3xpV80ryjnePM",
+  "agent_session_id": "ses_e94dcca81ffed3xpV80ryjnePM",
+  "directory": "/work/repo",
+  "event": "permission.asked",
+  "request_id": "per_ext1",
+  "permission": {
+    "permission": "external_directory",
+    "patterns": [
+      "/etc/*"
+    ],
+    "metadata": {
+      "command": "ls /etc",
+      "directories": [
+        "/etc"
+      ],
+      "patterns": [
+        "/etc/*"
+      ]
+    },
+    "always": [
+      "/etc/*"
+    ]
+  },
+  "tool": "bash",
+  "call_id": "call_11",
+  "args": {
+    "command": "ls /etc",
+    "description": "list"
+  }
+}

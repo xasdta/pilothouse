@@ -21,7 +21,7 @@ agent was started:
 |---|---|---|
 | Started with `pilothouse run` (any agent) | Typed into the agent's terminal: the text as one paste, then Enter | Yes: Esc first |
 | Claude Code started on its own (2.1.224+) | Claude's session messaging socket | No |
-| OpenCode | Its Pilothouse plugin | — |
+| OpenCode | Its Pilothouse plugin | Yes: aborts the turn |
 | Codex started on its own | Not possible: start it with `pilothouse run codex` | — |
 
 **Wrapped sessions.** The holder types the text as a *bracketed paste* when

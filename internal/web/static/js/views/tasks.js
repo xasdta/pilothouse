@@ -5,6 +5,7 @@
 import { h, icon, agentName, agentClass, agoLong, basename, stateLabel, fill, add, toMs } from '../dom.js';
 import { store, api, onEvent } from '../api.js';
 import { link, go, toast } from '../ui.js';
+import { diffView } from '../diff.js';
 import { section } from './rows.js';
 import { ico, postAction, actionError, spinner, byLabel, diffStat } from './session.js';
 
@@ -327,14 +328,10 @@ export function taskView(id) {
       diffErr = e;
     }
     if (destroyed) return;
-    const fn = await diffComponent();
-    if (destroyed) return;
-    renderDiff(task() || t, fn);
+    renderDiff(task() || t);
   }
 
-  let diffFn = null;
-  function renderDiff(t, fn) {
-    if (fn !== undefined) diffFn = fn;
+  function renderDiff(t) {
     if (diffErr && !diff) {
       fill(diffEl, section('Changes', 0, h('p', { class: 'quiet' }, diffErr.status === 501 ? 'Diffs need a newer Pilothouse on your computer.' : 'Couldn’t load the changes.')));
       return;
@@ -370,12 +367,8 @@ export function taskView(id) {
         f.op && f.op !== 'edit' ? h('span', { class: 'op-tag ' + f.op }, f.op === 'create' ? 'new' : f.op === 'delete' ? 'deleted' : f.op) : null,
         diffStat(f.added || 0, f.removed || 0),
         ico('down', 'sm', 'act-chev')));
-    let body = null;
-    if (diffFn) {
-      try { body = diffFn(f, { lang: f.lang }); } catch { body = null; }
-      if (!(body instanceof Node)) body = null;
-    }
-    add(det, body || localDiff(f));
+    // One FilePreview: diffView returns just its lines for this card.
+    add(det, diffView(f, { lang: f.lang }));
     return det;
   }
 
@@ -455,51 +448,4 @@ export function confirmSheet({ title, body, confirm, danger = false, icon: ic = 
     dlg.showModal();
     no.focus();
   });
-}
-
-// ---------- Diff rendering ----------
-
-// js/diff.js is workstream H's shared diff component. It is used when the
-// app has it: diffView(filePreview, {lang}) → Element (renderDiff or a
-// default export are accepted too). Until then localDiff below renders the
-// unified diff. TODO(merge): drop localDiff once js/diff.js lands.
-let diffModule;
-async function diffComponent() {
-  if (diffModule === undefined) {
-    try {
-      const m = await import('../diff.js');
-      diffModule = m.diffView || m.renderDiff || m.fileDiff || (typeof m.default === 'function' ? m.default : null);
-    } catch {
-      diffModule = null;
-    }
-  }
-  return diffModule;
-}
-
-/** A unified diff (no ---/+++ header) as numbered, coloured lines. */
-export function localDiff(f) {
-  const out = h('div', { class: 'tdiff', role: 'group', 'aria-label': `Changes in ${f.path}` });
-  const lines = (f.diff || '').replace(/\n$/, '').split('\n');
-  let o = 0;
-  let n = 0;
-  const rows = [];
-  for (const line of lines) {
-    const hunk = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$/);
-    if (hunk) {
-      o = Number(hunk[1]);
-      n = Number(hunk[2]);
-      rows.push(h('div', { class: 'tl-hunk' }, h('span', { class: 'ln' }), h('span', { class: 'ln' }), h('code', null, line)));
-      continue;
-    }
-    const c = line[0];
-    const text = line.slice(1);
-    if (c === '+') rows.push(h('div', { class: 'tl-add' }, h('span', { class: 'ln' }), h('span', { class: 'ln' }, String(n++)), h('code', null, h('span', { class: 'mk', 'aria-label': 'added' }, '+'), text)));
-    else if (c === '-') rows.push(h('div', { class: 'tl-del' }, h('span', { class: 'ln' }, String(o++)), h('span', { class: 'ln' }), h('code', null, h('span', { class: 'mk', 'aria-label': 'removed' }, '−'), text)));
-    else if (c === '\\') rows.push(h('div', { class: 'tl-meta' }, h('span', { class: 'ln' }), h('span', { class: 'ln' }), h('code', null, line)));
-    else if (line !== '' || rows.length) rows.push(h('div', { class: 'tl-ctx' }, h('span', { class: 'ln' }, String(o++)), h('span', { class: 'ln' }, String(n++)), h('code', null, h('span', { class: 'mk' }, ' '), text)));
-  }
-  if (!rows.length) rows.push(h('p', { class: 'tdiff-none' }, f.op === 'delete' ? 'File deleted.' : 'No text changes to show (binary or too large).'));
-  add(out, rows);
-  if (f.truncated) add(out, h('p', { class: 'tdiff-none' }, 'This diff is cut short.'));
-  return out;
 }

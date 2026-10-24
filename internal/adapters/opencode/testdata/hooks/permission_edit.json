@@ -1,0 +1,28 @@
+{
+  "v": 1,
+  "session_id": "ses_e94dcca81ffed3xpV80ryjnePM",
+  "agent_session_id": "ses_e94dcca81ffed3xpV80ryjnePM",
+  "directory": "/work/repo",
+  "event": "permission.asked",
+  "request_id": "per_edit1",
+  "permission": {
+    "permission": "edit",
+    "patterns": [
+      "src/app.ts"
+    ],
+    "metadata": {
+      "filepath": "/work/repo/src/app.ts",
+      "diff": "@@ -1 +1 @@\n-a\n+b\n"
+    },
+    "always": [
+      "*"
+    ]
+  },
+  "tool": "edit",
+  "call_id": "call_3",
+  "args": {
+    "filePath": "/work/repo/src/app.ts",
+    "oldString": "a",
+    "newString": "b"
+  }
+}
