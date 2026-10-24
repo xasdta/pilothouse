@@ -81,6 +81,9 @@ type Options struct {
 	PollInterval time.Duration
 	// DisableUpdateCheck turns off the daily update check regardless of config.
 	DisableUpdateCheck bool
+
+	// keepAwake replaces the platform's sleep inhibitor (tests).
+	keepAwake *awakeRunner
 }
 
 // Daemon is a running daemon. It implements core.Core.
@@ -105,6 +108,8 @@ type Daemon struct {
 	policy   atomic.Pointer[policyHolder]
 
 	pres presenceState
+
+	replies replyState // holders, terminal input, keep-awake (reply.go, terminal.go, keepawake.go)
 
 	compacted bool // the database was compacted at least once (prune loop only)
 

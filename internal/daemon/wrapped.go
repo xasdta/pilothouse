@@ -20,6 +20,7 @@ func (d *Daemon) RegisterWrapped(ctx context.Context, b api.WrappedSessionBody) 
 	if b.Agent == "" {
 		b.Agent = api.AgentGeneric
 	}
+	d.learnHolder(ctx, b.SessionID) // terminal.go: what the holder supports, for the session's caps
 	root, branch := d.git.lookup(ctx, b.Cwd)
 	var out api.Session
 	err := d.db.Write(ctx, func(tx *store.Tx) error {

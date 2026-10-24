@@ -46,6 +46,23 @@ type Terminal interface {
 	ResizeTerminal(ctx context.Context, sessionID string, cols, rows uint16) error
 }
 
+// TerminalEvent is one item of a terminal stream: output, the mirrored
+// terminal's size, or the agent's exit.
+type TerminalEvent struct {
+	Data     []byte // output bytes
+	Cols     uint16 // with Rows: a size report (the first event, then every change)
+	Rows     uint16
+	Exited   bool // the agent exited with ExitCode; the stream ends
+	ExitCode int
+}
+
+// TerminalStreamer is a Terminal that also reports the terminal's size
+// and the agent's exit code (the daemon is one). The web stream uses it
+// when the core has it and falls back to WatchTerminal otherwise.
+type TerminalStreamer interface {
+	StreamTerminal(ctx context.Context, sessionID string, replay bool, ev func(TerminalEvent) error) error
+}
+
 // ActivityReader reads agent transcripts (F3, F6).
 type ActivityReader interface {
 	Activity(ctx context.Context, sessionID string, q api.ActivityQuery) (api.Activity, error)

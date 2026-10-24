@@ -83,6 +83,10 @@ func (c *Conn) Send(t FrameType, payload []byte) error {
 // Recv reads the next frame. Only one goroutine may call it.
 func (c *Conn) Recv() (Frame, error) { return ReadFrame(c.c) }
 
+// SetWriteDeadline bounds the next Sends (a holder whose agent stops
+// reading its terminal stops reading input too).
+func (c *Conn) SetWriteDeadline(t time.Time) error { return c.c.SetWriteDeadline(t) }
+
 // Close closes the connection without a detach frame; the holder treats
 // it like a terminal going away.
 func (c *Conn) Close() error { return c.c.Close() }

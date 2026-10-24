@@ -58,6 +58,7 @@ func (d *Daemon) startLoops() {
 		}
 	})
 	d.startUpdateCheck()
+	d.startReplyLoops() // reply.go: keep-awake, ended sessions' secrets
 }
 
 // ---- policy ----
