@@ -463,6 +463,64 @@ func TestClaudeTrustPromptNotified(t *testing.T) {
 	}
 }
 
+// agentAdapter is a fake adapter for a real agent kind, with a settable
+// binary and hook status.
+type agentAdapter struct {
+	fakeAdapter
+	kind      api.AgentKind
+	binary    atomic.Value // string
+	installed atomic.Bool
+}
+
+func (a *agentAdapter) Kind() api.AgentKind    { return a.kind }
+func (a *agentAdapter) ProcessNames() []string { return []string{string(a.kind)} }
+func (a *agentAdapter) Detect() adapters.Detection {
+	return adapters.Detection{Binary: a.binary.Load().(string)}
+}
+func (a *agentAdapter) Status(adapters.InstallOptions) (adapters.HookStatus, error) {
+	return adapters.HookStatus{Installed: a.installed.Load()}, nil
+}
+
+// TestStartOpenCodeTask: OpenCode is found where its installer puts it
+// (not on PATH), starts only once its Pilothouse plugin is installed, and
+// gets the prompt with --prompt (a bare argument is a project path).
+func TestStartOpenCodeTask(t *testing.T) {
+	h, fs := newTaskHarness(t)
+	ocDir := t.TempDir() // like ~/.opencode/bin: not on the daemon's PATH
+	bin := filepath.Join(ocDir, "opencode")
+	oc := &agentAdapter{fakeAdapter: h.adapter, kind: api.AgentOpenCode}
+	oc.binary.Store(bin)
+	writeExec(t, bin, "#!/bin/sh\nexit 0\n")
+	withStarter := h.opts
+	h.opts = func(o *Options) {
+		withStarter(o)
+		o.Adapters = []adapters.Adapter{h.adapter, oc}
+	}
+	repo := newGitRepo(t, "app")
+	h.cfg.Tasks.Repos = []string{repo}
+	h.start(t)
+
+	start := api.TaskStart{Repo: repo, Agent: api.AgentOpenCode, Prompt: "-v is broken; fix it"}
+	if _, err := h.c.StartTask(bg, start); !client.IsCode(err, "invalid") || !strings.Contains(err.Error(), "Pilothouse is not connected to OpenCode") {
+		t.Fatalf("plugin not installed: %v", err)
+	}
+	oc.installed.Store(true)
+	tk, err := h.c.StartTask(bg, start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	specs := fs.started()
+	if tk.Agent != api.AgentOpenCode || len(specs) != 1 || len(specs[0].Argv) != 2 ||
+		specs[0].Argv[0] != bin || specs[0].Argv[1] != "--prompt=-v is broken; fix it" {
+		t.Fatalf("task %+v, started %+v", tk, specs)
+	}
+
+	oc.binary.Store("")
+	if _, err := h.c.StartTask(bg, start); !client.IsCode(err, "invalid") || !strings.Contains(err.Error(), "is not installed") {
+		t.Fatalf("no binary: %v", err)
+	}
+}
+
 func trustIn(t *testing.T, repo string) {
 	t.Helper()
 	if _, err := policy.TrustRepo(paths.TrustedRepos(), repo); err != nil {

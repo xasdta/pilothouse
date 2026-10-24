@@ -15,6 +15,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/xasdta/pilothouse/internal/adapters"
 	"github.com/xasdta/pilothouse/internal/api"
 	"github.com/xasdta/pilothouse/internal/core"
 	"github.com/xasdta/pilothouse/internal/notify"
@@ -35,8 +36,39 @@ var _ core.TaskRunner = (*Daemon)(nil)
 
 // Agents a device may start as a task, by the command that runs them.
 var taskAgents = map[api.AgentKind]string{
-	api.AgentClaude: "claude",
-	api.AgentCodex:  "codex",
+	api.AgentClaude:   "claude",
+	api.AgentCodex:    "codex",
+	api.AgentOpenCode: "opencode",
+}
+
+// taskAgent resolves the agent a device asked for to the program to run.
+// It must be installed (on the daemon's PATH, or where its adapter finds
+// it: OpenCode's installer uses ~/.opencode/bin), and Pilothouse must be
+// connected to it (hooks, or OpenCode's plugin): an agent that doesn't
+// report to Pilothouse would ask for permissions where nobody sees them,
+// and run without the rules.
+func (d *Daemon) taskAgent(kind api.AgentKind) (string, error) {
+	name, ok := taskAgents[kind]
+	if !ok {
+		return "", core.Invalid("%q can't be started as a task (supported: claude, codex, opencode)", kind)
+	}
+	ad := d.adapters[kind]
+	path, err := exec.LookPath(name)
+	if err != nil && ad != nil {
+		if b := ad.Detect().Binary; b != "" && filepath.Base(b) == name {
+			path, err = b, nil
+		}
+	}
+	if err != nil {
+		return "", core.Invalid("%s is not installed on %s (%s is not on the Pilothouse daemon's PATH)", notify.AgentName(kind), d.machine, name)
+	}
+	if ad != nil {
+		if st, err := ad.Status(adapters.InstallOptions{}); err == nil && !st.Installed {
+			return "", core.Invalid("Pilothouse is not connected to %s on %s, so its approvals couldn't reach you — run `pilothouse hooks install` there first",
+				notify.AgentName(kind), d.machine)
+		}
+	}
+	return path, nil
 }
 
 const (
@@ -307,12 +339,9 @@ func (d *Daemon) StartTask(ctx context.Context, ts api.TaskStart, by string) (ap
 	if ts.Agent == "" {
 		ts.Agent = api.AgentClaude
 	}
-	cmd, ok := taskAgents[ts.Agent]
-	if !ok {
-		return api.Task{}, core.Invalid("%q can't be started as a task (supported: claude, codex)", ts.Agent)
-	}
-	if _, err := exec.LookPath(cmd); err != nil {
-		return api.Task{}, core.Invalid("%s is not installed on %s (%s is not on the Pilothouse daemon's PATH)", notify.AgentName(ts.Agent), d.machine, cmd)
+	cmd, err := d.taskAgent(ts.Agent)
+	if err != nil {
+		return api.Task{}, err
 	}
 	if ts.Base != "" {
 		if err := task.CheckRef(ts.Base); err != nil {

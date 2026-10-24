@@ -374,11 +374,7 @@ func (m *Manager) Launch(ctx context.Context, p *Prepared, t api.Task) (api.Task
 	}
 
 	o := p.opts
-	argv := []string{p.agentPath}
-	if (p.kind == api.AgentClaude || p.kind == api.AgentCodex) && strings.HasPrefix(o.Prompt, "-") {
-		argv = append(argv, "--") // the prompt is not an option
-	}
-	argv = append(argv, o.Prompt)
+	argv := AgentArgv(p.kind, p.agentPath, o.Prompt)
 	var env []string
 	if p.trusted && p.cfg != nil && len(p.cfg.Env) > 0 {
 		env = append(os.Environ(), p.cfg.envList()...)
@@ -413,6 +409,23 @@ func (m *Manager) Launch(ctx context.Context, p *Prepared, t api.Task) (api.Task
 		m.surfaceTrustPrompt(ctx, t)
 	}
 	return t, nil
+}
+
+// AgentArgv is the command line that starts an agent on a prompt in the
+// current directory. Claude and Codex take the prompt as their argument
+// (after "--" when it starts with "-", so it is never read as an option);
+// OpenCode reads a bare argument as a project path and takes the prompt
+// with --prompt; any other command gets the prompt as its argument.
+func AgentArgv(kind api.AgentKind, path, prompt string) []string {
+	switch kind {
+	case api.AgentOpenCode:
+		return []string{path, "--prompt=" + prompt}
+	case api.AgentClaude, api.AgentCodex:
+		if strings.HasPrefix(prompt, "-") {
+			return []string{path, "--", prompt}
+		}
+	}
+	return []string{path, prompt}
 }
 
 // fail records that a task could not start. The worktree stays for a look

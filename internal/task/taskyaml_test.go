@@ -398,6 +398,18 @@ func TestPromptAndBaseChecks(t *testing.T) {
 	if a := rs.specs[1].Argv; len(a) != 2 || a[1] != "plain" {
 		t.Fatalf("argv %q", a)
 	}
+	// OpenCode reads a bare argument as a project path: the prompt goes in --prompt.
+	writeFile(t, filepath.Join(bin, "opencode"), "#!/bin/sh\nexit 0\n", 0o755)
+	oc, err := m.New(ctx, NewOptions{Prompt: "- fix the build", Agent: "opencode", Dir: repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a := rs.specs[2].Argv; oc.Agent != api.AgentOpenCode || len(a) != 2 || filepath.Base(a[0]) != "opencode" || a[1] != "--prompt=- fix the build" {
+		t.Fatalf("opencode: agent %s argv %q", oc.Agent, a)
+	}
+	if a := AgentArgv(api.AgentGeneric, "/bin/mytool", "-x"); len(a) != 2 || a[1] != "-x" {
+		t.Fatalf("generic argv %q", a)
+	}
 	// Revision syntax is pinned to the commit it means now.
 	tk, err := m.New(ctx, NewOptions{Prompt: "older", Agent: "true", Dir: repo, Base: "HEAD~1"})
 	if err != nil {
