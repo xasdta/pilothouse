@@ -65,7 +65,11 @@ def wait_until(fn, timeout=60, every=0.5, what="condition"):
 
 
 def claude(cwd, *extra, log=None):
-    argv = ["claude", "--settings", SETTINGS, "--model", "haiku", "--permission-mode", "default", *extra]
+    # --setting-sources leaves out the user's own ~/.claude/settings.json:
+    # with Pilothouse installed there, its hooks would also fire and report
+    # these test sessions to the user's real daemon.
+    argv = ["claude", "--setting-sources", "project,local", "--settings", SETTINGS,
+            "--model", "haiku", "--permission-mode", "default", *extra]
     return Term(argv, env=env(), cwd=cwd, log=log)
 
 

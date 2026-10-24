@@ -19,7 +19,7 @@ $R/pilothouse start
 CODE=$(./detach.py $R/pilothouse pair --json --no-wait --no-qr | python3 -c 'import json,sys;print(json.load(sys.stdin)["code"])')
 node phone.mjs pair http://127.0.0.1:7591 $CODE $R/phone.json
 # for s5 (tasks): a `claude` wrapper first on PATH so the task's agent uses the isolated hooks
-printf '#!/bin/sh\nexec claude --settings %s/uhome/.claude/settings.json --model haiku --permission-mode default "$@"\n' $R > $R/bin/claude   # use the absolute path of the real claude
+printf '#!/bin/sh\nexec claude --setting-sources project,local --settings %s/uhome/.claude/settings.json --model haiku --permission-mode default "$@"\n' $R > $R/bin/claude   # use the absolute path of the real claude
 chmod +x $R/bin/claude
 ```
 
@@ -55,6 +55,8 @@ Each prints `[e2e] RESULTS {...}` at the end, plus `pilothouse log`/`explain` ou
 - `tui_driver.py` – drives the inbox TUI in a PTY (run via `detach.py`).
 
 Isolation: never run these without the `PILOTHOUSE_*` variables; `claude` is
-started with `--settings $R/uhome/.claude/settings.json`, so the real
-`~/.claude/settings.json` is not modified (Claude Code still records the
+started with `--setting-sources project,local --settings $R/uhome/.claude/settings.json`,
+so the real `~/.claude/settings.json` is neither modified nor loaded (if
+Pilothouse is installed for real, its user-level hooks would otherwise also
+fire and report test sessions to the real daemon) (Claude Code still records the
 folder-trust answer and transcripts under the real `~/.claude*`, as any run does).
