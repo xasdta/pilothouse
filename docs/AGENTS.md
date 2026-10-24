@@ -21,6 +21,7 @@ This page records what each agent really supports, with sources, as of
 | Policy / grant `allow` (skip the prompt) | Yes (`permissionDecision: "allow"`; the agent's own deny/ask rules still win) | **No** at `PreToolUse` (Codex rejects `allow` without `updatedInput`); see Caveats |
 | Remote approvals (phone answers the prompt) | Yes (`PermissionRequest` → `decision.behavior` allow/deny), held up to 600 s | Yes (`PermissionRequest` → `decision.behavior` allow/deny), held up to 600 s |
 | Resume a session | `claude --resume <session_id>` | `codex resume <session_id>` |
+| Activity feed and usage (read from the transcript, see [USAGE.md](USAGE.md)) | `~/.claude/projects/…/<session>.jsonl` + subagent files; usage per response | `~/.codex/sessions/…/rollout-*.jsonl`, found by thread id until hooks name it; usage from `token_count` |
 | OSC 7501 status (wrap mode, L1) | Emits it (v2.1.295+) when it detects terminal support | Emits it whenever stdout is a terminal |
 
 "Remote approvals" means: when the person is away, the hook holds the agent's

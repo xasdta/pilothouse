@@ -57,6 +57,7 @@ the terminal at your desk, or your phone when you're away.`,
 	add("admin", newHooksCmd(), newHookShimCmd())
 	// policy.go (workstream C)
 	add("work", newPolicyCmd())
+	add("work", newUsageCmd(), newActivityCmd()) // usage.go (0.2 workstream C)
 	// run.go (workstream D)
 	add("run", newRunCmd(), newAttachCmd(), newHolderCmd(), newTaskCmd())
 	// remote.go (workstream E)
