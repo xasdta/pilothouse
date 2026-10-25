@@ -57,6 +57,9 @@ var (
 // TestMain removes the pilothouse binary the shim tests build (shared by
 // several tests, so no single t.TempDir can own it).
 func TestMain(m *testing.M) {
+	// The tests may run inside an agent session (an agent running go
+	// test); the guard itself is tested in TestNotifyGuard.
+	notifySelfCheck = func() error { return nil }
 	code := m.Run()
 	if hkBin != "" {
 		os.RemoveAll(filepath.Dir(hkBin))

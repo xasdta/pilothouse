@@ -3,6 +3,7 @@ package daemon
 import (
 	"fmt"
 	"net"
+	"os"
 	"path/filepath"
 
 	"github.com/xasdta/pilothouse/internal/adapters"
@@ -26,8 +27,27 @@ func ProcessGuard(ads []adapters.Adapter) PeerGuard {
 			names[n] = true
 		}
 	}
-	return processGuard(names, proc.PeerPID, proc.Info, proc.Ancestors)
+	peer := func(c net.Conn) (int, error) {
+		if _, ok := c.(selfConn); ok {
+			return os.Getpid(), nil
+		}
+		return proc.PeerPID(c)
+	}
+	return processGuard(names, peer, proc.Info, proc.Ancestors)
 }
+
+// CheckSelf applies the same test to the calling process itself, for CLI
+// commands that change who can approve requests without going through
+// the daemon (`pilothouse notify telegram` writes the bot token and the
+// pairing code directly). Like the socket guard it is defense in depth: a
+// process that double-forks away from the agent escapes it.
+func CheckSelf(ads []adapters.Adapter) error {
+	g := ProcessGuard(ads)
+	return g(selfConn{})
+}
+
+// selfConn stands for the calling process in CheckSelf.
+type selfConn struct{ net.Conn }
 
 func processGuard(
 	agentNames map[string]bool,

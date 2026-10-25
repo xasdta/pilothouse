@@ -375,6 +375,26 @@ func TestNotifyNtfy(t *testing.T) {
 	}
 }
 
+// Security review 0.2: an agent must not be able to point notifications
+// (and their one-tap Allow URLs) or Telegram decisions at itself.
+func TestNotifyGuard(t *testing.T) {
+	ibxEnv(t)
+	notifySelfCheck = func() error { return errors.New("refused: run from inside claude") }
+	t.Cleanup(func() { notifySelfCheck = func() error { return nil } })
+	for _, args := range [][]string{{"notify", "ntfy", "attacker_topic"}, {"notify", "telegram"}, {"notify", "telegram", "off"}} {
+		_, err := ibxRun(t, f2Token+"\n", args...)
+		if err == nil || !strings.Contains(err.Error(), "inside an agent session") {
+			t.Errorf("%v: err = %v, want the agent-session refusal", args, err)
+		}
+	}
+	if cfg, _ := config.Load(); cfg.Notify.Ntfy.Topic != "" || cfg.Notify.Telegram.Enabled {
+		t.Fatalf("config changed: %+v", cfg.Notify)
+	}
+	if _, err := os.Stat(telegram.KeysPath()); !os.IsNotExist(err) {
+		t.Fatalf("telegram keys written: %v", err)
+	}
+}
+
 // diffAdapter is an ibxAdapter whose dry run returns the file contents.
 type diffAdapter struct {
 	*ibxAdapter

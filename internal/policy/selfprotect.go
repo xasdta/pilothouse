@@ -24,6 +24,19 @@ var adminCommands = map[string]bool{
 	"approve": true, "deny": true, "policy": true, "pair": true, "devices": true,
 	"remote": true, "service": true, "hooks": true, "here": true, "away": true,
 	"auto": true, "stop": true, "open": true, "setup": true,
+	// 0.2: answering a question and replying to a session act for the
+	// person; notify points notifications (with one-tap Allow buttons) and
+	// Telegram decisions somewhere; task done/abandon push or delete work.
+	"answer": true, "reply": true, "notify": true, "task": true,
+}
+
+// readOnlySub are subcommands of admin commands that are safe for an
+// agent: reading rules, testing notifications, listing and diffing tasks,
+// starting a task (its agent runs under the same hooks).
+var readOnlySub = map[string]map[string]bool{
+	"policy": readOnlyPolicy,
+	"notify": {"test": true, "help": true},
+	"task":   {"new": true, "ls": true, "diff": true, "help": true},
 }
 
 // readOnlyPolicy are `pilothouse policy` subcommands that only read: an agent
@@ -34,8 +47,8 @@ var readOnlyPolicy = map[string]bool{"check": true, "test": true, "status": true
 // search for a subcommand (so `pilothouse log --grep approve` is not a hit).
 var otherCommands = map[string]bool{
 	"ls": true, "log": true, "explain": true, "version": true, "status": true, "doctor": true,
-	"help": true, "completion": true, "hook": true, "attach": true, "task": true, "daemon": true,
-	"start": true, "notify": true, "inbox": true, "__holder": true,
+	"help": true, "completion": true, "hook": true, "attach": true, "daemon": true,
+	"start": true, "inbox": true, "__holder": true, "usage": true, "activity": true, "demo": true,
 }
 
 // Command wrappers that run their arguments as a command. valueFlags are
@@ -307,10 +320,8 @@ func (a *spAnalyzer) pilothouse(args []string, viaXargs bool, cwd string, depth 
 			continue
 		}
 		if adminCommands[w] {
-			if w == "policy" {
-				if sub := firstNonFlag(args[j+1:]); readOnlyPolicy[sub] {
-					return
-				}
+			if ro, ok := readOnlySub[w]; ok && ro[firstNonFlag(args[j+1:])] {
+				return
 			}
 			a.hit("runs `pilothouse %s`", w)
 			return
@@ -436,7 +447,7 @@ func (a *spAnalyzer) looseScan() {
 			if strings.HasPrefix(g, "-") {
 				continue
 			}
-			if adminCommands[g] && !(g == "policy" && j+1 < len(fields) && readOnlyPolicy[fields[j+1]]) {
+			if adminCommands[g] && !(j+1 < len(fields) && readOnlySub[g][fields[j+1]]) {
 				a.hit("passes `pilothouse %s` to an interpreter", g)
 				return
 			}

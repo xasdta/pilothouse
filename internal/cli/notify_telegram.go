@@ -20,8 +20,10 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	"github.com/xasdta/pilothouse/internal/adapters/all"
 	"github.com/xasdta/pilothouse/internal/client"
 	"github.com/xasdta/pilothouse/internal/config"
+	"github.com/xasdta/pilothouse/internal/daemon"
 	"github.com/xasdta/pilothouse/internal/notify/telegram"
 	"github.com/xasdta/pilothouse/internal/version"
 )
@@ -36,7 +38,21 @@ var (
 	tgHTTP         *http.Client // nil: the telegram client's default
 	tgNow          = time.Now
 	tgPollInterval = 500 * time.Millisecond
+	// notifySelfCheck refuses to change where notifications and decisions
+	// go when run from inside an agent session: these commands write the
+	// bot token, the pairing code and the ntfy topic (whose Allow buttons
+	// are one-tap capability URLs) without going through the daemon's
+	// agent-caller guard.
+	notifySelfCheck = func() error { return daemon.CheckSelf(all.List()) }
 )
+
+// notifyGuard runs notifySelfCheck with a next step.
+func notifyGuard(what string) error {
+	if err := notifySelfCheck(); err != nil {
+		return fmt.Errorf("%s can't be run from inside an agent session (an agent must not choose where approvals go): %v", what, err)
+	}
+	return nil
+}
 
 type tgOptions struct {
 	noQR, noWait bool
@@ -124,6 +140,9 @@ func readToken(w io.Writer, in *bufio.Reader, current telegram.Keys) (string, er
 // runNotifyTelegram sets up the bot and pairs a chat. It reports whether
 // pairing finished.
 func runNotifyTelegram(ctx context.Context, w io.Writer, in *bufio.Reader, o tgOptions) (bool, error) {
+	if err := notifyGuard("`pilothouse notify telegram`"); err != nil {
+		return false, err
+	}
 	cfg, err := config.Load()
 	if err != nil {
 		return false, err
@@ -278,6 +297,9 @@ func tgSavePaired(ctx context.Context, c *telegram.Client, ch telegram.Chat, cod
 }
 
 func runTelegramOff(w io.Writer) error {
+	if err := notifyGuard("`pilothouse notify telegram off`"); err != nil {
+		return err
+	}
 	if _, err := config.Update(nil, func(c *config.Config) error {
 		c.Notify.Telegram.Enabled = false
 		c.Notify.Telegram.ChatID = 0
@@ -391,6 +413,9 @@ Notifications are cleared from the phone once a request is answered
 // runNotifyNtfy saves the ntfy topic and shows how to subscribe. It
 // returns the topic.
 func runNotifyNtfy(w io.Writer, server, topic string, restartHint bool) (string, error) {
+	if err := notifyGuard("`pilothouse notify ntfy`"); err != nil {
+		return "", err
+	}
 	if topic != "" && !ntfyTopicRE(topic) {
 		return "", errors.New("an ntfy topic is 1-64 letters, digits, - and _")
 	}
