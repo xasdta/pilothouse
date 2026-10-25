@@ -4,16 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
-	"syscall"
 	"unicode/utf8"
 
 	"github.com/xasdta/pilothouse/internal/api"
-	"github.com/xasdta/pilothouse/internal/paths"
 	"github.com/xasdta/pilothouse/internal/preview"
 	"github.com/xasdta/pilothouse/internal/risk"
+	"github.com/xasdta/pilothouse/internal/transcript"
 )
 
 // enrichRequest adds what helps a person decide at a glance to a request
@@ -50,56 +47,25 @@ const (
 // transcriptRoots are the only places transcripts are read from: the
 // path comes from the hook payload, which the agent controls.
 func transcriptRoots() []string {
-	home := paths.UserHome()
-	codex := os.Getenv("CODEX_HOME")
-	if codex == "" {
-		codex = filepath.Join(home, ".codex")
-	}
-	return []string{filepath.Join(home, ".claude", "projects"), filepath.Join(codex, "sessions")}
-}
-
-// confinedTranscript returns p if it is a regular .jsonl file inside a
-// transcript root, symlinks resolved on both sides.
-func confinedTranscript(p string) (string, bool) {
-	if p == "" || !filepath.IsAbs(p) || filepath.Ext(p) != ".jsonl" {
-		return "", false
-	}
-	real, err := filepath.EvalSymlinks(filepath.Clean(p))
-	if err != nil {
-		return "", false
-	}
-	for _, root := range transcriptRoots() {
-		if r, err := filepath.EvalSymlinks(root); err == nil {
-			root = r
-		}
-		if strings.HasPrefix(real, root+string(filepath.Separator)) {
-			if fi, err := os.Stat(real); err == nil && fi.Mode().IsRegular() {
-				return real, true
-			}
-		}
-	}
-	return "", false
+	r := transcript.DefaultRoots()
+	return append(append([]string(nil), r.Claude...), r.Codex...)
 }
 
 // lastWords is the last thing the agent wrote to the person in its
 // current turn, from the end of its transcript (Claude Code projects
 // JSONL or a Codex rollout), trimmed and with credentials redacted. It is
 // "" when the agent said nothing since the person's last prompt.
-func lastWords(transcript string) string {
-	p, ok := confinedTranscript(transcript)
-	if !ok {
-		return ""
-	}
-	// Non-blocking: a FIFO swapped in after the check must not hang the hook.
-	f, err := os.OpenFile(p, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+//
+// transcript.Open confines the read: a regular .jsonl file inside a
+// root, opened without following a final symlink and without blocking,
+// and resolved again after the open, so a path swapped for a symlink
+// between the check and the read can't redirect it.
+func lastWords(path string) string {
+	f, fi, err := transcript.Open(path, transcriptRoots())
 	if err != nil {
 		return ""
 	}
 	defer f.Close()
-	fi, err := f.Stat()
-	if err != nil || !fi.Mode().IsRegular() {
-		return ""
-	}
 	off := max(fi.Size()-transcriptTail, 0)
 	buf := make([]byte, fi.Size()-off)
 	n, err := f.ReadAt(buf, off)
