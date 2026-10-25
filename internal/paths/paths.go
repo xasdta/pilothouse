@@ -58,6 +58,31 @@ func HolderSocket(sessionID string) string {
 	return filepath.Join(Run(), "h-"+sessionID+".sock")
 }
 
+// WriteFileAtomic replaces file with data (mode perm) through a fresh,
+// exclusively created temp file in the same directory and a rename: a
+// reader never sees half a file, and a symlink planted at a predictable
+// temp name (file.tmp) can't redirect a secret somewhere else.
+func WriteFileAtomic(file string, data []byte, perm os.FileMode) error {
+	tmp, err := os.CreateTemp(filepath.Dir(file), "."+filepath.Base(file)+".tmp*")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	defer os.Remove(name) // no-op after a successful rename
+	if err := tmp.Chmod(perm); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(name, file)
+}
+
 // Ensure creates the data directories with private permissions.
 func Ensure() error {
 	for _, d := range []string{Home(), Run(), Keys(), Logs()} {

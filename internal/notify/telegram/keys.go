@@ -118,14 +118,7 @@ func SpendCode(path, code string, now time.Time) error {
 
 func saveKeys(path string, k Keys) error {
 	b, _ := json.MarshalIndent(k, "", "  ")
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		return err
-	}
-	if err := os.Chmod(tmp, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return paths.WriteFileAtomic(path, b, 0o600)
 }
 
 // NewPairCode returns a one-time code for the ?start= link (22 base64url

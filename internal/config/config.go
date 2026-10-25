@@ -224,11 +224,7 @@ func (c *Config) save() error {
 	if err != nil {
 		return err
 	}
-	tmp := paths.Config() + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, paths.Config())
+	return paths.WriteFileAtomic(paths.Config(), b, 0o600)
 }
 
 // Update changes config.yaml as one locked read-modify-write: under an

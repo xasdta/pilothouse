@@ -24,6 +24,7 @@ import (
 	"github.com/xasdta/pilothouse/internal/api"
 	"github.com/xasdta/pilothouse/internal/core"
 	"github.com/xasdta/pilothouse/internal/notify"
+	"github.com/xasdta/pilothouse/internal/paths"
 )
 
 // VAPIDSubscriber identifies this application server to push services
@@ -68,11 +69,7 @@ func loadOrCreateVAPID(dir string) (vapidKeys, error) {
 		return vapidKeys{}, err
 	}
 	out, _ := json.MarshalIndent(k, "", "  ")
-	tmp := p + ".tmp"
-	if err := os.WriteFile(tmp, out, 0o600); err != nil {
-		return vapidKeys{}, err
-	}
-	if err := os.Rename(tmp, p); err != nil {
+	if err := paths.WriteFileAtomic(p, out, 0o600); err != nil {
 		return vapidKeys{}, err
 	}
 	return k, nil
