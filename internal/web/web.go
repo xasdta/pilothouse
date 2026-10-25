@@ -79,6 +79,7 @@ type Server struct {
 	static  *staticFiles
 
 	pairLimit *limiter
+	terminals terminalTokens // terminal.go
 
 	mu       sync.Mutex
 	streams  map[string]map[*int]context.CancelFunc // device id → live SSE streams

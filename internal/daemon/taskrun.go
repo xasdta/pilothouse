@@ -483,7 +483,7 @@ func (d *Daemon) watchTasks() {
 	for d.ctx.Err() == nil {
 		after, err := d.db.MaxSeq(d.ctx)
 		if err != nil {
-			if !sleepCtx(d.ctx, time.Second) {
+			if !pauseCtx(d.ctx, time.Second) {
 				return
 			}
 			continue
@@ -494,7 +494,7 @@ func (d *Daemon) watchTasks() {
 			if sub != nil {
 				sub.Close()
 			}
-			if !sleepCtx(d.ctx, time.Second) {
+			if !pauseCtx(d.ctx, time.Second) {
 				return
 			}
 			continue
@@ -513,7 +513,7 @@ func (d *Daemon) watchTasks() {
 	}
 }
 
-func sleepCtx(ctx context.Context, d time.Duration) bool {
+func pauseCtx(ctx context.Context, d time.Duration) bool {
 	t := time.NewTimer(d)
 	defer t.Stop()
 	select {

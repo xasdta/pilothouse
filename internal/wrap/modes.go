@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // modeTracker follows the terminal modes an agent's TUI switches on, so
@@ -163,4 +164,50 @@ func decMode(n int, on bool) string {
 		return "\x1b[?" + strconv.Itoa(n) + "h"
 	}
 	return "\x1b[?" + strconv.Itoa(n) + "l"
+}
+
+// bracketedPaste reports whether the agent turned bracketed paste (DEC
+// mode 2004) on.
+func (m *modeTracker) bracketedPaste() bool { return m.modes[2004] }
+
+// Bracketed-paste markers (xterm).
+const (
+	pasteStart = "\x1b[200~"
+	pasteEnd   = "\x1b[201~"
+)
+
+// pasteBytes is what the PTY receives for a paste of text, the way a
+// terminal pastes: newlines as CR, wrapped in bracketed-paste markers
+// when the agent asked for them. Control characters other than tab and
+// newline (ESC first of all), DEL and C1 controls are dropped, as are
+// invalid UTF-8 bytes, so pasted text can't end the paste early or
+// smuggle key sequences in.
+func pasteBytes(text []byte, bracketed bool) []byte {
+	out := make([]byte, 0, len(text)+len(pasteStart)+len(pasteEnd))
+	if bracketed {
+		out = append(out, pasteStart...)
+	}
+	for i := 0; i < len(text); {
+		r, n := utf8.DecodeRune(text[i:])
+		switch {
+		case r == utf8.RuneError && n <= 1:
+		case r == '\r':
+			if i+1 < len(text) && text[i+1] == '\n' {
+				n = 2
+			}
+			out = append(out, '\r')
+		case r == '\n':
+			out = append(out, '\r')
+		case r == '\t':
+			out = append(out, '\t')
+		case r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f):
+		default:
+			out = append(out, text[i:i+n]...)
+		}
+		i += n
+	}
+	if bracketed {
+		out = append(out, pasteEnd...)
+	}
+	return out
 }

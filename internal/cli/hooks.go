@@ -422,7 +422,31 @@ func hookEnvelope(agent api.AgentKind, rest []string, payload []byte) adapters.H
 			env.Env[k] = v
 		}
 	}
+	if agent == api.AgentClaude {
+		env.Messaging = messagingEndpoint(os.Getenv)
+	}
 	return env
+}
+
+// Claude Code (2.1.224+) tells hooks where its session's messaging socket
+// is; a message written there reaches the model as a new prompt. The
+// endpoint travels in its own envelope field, never in Env, so the daemon
+// can keep it out of everything it logs or serves.
+const (
+	envMessagingSocket = "CLAUDE_CODE_MESSAGING_SOCKET"
+	envMessagingToken  = "CLAUDE_CODE_MESSAGING_TOKEN"
+	maxMessagingField  = 1024
+)
+
+// messagingEndpoint reads the messaging endpoint from the environment, or
+// nil when it is missing or implausible (the daemon checks it again).
+func messagingEndpoint(getenv func(string) string) *adapters.MessagingEndpoint {
+	sock, tok := getenv(envMessagingSocket), getenv(envMessagingToken)
+	if !strings.HasPrefix(sock, "/") || tok == "" || len(sock) > maxMessagingField || len(tok) > maxMessagingField ||
+		strings.ContainsAny(sock, "\x00\n") || strings.ContainsAny(tok, "\x00\n") {
+		return nil
+	}
+	return &adapters.MessagingEndpoint{Socket: sock, Token: tok}
 }
 
 // errHookTooLarge: stdin held more than maxHookPayload bytes.

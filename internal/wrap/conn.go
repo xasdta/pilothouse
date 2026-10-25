@@ -83,9 +83,55 @@ func (c *Conn) Send(t FrameType, payload []byte) error {
 // Recv reads the next frame. Only one goroutine may call it.
 func (c *Conn) Recv() (Frame, error) { return ReadFrame(c.c) }
 
+// SetWriteDeadline bounds the next Sends (a holder whose agent stops
+// reading its terminal stops reading input too).
+func (c *Conn) SetWriteDeadline(t time.Time) error { return c.c.SetWriteDeadline(t) }
+
 // Close closes the connection without a detach frame; the holder treats
 // it like a terminal going away.
 func (c *Conn) Close() error { return c.c.Close() }
+
+// ErrOldHolder is returned by DialCap when the holder predates the mode
+// asked for: it was started by an older pilothouse (holders outlive
+// upgrades of the binary).
+var ErrOldHolder = errors.New("this session was started by an older version of pilothouse; start it again with `pilothouse run` to use this")
+
+// capFor is the capability a hello mode needs ("" for the 0.1 modes).
+func capFor(m HelloMode) string {
+	switch m {
+	case ModeWatch:
+		return CapWatch
+	case ModeInput:
+		return CapInput
+	}
+	return ""
+}
+
+// DialCap connects in a 0.2 mode (watch or input) only after a probe
+// shows the holder supports it, so an older holder never receives a
+// hello it doesn't understand. Use it instead of Dial for those modes.
+func DialCap(ctx context.Context, socket string, h Hello) (*Conn, error) {
+	need := capFor(h.Mode)
+	if need == "" {
+		return nil, fmt.Errorf("wrap: DialCap is for watch and input modes, not %q", h.Mode)
+	}
+	sh, err := Probe(ctx, socket)
+	if err != nil {
+		return nil, err
+	}
+	if !sh.Has(need) {
+		return nil, ErrOldHolder
+	}
+	c, err := Dial(ctx, socket, h)
+	if err != nil {
+		return nil, err
+	}
+	if c.Hello.SessionID != sh.SessionID || !c.Hello.Has(need) {
+		c.Close()
+		return nil, ErrOldHolder
+	}
+	return c, nil
+}
 
 // Probe asks a holder who it is without attaching.
 func Probe(ctx context.Context, socket string) (ServerHello, error) {

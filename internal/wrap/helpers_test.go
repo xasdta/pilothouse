@@ -209,11 +209,29 @@ type session struct {
 
 func attachSession(t *testing.T, sock string, replay bool) *session {
 	t.Helper()
+	return dialSession(t, sock, Hello{Mode: ModeAttach, Replay: replay, Cols: 100, Rows: 30})
+}
+
+// watchSession connects a read-only watcher through DialCap, as the
+// daemon does.
+func watchSession(t *testing.T, sock string, replay bool) *session {
+	t.Helper()
+	return dialSession(t, sock, Hello{Mode: ModeWatch, Replay: replay})
+}
+
+func dialSession(t *testing.T, sock string, h Hello) *session {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	c, err := Dial(ctx, sock, Hello{Mode: ModeAttach, Replay: replay, Cols: 100, Rows: 30})
+	var c *Conn
+	var err error
+	if h.Mode == ModeWatch || h.Mode == ModeInput {
+		c, err = DialCap(ctx, sock, h)
+	} else {
+		c, err = Dial(ctx, sock, h)
+	}
 	if err != nil {
-		t.Fatalf("attach: %v", err)
+		t.Fatalf("%s: %v", h.Mode, err)
 	}
 	s := &session{t: t, c: c, done: make(chan struct{})}
 	go func() {
@@ -247,6 +265,19 @@ func (s *session) output() string {
 func (s *session) waitOutput(substr string) {
 	s.t.Helper()
 	waitFor(s.t, 10*time.Second, "output "+strings.TrimSpace(substr), func() bool { return strings.Contains(s.output(), substr) })
+}
+
+// framesOf returns the control frames of type ft received so far.
+func (s *session) framesOf(ft FrameType) []Frame {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []Frame
+	for _, f := range s.frames {
+		if f.Type == ft {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // waitFrame waits for a control frame of type ft and returns it.

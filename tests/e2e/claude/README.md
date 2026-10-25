@@ -46,6 +46,8 @@ $R/venv/bin/python s7_questions.py # questions: phone (signed v2 respond) label 
                                    #   (two questions, multi-select), desk dialog; plans: phone revise → approve
 $R/venv/bin/python s8_pretool_allow.py  # probe (no Pilothouse hooks): what Claude does with a PreToolUse allow
                                         #   for AskUserQuestion / ExitPlanMode
+$R/venv/bin/python s9_reply.py     # 0.2: replies to wrapped (PTY) and observed (messaging socket) Claude, --interrupt,
+                                   # the phone's live terminal (phone_terminal.mjs), keep-awake while working
 ```
 
 s7 and s8 set `plansDirectory: plans` in the work folder's project settings,
@@ -56,6 +58,8 @@ than macOS allows (104 bytes): put the run dir somewhere short with
 `E2E_RUN_DIR=$(mktemp -d /tmp/ph.XXXX)` and export the same value as
 `PILOTHOUSE_RUN_DIR` for the setup commands.
 
+s9 needs the paired phone state at `$R/phone.json` (the `phone.mjs pair` step above).
+
 Each prints `[e2e] RESULTS {...}` at the end, plus `pilothouse log`/`explain` output.
 
 ## Files
@@ -65,6 +69,7 @@ Each prints `[e2e] RESULTS {...}` at the end, plus `pilothouse log`/`explain` ou
 - `detach.py` – runs a command double-forked so it is not a descendant of an agent. Pilothouse refuses `approve/deny/here/away/pair/stop` from inside an agent's process tree by design; a harness running under Claude Code acts as "the person" through this.
 - `phone.mjs` – simulated paired phone (WebCrypto P-256, signed decisions, replay check;
   `respond` signs 0.2 actions — `pilothouse-action:v2` over the exact payload — for answers and plans).
+- `phone_terminal.mjs` – the phone's live terminal: signed `terminal` action → token, SSE stream with replay, typed input and resize, token scoping.
 - `tui_driver.py` – drives the inbox TUI in a PTY (run via `detach.py`).
 
 Isolation: never run these without the `PILOTHOUSE_*` variables; `claude` is

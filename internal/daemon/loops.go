@@ -60,6 +60,7 @@ func (d *Daemon) startLoops() {
 	d.startUpdateCheck()
 	d.startUsage()               // usage.go (workstream C)
 	d.goBackground(d.watchTasks) // taskrun.go (workstream G)
+	d.startReplyLoops()          // reply.go: keep-awake, ended sessions' secrets
 }
 
 // ---- policy ----

@@ -85,6 +85,9 @@ type Options struct {
 	// TaskStarter starts the agent of a task begun from a device;
 	// defaults to task.SpawnStarter (a detached `pilothouse run` holder).
 	TaskStarter task.Starter
+
+	// keepAwake replaces the platform's sleep inhibitor (tests).
+	keepAwake *awakeRunner
 }
 
 // Daemon is a running daemon. It implements core.Core.
@@ -112,6 +115,8 @@ type Daemon struct {
 	pres    presenceState
 	plugins pluginHub // command channels of plugin agents (plugin.go)
 	tasks   taskState // taskrun.go
+
+	replies replyState // holders, terminal input, keep-awake (reply.go, terminal.go, keepawake.go)
 
 	compacted bool // the database was compacted at least once (prune loop only)
 

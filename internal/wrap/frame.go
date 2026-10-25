@@ -18,6 +18,13 @@ import (
 // resize, detach, exit and error frames flow. Lengths are checked before
 // anything is allocated so a hostile peer cannot make either side buffer
 // more than MaxFrame bytes.
+//
+// Holders added in 0.2 list optional features in ServerHello.Caps: the
+// watch and input hello modes and the paste frame. Holders outlive
+// upgrades of the pilothouse binary, and a 0.1 holder refuses (and an
+// older design would have attached for) any mode it doesn't know, so a
+// client must probe first and use a newer mode only when the holder lists
+// it; DialCap does exactly that.
 
 // FrameType identifies a frame on the holder socket.
 type FrameType uint8
@@ -29,6 +36,17 @@ const (
 	FrameDetach FrameType = 4 // client→holder: leaving; holder→client: you were detached (payload: reason text)
 	FrameExit   FrameType = 5 // holder→client: child exited, code i32 (big-endian)
 	FrameError  FrameType = 6 // UTF-8 text; the sender closes after it
+	// FramePaste (client→holder, CapPaste) is text to paste: the holder
+	// wraps it in bracketed-paste markers when the agent turned bracketed
+	// paste on, so a multi-line prompt arrives as one paste instead of a
+	// line per Enter. Control characters other than tab and newline are
+	// dropped first, so pasted text can't end the paste early or inject
+	// key sequences.
+	FramePaste FrameType = 7
+	// FrameAttach (holder→watcher, CapWatch) says whether a terminal is
+	// attached (payload 1) or not (0) whenever that changes; while one is,
+	// its size is the PTY's size and input-mode resizes are ignored.
+	FrameAttach FrameType = 8
 )
 
 func (t FrameType) String() string {
@@ -45,6 +63,10 @@ func (t FrameType) String() string {
 		return "exit"
 	case FrameError:
 		return "error"
+	case FramePaste:
+		return "paste"
+	case FrameAttach:
+		return "attach"
 	}
 	return fmt.Sprintf("frame(%d)", uint8(t))
 }
@@ -160,6 +182,22 @@ func DecodeExit(p []byte) (int, error) {
 	return int(int32(binary.BigEndian.Uint32(p))), nil
 }
 
+// EncodeAttach builds an attach-state payload.
+func EncodeAttach(attached bool) []byte {
+	if attached {
+		return []byte{1}
+	}
+	return []byte{0}
+}
+
+// DecodeAttach parses an attach-state payload.
+func DecodeAttach(p []byte) (bool, error) {
+	if len(p) != 1 || p[0] > 1 {
+		return false, fmt.Errorf("wrap: attach payload %v, want one byte 0 or 1", p)
+	}
+	return p[0] == 1, nil
+}
+
 // DecodeText parses an error or detach payload: bounded, valid UTF-8.
 func DecodeText(p []byte) (string, error) {
 	if len(p) > maxText {
@@ -192,7 +230,31 @@ const (
 	// ModeProbe only asks for the holder's ServerHello; the holder closes
 	// the connection right after and never disturbs an attached client.
 	ModeProbe HelloMode = "probe"
+	// ModeWatch (CapWatch) streams output read-only: scrollback first
+	// when Replay is set, then live data, resize frames when the
+	// terminal's size changes, attach frames when a terminal attaches or
+	// leaves (ServerHello.Attached is the state at first) and the exit
+	// frame. Several watchers may
+	// connect; none of them touches the attached client, and a watcher
+	// that falls behind is dropped.
+	ModeWatch HelloMode = "watch"
+	// ModeInput (CapInput) writes data and paste frames to the agent's
+	// terminal without attaching; resize frames (CapResize) apply only
+	// while no client is attached. The holder sends nothing after its
+	// hello.
+	ModeInput HelloMode = "input"
 )
+
+// Holder capabilities listed in ServerHello.Caps.
+const (
+	CapWatch  = "watch"
+	CapInput  = "input"
+	CapResize = "resize"
+	CapPaste  = "paste"
+)
+
+// holderCaps is what this build's holder supports.
+var holderCaps = []string{CapWatch, CapInput, CapResize, CapPaste}
 
 // Hello is the client's first frame.
 type Hello struct {
@@ -217,12 +279,29 @@ type ServerHello struct {
 	StartedAt int64  `json:"started_at"` // unix seconds
 	Exited    bool   `json:"exited"`
 	ExitCode  int    `json:"exit_code"`
+	// Caps lists optional protocol features (0.2+; empty for older holders).
+	Caps []string `json:"caps,omitempty"`
+	// Cols and Rows are the agent terminal's current size (0.2+).
+	Cols uint16 `json:"cols,omitempty"`
+	Rows uint16 `json:"rows,omitempty"`
+	// Attached says a terminal is attached, so its size wins (0.2+).
+	Attached bool `json:"attached,omitempty"`
+}
+
+// Has reports whether the holder lists capability c.
+func (h ServerHello) Has(c string) bool {
+	for _, x := range h.Caps {
+		if x == c {
+			return true
+		}
+	}
+	return false
 }
 
 func encodeHello(v any) []byte {
 	b, err := json.Marshal(v)
 	if err != nil {
-		// Both hello types are plain structs of strings and ints.
+		// Both hello types are plain structs of strings, ints and string slices.
 		panic(err)
 	}
 	return b
@@ -249,7 +328,7 @@ func DecodeHello(p []byte) (Hello, error) {
 		return h, err
 	}
 	switch h.Mode {
-	case ModeAttach, ModeProbe:
+	case ModeAttach, ModeProbe, ModeWatch, ModeInput:
 	default:
 		return h, fmt.Errorf("wrap: unknown hello mode %q", h.Mode)
 	}

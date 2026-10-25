@@ -118,6 +118,7 @@ func (d *Daemon) routeHook(ctx context.Context, ad adapters.Adapter, env adapter
 		}
 		before := s
 		applyHook(&s, h, tx.Now())
+		d.recordMessaging(ctx, tx, s.ID, h) // messaging.go: Claude's messaging endpoint, kept private
 		// A task may be registered before its session exists (`task new`
 		// calls PutTask first); link it as soon as either side shows up.
 		if err := linkTask(ctx, tx, s.TaskID, s.ID); err != nil {

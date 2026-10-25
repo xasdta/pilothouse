@@ -38,6 +38,10 @@ const (
 	// peerQueue is how many output frames may wait for a slow client
 	// before it is dropped. The PTY loop never blocks on a client.
 	peerQueue = 1024
+	// watchQueue is the same bound for each watcher; maxWatchers bounds
+	// how many may watch at once (each may hold watchQueue frames).
+	watchQueue  = 256
+	maxWatchers = 8
 	// peerWriteTimeout drops a client that stops reading entirely.
 	peerWriteTimeout = 30 * time.Second
 	// drainWait bounds how long output still in the PTY is read after
@@ -77,7 +81,10 @@ type Holder struct {
 	mu       sync.Mutex // guards everything below
 	ring     *ring
 	modes    *modeTracker
-	cur      *peer // attached client, if any
+	cur      *peer              // attached client, if any
+	watchers map[*peer]struct{} // read-only watch clients
+	cols     uint16             // current PTY size
+	rows     uint16
 	exited   bool
 	exitCode int
 
@@ -133,11 +140,14 @@ func newHolder(cfg HolderConfig) (*Holder, error) {
 		cfg.Log = slog.New(slog.DiscardHandler)
 	}
 	return &Holder{
-		cfg:   cfg,
-		log:   cfg.Log.With("session", cfg.SessionID),
-		ring:  newRing(ScrollbackSize),
-		modes: newModeTracker(),
-		open:  map[net.Conn]struct{}{},
+		cfg:      cfg,
+		log:      cfg.Log.With("session", cfg.SessionID),
+		ring:     newRing(ScrollbackSize),
+		modes:    newModeTracker(),
+		watchers: map[*peer]struct{}{},
+		cols:     cfg.Cols,
+		rows:     cfg.Rows,
+		open:     map[net.Conn]struct{}{},
 	}, nil
 }
 
@@ -206,11 +216,17 @@ func (h *Holder) run(ctx context.Context) (int, error) {
 	}
 	h.mu.Lock()
 	h.exited, h.exitCode = true, code
+	exitFrame := mustFrame(FrameExit, EncodeExit(code))
 	if p := h.cur; p != nil {
 		h.cur = nil
-		p.enqueue(mustFrame(FrameExit, EncodeExit(code)))
+		p.enqueue(exitFrame)
 		p.finish()
 	}
+	for w := range h.watchers {
+		w.enqueue(exitFrame)
+		w.finish()
+	}
+	clear(h.watchers)
 	h.mu.Unlock()
 	h.rep.Exit(code)
 
@@ -384,9 +400,10 @@ func (h *Holder) pump() {
 			h.modes.Feed(chunk)
 			if p := h.cur; p != nil && !p.enqueue(frame) {
 				h.log.Warn("client too slow; detaching it")
-				h.cur = nil
+				h.setCur(nil)
 				p.kill()
 			}
+			h.broadcast(frame)
 			h.mu.Unlock()
 		}
 		if err != nil {
@@ -454,6 +471,33 @@ func (h *Holder) serverHello() ServerHello {
 		StartedAt: h.startedAt.Unix(),
 		Exited:    h.exited,
 		ExitCode:  h.exitCode,
+		Caps:      holderCaps,
+		Cols:      h.cols,
+		Rows:      h.rows,
+		Attached:  h.cur != nil,
+	}
+}
+
+// setCur changes the attached client and tells watchers when that
+// changes whether a terminal is attached (whose size then wins). Callers
+// hold h.mu.
+func (h *Holder) setCur(p *peer) {
+	was := h.cur != nil
+	h.cur = p
+	if now := p != nil; now != was {
+		h.broadcast(mustFrame(FrameAttach, EncodeAttach(now)))
+	}
+}
+
+// broadcast queues a frame for every watcher, dropping those whose queue
+// is full. Callers hold h.mu.
+func (h *Holder) broadcast(frame []byte) {
+	for w := range h.watchers {
+		if !w.enqueue(frame) {
+			h.log.Warn("watcher too slow; dropping it")
+			delete(h.watchers, w)
+			w.kill()
+		}
 	}
 }
 
@@ -478,7 +522,8 @@ func (h *Holder) serve(c net.Conn) {
 	}
 	_ = c.SetReadDeadline(time.Time{})
 
-	if hello.Mode == ModeProbe {
+	switch hello.Mode {
+	case ModeProbe:
 		h.mu.Lock()
 		sh := h.serverHello()
 		h.mu.Unlock()
@@ -486,9 +531,15 @@ func (h *Holder) serve(c net.Conn) {
 		_ = WriteFrame(c, FrameHello, encodeHello(sh))
 		c.Close()
 		return
+	case ModeWatch:
+		h.serveWatch(c, hello)
+		return
+	case ModeInput:
+		h.serveInput(c)
+		return
 	}
 
-	p := newPeer(c)
+	p := newPeer(c, peerQueue)
 	go p.writeLoop()
 
 	// Hand the terminal over atomically with respect to the pump, so the
@@ -517,17 +568,17 @@ func (h *Holder) serve(c net.Conn) {
 		old.enqueue(mustFrame(FrameDetach, encodeText("attached from another terminal")))
 		old.finish()
 	}
-	h.cur = p
+	h.setCur(p)
 	h.mu.Unlock()
 	h.log.Info("client attached", "replay", hello.Replay)
 
 	if hello.Cols > 0 && hello.Rows > 0 {
-		h.resize(hello.Cols, hello.Rows)
+		h.resize(hello.Cols, hello.Rows, false)
 	}
 	reason := h.readInput(p)
 	h.mu.Lock()
 	if h.cur == p {
-		h.cur = nil
+		h.setCur(nil)
 	}
 	p.finish()
 	h.mu.Unlock()
@@ -557,15 +608,12 @@ func (h *Holder) readInput(p *peer) string {
 			if exited {
 				continue // nobody is reading the PTY any more
 			}
-			h.ptyWrite.Lock()
-			_, err := h.ptmx.Write(f.Payload)
-			h.ptyWrite.Unlock()
-			if err != nil {
+			if err := h.writePTY(f.Payload); err != nil {
 				return "pty closed"
 			}
 		case FrameResize:
 			if cols, rows, err := DecodeResize(f.Payload); err == nil {
-				h.resize(cols, rows)
+				h.resize(cols, rows, false)
 			}
 		case FrameDetach:
 			return "detach"
@@ -584,10 +632,131 @@ func (h *Holder) drain(p *peer) {
 	<-p.dead
 }
 
-func (h *Holder) resize(cols, rows uint16) {
+// serveWatch streams output to a read-only watcher (ModeWatch) until it
+// leaves, falls behind or the agent exits. It never touches h.cur.
+func (h *Holder) serveWatch(c net.Conn, hello Hello) {
+	p := newPeer(c, watchQueue)
+	go p.writeLoop()
+
+	// Like an attach: the scrollback and live output join without a gap.
+	h.mu.Lock()
+	if !h.exited && len(h.watchers) >= maxWatchers {
+		p.enqueue(mustFrame(FrameError, encodeText(fmt.Sprintf("%d terminals are already watching this session", maxWatchers))))
+		p.finish()
+		h.mu.Unlock()
+		h.drain(p)
+		return
+	}
+	p.enqueue(mustFrame(FrameHello, encodeHello(h.serverHello())))
+	if r := h.modes.restore(); len(r) > 0 {
+		p.enqueue(mustFrame(FrameData, r))
+	}
+	if hello.Replay {
+		for b := h.ring.Bytes(); len(b) > 0; {
+			n := min(len(b), dataChunk)
+			p.enqueue(mustFrame(FrameData, b[:n]))
+			b = b[n:]
+		}
+	}
+	if h.exited {
+		p.enqueue(mustFrame(FrameExit, EncodeExit(h.exitCode)))
+		p.finish()
+		h.mu.Unlock()
+		h.drain(p)
+		return
+	}
+	h.watchers[p] = struct{}{}
+	h.mu.Unlock()
+	h.log.Info("watcher connected", "replay", hello.Replay)
+
+	// A watcher can only say goodbye: its data and resize frames are
+	// ignored, so watching can never type into or resize the agent.
+	for {
+		f, err := ReadFrame(c)
+		if err != nil || f.Type == FrameDetach {
+			break
+		}
+	}
+	h.mu.Lock()
+	delete(h.watchers, p)
+	p.finish()
+	h.mu.Unlock()
+	<-p.dead
+	h.log.Info("watcher left")
+}
+
+// serveInput writes a ModeInput client's data and paste frames to the
+// PTY without attaching. Its resize frames apply only while no terminal
+// is attached: the attached terminal's size wins.
+func (h *Holder) serveInput(c net.Conn) {
+	defer c.Close()
+	h.mu.Lock()
+	sh := h.serverHello()
+	h.mu.Unlock()
+	_ = c.SetWriteDeadline(time.Now().Add(helloTimeout))
+	if err := WriteFrame(c, FrameHello, encodeHello(sh)); err != nil {
+		return
+	}
+	for {
+		f, err := ReadFrame(c)
+		if err != nil {
+			return
+		}
+		h.mu.Lock()
+		exited, bracketed := h.exited, h.modes.bracketedPaste()
+		h.mu.Unlock()
+		switch f.Type {
+		case FrameData, FramePaste:
+			if exited {
+				continue
+			}
+			b := f.Payload
+			if f.Type == FramePaste {
+				b = pasteBytes(b, bracketed)
+			}
+			if err := h.writePTY(b); err != nil {
+				return
+			}
+		case FrameResize:
+			if cols, rows, err := DecodeResize(f.Payload); err == nil {
+				h.resize(cols, rows, true)
+			}
+		case FrameDetach, FrameError:
+			return
+		}
+	}
+}
+
+// writePTY writes one client's input as a unit: input from several
+// clients never interleaves within a write.
+func (h *Holder) writePTY(b []byte) error {
+	if len(b) == 0 {
+		return nil
+	}
+	h.ptyWrite.Lock()
+	defer h.ptyWrite.Unlock()
+	_, err := h.ptmx.Write(b)
+	return err
+}
+
+// resize sets the PTY size and tells watchers. With onlyDetached it does
+// nothing while a terminal is attached (decided under the same lock that
+// orders attaches, so an attach's own resize always lands last).
+func (h *Holder) resize(cols, rows uint16, onlyDetached bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if onlyDetached && h.cur != nil {
+		return
+	}
 	if err := pty.Setsize(h.ptmx, &pty.Winsize{Cols: cols, Rows: rows}); err != nil {
 		h.log.Debug("resize", "err", err)
+		return
 	}
+	if cols == h.cols && rows == h.rows {
+		return
+	}
+	h.cols, h.rows = cols, rows
+	h.broadcast(mustFrame(FrameResize, EncodeResize(cols, rows)))
 }
 
 func mustFrame(t FrameType, payload []byte) []byte {
@@ -608,8 +777,8 @@ type peer struct {
 	dead     chan struct{}
 }
 
-func newPeer(c net.Conn) *peer {
-	return &peer{conn: c, out: make(chan []byte, peerQueue), dead: make(chan struct{})}
+func newPeer(c net.Conn, queue int) *peer {
+	return &peer{conn: c, out: make(chan []byte, queue), dead: make(chan struct{})}
 }
 
 // enqueue queues a frame; false means the queue is full. Callers hold

@@ -210,6 +210,7 @@ func (h *harness) start(tb testing.TB) {
 		Log:                slog.New(slog.NewTextHandler(logOut, &slog.HandlerOptions{Level: slog.LevelDebug})),
 		PollInterval:       20 * time.Millisecond,
 		DisableUpdateCheck: true,
+		keepAwake:          newFakeAwake().runner(), // never a real caffeinate in tests
 	}
 	if h.opts != nil {
 		h.opts(&opts)
