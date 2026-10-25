@@ -228,6 +228,34 @@ func TestPresetsCombine(t *testing.T) {
 	})
 }
 
+// Security review 0.2: deny and ask rules must not be dodged by naming the
+// program by its path or by git's global options, and allow rules must not
+// cover routine commands told to write files by an option.
+func TestPresetsSpellingBypass(t *testing.T) {
+	replayPreset(t, []string{"guarded-autopilot", "protect-main", "no-secrets"}, []presetCase{
+		{cmd: "git -C . push -f origin main", want: deny},
+		{cmd: "/usr/bin/git push --force origin main", want: deny},
+		{cmd: "git -c core.x=y --no-pager push origin main", branch: "main", want: ask},
+		{cmd: "git --git-dir=.git --work-tree . push origin x", want: ask},
+		{cmd: "git --work-tree=. reset --hard", want: deny},
+		{cmd: "git -C sub clean -fdx", want: deny},
+		{cmd: "/bin/rm -rf ~", want: deny},
+		{cmd: "/usr/bin/env", want: deny},
+		{cmd: "cd .. && /usr/local/bin/kubectl apply -f x", want: ask},
+		{cmd: "git -C . status", want: none}, // allow globs still see the line as written
+		{cmd: "git diff --output=/home/x/.zshrc", want: none},
+		{cmd: "git log -p --output /tmp/x", want: none},
+		{cmd: "git diff --ext-diff", want: none},
+		{cmd: "find . -fprint /tmp/x", want: none},
+		{cmd: "sort -o ~/.zshrc a.txt", want: none},
+		{cmd: "uniq a.txt ~/.zshrc", want: none},
+		{cmd: "tree -o ~/.zshrc", want: none},
+		{cmd: "git diff --stat", want: allow},
+		{cmd: "sort a.txt", want: allow},
+		{cmd: "uniq a.txt", want: allow},
+	})
+}
+
 func TestPresetsCompile(t *testing.T) {
 	for _, name := range PresetNames() {
 		rules, err := presetRules(name, "/Users/ann")

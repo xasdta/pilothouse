@@ -27,9 +27,10 @@ import (
 
 // segment is one simple command.
 type segment struct {
-	text string // words joined by single spaces
-	bare string // the same without assignments and wrappers
-	cmd  *shCmd
+	text  string // words joined by single spaces
+	bare  string // the same without assignments and wrappers, canonical (canonicalArgv)
+	named string // the words as written, canonical: `/usr/bin/env` reads as `env`
+	cmd   *shCmd
 }
 
 // shellSegs is a command line split for shell-aware rules.
@@ -68,7 +69,58 @@ func splitSegments(command string) *shellSegs {
 
 func makeSegment(c *shCmd) segment {
 	argv, _ := UnwrapCommand(c.words)
-	return segment{text: strings.Join(c.words, " "), bare: strings.Join(argv, " "), cmd: c}
+	return segment{text: strings.Join(c.words, " "), bare: strings.Join(canonicalArgv(argv), " "),
+		named: strings.Join(canonicalArgv(c.words), " "), cmd: c}
+}
+
+// canonicalArgv is argv as deny and ask rules see it: the program by its
+// base name (`/usr/bin/git` reads as `git`), and git's global options
+// dropped (`git -C . push -f` reads as `git push -f`), so a rule for
+// `git push *` or `rm -rf /` can't be dodged by spelling the program or
+// its options differently. Allow rules never use it.
+func canonicalArgv(argv []string) []string {
+	if len(argv) == 0 {
+		return argv
+	}
+	prog := cmdBase(argv[0])
+	out := append([]string{prog}, argv[1:]...)
+	if prog != "git" {
+		return out
+	}
+	i := 1
+	for i < len(out) {
+		w := out[i]
+		if gitGlobalValue[w] {
+			i += 2
+			continue
+		}
+		if !strings.HasPrefix(w, "-") {
+			break
+		}
+		if strings.HasPrefix(w, "--") && strings.Contains(w, "=") {
+			i++ // --git-dir=…, --exec-path=…
+			continue
+		}
+		if strings.HasPrefix(w, "-C") || strings.HasPrefix(w, "-c") || gitGlobalFlag[w] {
+			i++ // -C<path>, -c<k=v> or a flag
+			continue
+		}
+		break
+	}
+	return append([]string{prog}, out[i:]...)
+}
+
+// git's global options that take a value as the next word (or after =).
+var gitGlobalValue = map[string]bool{
+	"-C": true, "-c": true, "--git-dir": true, "--work-tree": true, "--namespace": true,
+	"--config-env": true, "--super-prefix": true, "--attr-source": true,
+}
+
+// git's global flags without a value.
+var gitGlobalFlag = map[string]bool{
+	"-p": true, "-P": true, "--paginate": true, "--no-pager": true, "--bare": true, "--no-replace-objects": true,
+	"--literal-pathspecs": true, "--glob-pathspecs": true, "--noglob-pathspecs": true, "--icase-pathspecs": true,
+	"--no-optional-locks": true, "--no-lazy-fetch": true, "--no-advice": true, "--exec-path": true,
 }
 
 // nestedSegments adds the commands inside substitutions, sh -c scripts,
@@ -155,7 +207,7 @@ func (c *evalCtx) allowCommand(globs []*glob) bool {
 	matched := false
 	for i := range s.top {
 		seg := &s.top[i]
-		if writesFile(seg.cmd) {
+		if writesFile(seg.cmd) || writesByOption(seg.cmd.words) {
 			return false
 		}
 		if anyGlob(globs, seg.text) {
@@ -175,7 +227,8 @@ func (c *evalCtx) strictCommand(fm *fieldMatch) bool {
 		return true
 	}
 	for _, seg := range c.shellSegments().all {
-		if anyGlob(fm.globs, seg.text) || (seg.bare != seg.text && anyGlob(fm.globs, seg.bare)) {
+		if anyGlob(fm.globs, seg.text) || (seg.bare != seg.text && anyGlob(fm.globs, seg.bare)) ||
+			(seg.named != seg.text && seg.named != seg.bare && anyGlob(fm.globs, seg.named)) {
 			return true
 		}
 	}
@@ -195,6 +248,45 @@ func writesFile(c *shCmd) bool {
 		return true
 	}
 	return false
+}
+
+// writesByOption: a command an allow glob may name (`git diff *`,
+// `find *`, `sort *`, `uniq *`, `tree *`) told by an option or operand to
+// write or delete files, or to run another program. Such a line is left
+// to the agent's own prompt.
+func writesByOption(words []string) bool {
+	argv, _ := UnwrapCommand(words)
+	if len(argv) == 0 {
+		return false
+	}
+	prog, operands := cmdBase(argv[0]), 0
+	for _, a := range argv[1:] {
+		short := len(a) > 1 && a[0] == '-' && a[1] != '-'
+		switch prog {
+		case "git":
+			if a == "--output" || strings.HasPrefix(a, "--output=") || a == "--ext-diff" {
+				return true
+			}
+		case "find":
+			switch a {
+			case "-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls":
+				return true
+			}
+		case "sort":
+			if strings.HasPrefix(a, "--output") || (short && strings.ContainsRune(a, 'o')) {
+				return true
+			}
+		case "tree":
+			if a == "-o" {
+				return true
+			}
+		case "uniq":
+			if !strings.HasPrefix(a, "-") {
+				operands++ // uniq [options] [input [output]]
+			}
+		}
+	}
+	return operands >= 2
 }
 
 // pipeFilters read a pipe and print to the terminal; maxArgs is how many
