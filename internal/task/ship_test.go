@@ -27,17 +27,26 @@ func withOrigin(t *testing.T, repo string) string {
 func pathWith(t *testing.T, gh string) {
 	t.Helper()
 	bin := t.TempDir()
-	git, err := exec.LookPath("git")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(git, filepath.Join(bin, "git")); err != nil {
-		t.Fatal(err)
+	for _, name := range []string{"git", "true", "sh"} {
+		p, err := exec.LookPath(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(p, filepath.Join(bin, name)); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if gh != "" {
 		writeFile(t, filepath.Join(bin, "gh"), gh, 0o755)
 	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+"/usr/bin:/bin")
+	// PATH is only the temp dir: a runner with gh in /usr/bin or /bin must
+	// still look like a machine without it.
+	t.Setenv("PATH", bin)
+	if gh == "" {
+		if p, err := exec.LookPath("gh"); err == nil {
+			t.Fatalf("test PATH still finds gh at %s", p)
+		}
+	}
 }
 
 func newShipTask(t *testing.T, repo string) (*Manager, api.Task) {

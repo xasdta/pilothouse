@@ -531,7 +531,9 @@ func TestRunPollsWithBackoffAndOffset(t *testing.T) {
 	done := make(chan struct{})
 	go func() { f.bot.Run(ctx); close(done) }()
 	deadline := time.Now().Add(5 * time.Second)
-	for f.bot.Chat() == 0 && time.Now().Before(deadline) {
+	// Wait for the offset too: Chat() is set inside Handle before Run saves
+	// it, so cancelling as soon as pairing succeeds can race the save.
+	for (f.bot.Chat() == 0 || f.bot.db.offset(bg) != 2) && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	cancel()
