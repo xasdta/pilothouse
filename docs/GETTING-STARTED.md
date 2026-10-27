@@ -40,8 +40,10 @@ of date. It walks through:
      and HTTPS certificates on — and says what's missing. When everything is
      ready it offers `pilothouse remote tailscale`: the web app is served on
      your tailnet only, never on the public internet.
-   - **Pairing.** It shows the pairing QR code right in the terminal; scan it
-     with the phone's camera, finish on the phone, press Enter.
+   - **Pairing.** It shows the pairing QR code right in the terminal. On
+     iPhone/iPad, add the web app to the Home Screen first, then enter the code
+     in the installed app (the camera opens Safari, which has separate storage).
+     On Android, scan the QR code. Finish on the phone, then press Enter.
    - **Telegram** (works without Tailscale) and **ntfy** are offered too; see
      [NOTIFICATIONS.md](NOTIFICATIONS.md).
 4. **Test notification** to every channel that can reach you, and a short

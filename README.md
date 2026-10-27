@@ -120,7 +120,7 @@ counted and where the prices come from.
 
 ```sh
 pilothouse remote tailscale      # HTTPS on your tailnet via Tailscale Serve (nothing public)
-pilothouse pair                  # scan the QR code with your phone, add it to the home screen
+pilothouse pair                  # pair a phone; on iOS add it to the Home Screen first, then enter the code
 pilothouse notify telegram       # answer from Telegram: buttons, replies; no Tailscale needed
 pilothouse notify ntfy           # or the ntfy app (Allow / Deny buttons with remote access)
 pilothouse notify test           # check what reaches you
