@@ -62,7 +62,6 @@ type Core struct {
 	revision map[string]int          // plan request lineage → revision number
 	added    map[string]api.RuleSpec // suggestion id → spec (to report "already added")
 	script   int                     // position in the lively request script
-	lastTick time.Time
 }
 
 // scheduled is a reaction that runs once its time has come.

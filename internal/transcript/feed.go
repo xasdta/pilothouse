@@ -93,7 +93,6 @@ type feed struct {
 	fileOrder []string       // least recently touched first
 
 	partial bool // some transcript was only read from its tail
-	skipped int  // over-long lines dropped
 }
 
 func newFeed(agent api.AgentKind, cwd string, p Pricer, loc *time.Location, maxItems int) *feed {

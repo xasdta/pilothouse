@@ -159,11 +159,6 @@ func (d *db) hasRequestMessage(ctx context.Context, requestID string) (bool, err
 	return n > 0, err
 }
 
-func (d *db) setState(ctx context.Context, chat, id int64, state string) error {
-	_, err := d.sql.ExecContext(ctx, `UPDATE telegram_messages SET state = ? WHERE chat_id = ? AND message_id = ?`, state, chat, id)
-	return err
-}
-
 // closeRequest marks every message of a request closed (the request
 // message and any feedback prompt) and spends its buttons.
 func (d *db) closeRequest(ctx context.Context, requestID string) error {

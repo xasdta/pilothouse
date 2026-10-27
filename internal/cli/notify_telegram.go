@@ -166,6 +166,7 @@ func runNotifyTelegram(ctx context.Context, w io.Writer, in *bufio.Reader, o tgO
 	cancel()
 	switch {
 	case telegram.IsCode(err, 401) || telegram.IsCode(err, 404):
+		//lint:ignore ST1005 starts with a proper noun
 		return false, errors.New("Telegram rejected that token — copy it again from @BotFather (/mybots → your bot → API Token)")
 	case err != nil:
 		return false, fmt.Errorf("couldn't reach Telegram to check the token: %v", err)

@@ -639,7 +639,9 @@ func (b *Bot) onCallback(ctx context.Context, q *CallbackQuery) {
 		b.answer(ctx, q, "Answering from Telegram is turned off.", false)
 		return
 	}
-	b.sendMu.Lock() // wait for a message still being recorded (see sendMu)
+	// A barrier: wait for a message still being recorded (see sendMu).
+	b.sendMu.Lock()
+	//lint:ignore SA2001 intentionally empty, see above
 	b.sendMu.Unlock()
 	reqID, action, res, err := b.db.spend(ctx, q.Data, chat, msgID)
 	if err != nil {

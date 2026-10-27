@@ -27,9 +27,7 @@ type reqScript struct {
 
 // pendingRun is a tool call that is running (not held for a person).
 type pendingRun struct {
-	ref    itemRef
-	result string
-	isErr  bool
+	ref itemRef
 }
 
 // raise opens a request on a session the way an agent does: the session

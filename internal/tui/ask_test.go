@@ -215,7 +215,7 @@ func TestQuestionDigitsOwnWordsAndDecline(t *testing.T) {
 }
 
 func TestQuestionClosedElsewhereOrInvalid(t *testing.T) {
-	m, be := loadedAsks(t, 120, 35)
+	m, _ := loadedAsks(t, 120, 35)
 	selectKey(t, m, "r:r_q7a8b9c0de")
 	press(m, "enter")
 	closed := askSnapshot().Requests[3]
@@ -235,7 +235,7 @@ func TestQuestionClosedElsewhereOrInvalid(t *testing.T) {
 		t.Fatalf("closed while declining: mode %v", m.mode)
 	}
 
-	m, be = loadedAsks(t, 120, 35)
+	m, be := loadedAsks(t, 120, 35)
 	be.decideErr = &client.APIError{Status: 400, Code: "invalid", Msg: "“Which checks should run after it?” has no option “Fuzz”"}
 	selectKey(t, m, "r:r_q7a8b9c0de")
 	press(m, "enter", "1", "1")

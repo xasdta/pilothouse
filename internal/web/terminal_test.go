@@ -382,6 +382,7 @@ func TestTerminalStream(t *testing.T) {
 
 	// Revoking the device ends its terminal streams.
 	c = openTerminal(t, ts, ck, "s_term000001", "")
+	defer c.cancel()
 	fs = tc.nextStream(t)
 	if w := e.localDo("DELETE", "/v1/devices/"+devID); w.Code != 204 {
 		t.Fatal(w.Code)
