@@ -187,6 +187,62 @@ func TestShipRefusals(t *testing.T) {
 	}
 }
 
+func TestCloseNothingToShip(t *testing.T) {
+	testEnv(t)
+	repo := newRepo(t)
+	ctx := context.Background()
+	m, tk := newShipTask(t, repo)
+	tk.Status = api.TaskReview
+	if err := saveTask(tk); err != nil {
+		t.Fatal(err)
+	}
+
+	// Committed work means there is something to ship, not close.
+	writeFile(t, filepath.Join(tk.Worktree, "a.txt"), "a\n", 0o644)
+	mustGit(t, tk.Worktree, "add", "a.txt")
+	mustGit(t, tk.Worktree, "commit", "-q", "-m", "work")
+	if _, err := m.Close(ctx, tk.ID); err == nil || !strings.Contains(err.Error(), "ship or discard") {
+		t.Fatalf("close with a commit: %v", err)
+	}
+	if !dirExists(tk.Worktree) {
+		t.Fatal("refusal removed the worktree")
+	}
+	mustGit(t, tk.Worktree, "reset", "-q", "--hard", tk.BaseRef)
+
+	// Uncommitted work is equally not a no-op.
+	writeFile(t, filepath.Join(tk.Worktree, "b.txt"), "b\n", 0o644)
+	if _, err := m.Close(ctx, tk.ID); err == nil || !strings.Contains(err.Error(), "uncommitted changes") {
+		t.Fatalf("close with leftovers: %v", err)
+	}
+	if !dirExists(tk.Worktree) {
+		t.Fatal("refusal removed the worktree")
+	}
+	if err := os.Remove(filepath.Join(tk.Worktree, "b.txt")); err != nil {
+		t.Fatal(err)
+	}
+
+	done, err := m.Close(ctx, tk.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if done.Status != api.TaskDone || done.PRURL != "" || !strings.Contains(done.Note, "No changes to ship") || !strings.Contains(done.Note, tk.Branch) {
+		t.Fatalf("closed %+v", done)
+	}
+	if dirExists(tk.Worktree) {
+		t.Error("worktree kept")
+	}
+	mustGit(t, repo, "rev-parse", "--verify", tk.Branch)
+	if _, err := m.Close(ctx, tk.ID); err == nil || !strings.Contains(err.Error(), "not ready for review") {
+		t.Fatalf("second close: %v", err)
+	}
+
+	// Only review tasks can be closed.
+	m2, tk2 := newShipTask(t, repo)
+	if _, err := m2.Close(ctx, tk2.ID); err == nil || !strings.Contains(err.Error(), "not ready for review") {
+		t.Fatalf("close while running: %v", err)
+	}
+}
+
 func TestRedact(t *testing.T) {
 	for in, want := range map[string]string{
 		"fatal: unable to access 'https://bob:pw@github.com/x/y.git/'": "fatal: unable to access 'https://***@github.com/x/y.git/'",

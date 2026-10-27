@@ -283,6 +283,16 @@ export function newTaskView() {
 
 // ---------- One task ----------
 
+/** The agent's final answer, on tasks that have finished a turn. */
+function taskResult(t) {
+  if (t.status !== 'review' && t.status !== 'done') return null;
+  const s = t.session_id && store.sessions.get(t.session_id);
+  if (!s || !s.last_message) return null;
+  return h('div', { class: 'task-result' },
+    h('div', { class: 'task-result-h' }, ico('message', 'sm'), 'Result'),
+    h('p', { class: 'task-result-text' }, s.last_message));
+}
+
 export function taskView(id) {
   const root = h('div', { class: 'view task' });
   const headEl = h('div');
@@ -296,6 +306,7 @@ export function taskView(id) {
   let busy = '';
   let destroyed = false;
   let refetch = 0;
+  let headKey = '';
 
   const task = () => (store2.tasks || []).find((t) => t.id === id);
 
@@ -308,6 +319,22 @@ export function taskView(id) {
       fill(progEl); fill(diffEl); fill(actEl);
       return;
     }
+    if (diffFor !== t.updated_at) {
+      diff = null;
+      diffErr = null;
+    }
+    renderHead(t);
+    renderProgress(t);
+    renderDiff(t);
+    renderActions(t);
+    if (diffFor !== t.updated_at) loadDiff(t);
+  }
+
+  function renderHead(t) {
+    const s = t.session_id && store.sessions.get(t.session_id);
+    const key = t.updated_at + '|' + (s && s.last_message || '');
+    if (key === headKey) return;
+    headKey = key;
     const by = startedBy(t);
     fill(headEl, h('div', { class: 'card task-hero' },
       h('div', { class: 'task-hero-top' }, statusChip(t), h('span', { class: 'task-when' }, 'Started ', h('time', { datetime: t.created_at }, agoLong(t.created_at)))),
@@ -317,12 +344,9 @@ export function taskView(id) {
         h('span', { class: 'task-branches' }, ico('branch', 'sm'), h('code', null, t.branch || '—'), t.base_ref ? [h('span', { class: 'arrow', 'aria-hidden': 'true' }, ' ← '), h('span', { class: 'sr-only' }, ' from '), h('code', null, t.base_ref)] : null)),
       h('p', { class: 'task-meta' }, h('span', { class: 'agent-dot ' + agentClass(t.agent) }), agentName(t.agent), by ? ' · started ' + by : ''),
       t.note ? h('p', { class: 'task-note' + (t.status === 'failed' ? ' bad' : ''), role: t.status === 'failed' ? 'alert' : null }, t.note) : null,
+      taskResult(t),
       t.prompt ? h('details', { class: 'task-prompt' }, h('summary', null, 'Prompt', ico('down', 'sm')), h('p', null, t.prompt)) : null,
       t.pr_url && /^https:\/\//.test(t.pr_url) ? h('a', { class: 'btn secondary compact task-pr', href: t.pr_url, target: '_blank', rel: 'noopener noreferrer' }, ico('pr', 'sm'), 'View pull request', ico('ext', 'sm')) : null));
-    renderProgress(t);
-    renderDiff(t);
-    renderActions(t);
-    if (diffFor !== t.updated_at) loadDiff(t);
   }
 
   function renderProgress(t) {
@@ -338,10 +362,12 @@ export function taskView(id) {
     } else {
       const rest = [
         { key: 'work', label: 'Working', sub: t.status === 'running' && s ? (s.state_detail || stateLabel(s)) : null },
-        { key: 'review', label: 'Review', sub: t.status === 'review' ? 'The agent finished — look over the changes' : null },
+        { key: 'review', label: 'Review', sub: t.status === 'review' ? 'The agent finished — read its result and check the changes' : null },
         t.status === 'abandoned'
           ? { key: 'end', label: 'Discarded', sub: 'Worktree and branch removed', bad: true }
-          : { key: 'end', label: 'Shipped', sub: 'Pushed with a pull request' },
+          : t.status === 'done' && !t.pr_url
+            ? { key: 'end', label: 'Done', sub: 'No pull request; branch kept' }
+            : { key: 'end', label: 'Shipped', sub: 'Pushed with a pull request' },
       ];
       const at = { running: 0, review: 1, done: 3, abandoned: 3 }[t.status] ?? 0;
       rest.forEach((st, i) => { st.state = i < at ? 'done' : i === at && !setupRunning ? 'now' : 'todo'; steps.push(st); });
@@ -361,15 +387,21 @@ export function taskView(id) {
 
   // ---- Diff ----
   async function loadDiff(t) {
-    diffFor = t.updated_at;
+    const forUpdated = t.updated_at;
+    diffFor = forUpdated;
     try {
-      diff = await api('GET', `/api/tasks/${encodeURIComponent(id)}/diff`);
+      const d = await api('GET', `/api/tasks/${encodeURIComponent(id)}/diff`);
+      if (diffFor !== forUpdated) return;
+      diff = d;
       diffErr = null;
     } catch (e) {
+      if (diffFor !== forUpdated) return;
       diffErr = e;
     }
     if (destroyed) return;
-    renderDiff(task() || t);
+    const cur = task() || t;
+    renderDiff(cur);
+    renderActions(cur);
   }
 
   function renderDiff(t) {
@@ -385,8 +417,11 @@ export function taskView(id) {
     const head = h('h2', { class: 'section-head' }, 'Changes', files.length ? h('span', { class: 'count' }, String(files.length)) : null,
       files.length ? h('span', { class: 'files-total' }, h('span', { class: 'n-add' }, '+' + (diff.added || 0)), ' ', h('span', { class: 'n-del' }, '−' + (diff.removed || 0))) : null);
     if (!files.length) {
+      const s = t.session_id && store.sessions.get(t.session_id);
+      const said = !!(s && s.last_message);
       fill(diffEl, h('section', { class: 'section' }, head, h('div', { class: 'act-empty' }, ico('branch', 'lg'),
-        h('p', null, t.status === 'running' ? 'No changes yet — they show up here as the agent works.' : 'This task changed nothing.'))));
+        h('p', null, t.status === 'running' ? 'No changes yet — they show up here as the agent works.'
+          : said ? 'This task changed no files — the agent’s result is above.' : 'This task changed no files.'))));
       return;
     }
     fill(diffEl, h('section', { class: 'section' }, head,
@@ -423,21 +458,30 @@ export function taskView(id) {
       return;
     }
     if (t.status !== 'review' && t.status !== 'running') { fill(actEl); return; }
-    const ship = h('button', { class: 'btn primary', type: 'button', id: 'task-ship', disabled: t.status !== 'review' || !!busy }, busy === 'ship' ? spinner() : ico('pr', 'sm'), 'Ship');
+    // A review with no file changes has nothing to push: Done stops the
+    // agent, removes the worktree and keeps the branch (and the result).
+    const nothing = t.status === 'review' && diff && !(diff.files || []).length;
+    const pending = t.status === 'review' && !diff && !diffErr;
+    const primary = nothing
+      ? h('button', { class: 'btn primary', type: 'button', id: 'task-done', disabled: !!busy }, busy === 'close' ? spinner() : ico('check', 'sm'), 'Done')
+      : h('button', { class: 'btn primary', type: 'button', id: 'task-ship', disabled: t.status !== 'review' || pending || !!busy }, busy === 'ship' ? spinner() : ico('pr', 'sm'), 'Ship');
     const discard = h('button', { class: 'btn danger', type: 'button', id: 'task-discard', disabled: !!busy }, busy === 'discard' ? spinner() : ico('trash', 'sm'), 'Discard');
-    ship.addEventListener('click', () => finish(t, 'ship'));
+    primary.addEventListener('click', () => finish(t, nothing ? 'close' : 'ship'));
     discard.addEventListener('click', () => finish(t, 'discard'));
     fill(actEl, h('div', { class: 'task-actions' },
-      h('div', { class: 'task-actions-in' }, discard, ship),
-      h('p', null, t.status === 'review'
-        ? `Ship pushes ${t.branch} and opens a pull request into ${t.base_ref || 'its base branch'}.`
-        : 'You can ship once the agent finishes. Discard stops it and removes its worktree.')));
+      h('div', { class: 'task-actions-in' }, discard, primary),
+      h('p', null, nothing ? `Done stops the agent and removes its worktree; ${t.branch} stays on your computer.`
+        : t.status === 'review'
+          ? `Ship pushes ${t.branch} and opens a pull request into ${t.base_ref || 'its base branch'}.`
+          : 'You can ship once the agent finishes. Discard stops it and removes its worktree.')));
   }
 
   async function finish(t, action) {
     const ok = await confirmSheet(action === 'ship'
       ? { title: 'Ship this task?', body: [`Pushes `, h('code', null, t.branch), ` and opens a pull request into `, h('code', null, t.base_ref || 'the base branch'), ` with gh on your computer.`], confirm: 'Push and open PR', icon: 'pr' }
-      : { title: 'Discard this task?', body: [`Stops the agent and deletes its worktree and the branch `, h('code', null, t.branch), ` on your computer. This can’t be undone.`], confirm: 'Discard', danger: true, icon: 'trash' });
+      : action === 'close'
+        ? { title: 'Done with this task?', body: [`Stops the agent and removes its worktree. Nothing is pushed; the branch `, h('code', null, t.branch), ` stays on your computer.`], confirm: 'Done', icon: 'check' }
+        : { title: 'Discard this task?', body: [`Stops the agent and deletes its worktree and the branch `, h('code', null, t.branch), ` on your computer. This can’t be undone.`], confirm: 'Discard', danger: true, icon: 'trash' });
     if (!ok || destroyed) return;
     busy = action;
     renderActions(t);
@@ -446,7 +490,7 @@ export function taskView(id) {
     if (destroyed) return;
     if (res.ok) {
       putTask(res.data);
-      toast(action === 'ship' ? (res.data && res.data.pr_url ? 'Pull request opened' : 'Shipped') : 'Task discarded', 'ok');
+      toast(action === 'ship' ? (res.data && res.data.pr_url ? 'Pull request opened' : 'Shipped') : action === 'close' ? 'Task done' : 'Task discarded', 'ok');
     } else {
       toast(actionError(res, 'Your computer can’t finish tasks yet.'), 'bad');
     }
@@ -463,7 +507,7 @@ export function taskView(id) {
   loadTasks().then(() => { if (!destroyed) render(); });
   return {
     el: root,
-    update: () => { if (task()) renderProgress(task()); },
+    update: () => { const t = task(); if (t) { renderHead(t); renderProgress(t); } },
     destroy() { destroyed = true; off(); clearTimeout(refetch); },
   };
 }

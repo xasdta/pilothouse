@@ -691,6 +691,41 @@ func (m *Manager) Done(ctx context.Context, ref string, o DoneOptions) (api.Task
 	return t, nil
 }
 
+// Close finishes a task that has nothing to ship. It refuses when the
+// branch has commits beyond its base or the worktree has uncommitted
+// changes, so a no-op close can never throw work away. The agent is
+// stopped, the worktree removed and the branch kept.
+func (m *Manager) Close(ctx context.Context, ref string) (api.Task, error) {
+	t, err := m.Get(ref)
+	if err != nil {
+		return t, err
+	}
+	if t.Status != api.TaskReview {
+		return t, fmt.Errorf("task %s is %s, not ready for review", t.ID, t.Status)
+	}
+	if dirExists(t.Worktree) {
+		dirty, err := hasLeftovers(ctx, t)
+		if err != nil {
+			return t, err
+		}
+		if dirty {
+			return t, fmt.Errorf("worktree %s has uncommitted changes — ship or discard the task instead", t.Worktree)
+		}
+	}
+	ahead, err := gitOutput(ctx, t.Repo, "rev-list", "--count", t.BaseRef+".."+t.Branch)
+	if err != nil {
+		return t, err
+	}
+	if ahead != "0" {
+		return t, fmt.Errorf("%s has %s commit(s) beyond %s — ship or discard the task instead", t.Branch, ahead, t.BaseRef)
+	}
+	if err := m.stopAgent(ctx, t); err != nil {
+		return t, err
+	}
+	t.Note = fmt.Sprintf("No changes to ship; branch %s kept", t.Branch)
+	return m.shipped(ctx, t, dirExists(t.Worktree))
+}
+
 func (m *Manager) openPR(ctx context.Context, t api.Task) error {
 	gh, err := exec.LookPath("gh")
 	if err != nil {

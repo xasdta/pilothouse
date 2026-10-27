@@ -430,7 +430,7 @@ type TaskDiff struct {
 
 // TaskFinish is how a person ends a task.
 type TaskFinish struct {
-	Action string `json:"action"` // "ship" (push + open a PR) | "discard"
+	Action string `json:"action"` // "ship" (push + open a PR) | "close" (nothing to ship) | "discard"
 }
 
 // Task setup statuses (TaskSetup.Status).

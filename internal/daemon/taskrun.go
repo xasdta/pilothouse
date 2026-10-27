@@ -422,12 +422,13 @@ func (d *Daemon) TaskDiff(ctx context.Context, taskID string) (api.TaskDiff, err
 	return diff, taskErr(err)
 }
 
-// FinishTask ships (commit leftovers, push, PR) or discards a task. A
-// ship waits until the agent has stopped working; a discard stops it.
-// The work runs to completion even if the device disconnects.
+// FinishTask ships (commit leftovers, push, PR), closes a task that
+// changed nothing, or discards a task. A ship waits until the agent has
+// stopped working; a close or discard stops it. The work runs to
+// completion even if the device disconnects.
 func (d *Daemon) FinishTask(ctx context.Context, taskID string, f api.TaskFinish, by string) (api.Task, error) {
-	if f.Action != "ship" && f.Action != "discard" {
-		return api.Task{}, core.Invalid("action must be ship or discard")
+	if f.Action != "ship" && f.Action != "discard" && f.Action != "close" {
+		return api.Task{}, core.Invalid("action must be ship, close or discard")
 	}
 	t, err := d.findTask(ctx, taskID)
 	if err != nil {
@@ -439,7 +440,7 @@ func (d *Daemon) FinishTask(ctx context.Context, taskID string, f api.TaskFinish
 	}
 	if d.tasks.busy[t.ID] {
 		d.tasks.mu.Unlock()
-		return t, core.Invalid("task %s is already being shipped or discarded", t.Title)
+		return t, core.Invalid("task %s is already being finished", t.Title)
 	}
 	d.tasks.busy[t.ID] = true
 	d.tasks.mu.Unlock()
@@ -462,6 +463,8 @@ func (d *Daemon) FinishTask(ctx context.Context, taskID string, f api.TaskFinish
 			}
 		}
 		out, err = m.Ship(fctx, t.ID)
+	case "close":
+		out, err = m.Close(fctx, t.ID)
 	case "discard":
 		out, err = m.Abandon(fctx, t.ID, task.AbandonOptions{Force: true})
 	}
@@ -477,8 +480,8 @@ func (d *Daemon) FinishTask(ctx context.Context, taskID string, f api.TaskFinish
 
 // watchTasks follows session events and keeps open tasks' status in step
 // with their agent: working → running, waiting/exited → review. Entering
-// review sends "ready for review" (with a link to the task) when the
-// person is away, in place of the generic "finished its turn".
+// review sends "ready for review" (with a link to the task) at the desk
+// and away, in place of the generic "finished its turn".
 func (d *Daemon) watchTasks() {
 	for d.ctx.Err() == nil {
 		after, err := d.db.MaxSeq(d.ctx)
@@ -596,12 +599,12 @@ func (d *Daemon) taskSessionChanged(ctx context.Context, s api.Session, notifyRe
 	if _, _, err := task.SetOpenStatus(t.ID, want, t.UpdatedAt); err != nil {
 		d.log.Warn("task status in tasks.json", "task", t.ID, "err", err)
 	}
-	if want == api.TaskReview && notifyReview && d.Presence().State == api.PresenceAway {
-		body := "The agent finished — review the changes, then ship or discard"
+	if want == api.TaskReview && notifyReview {
+		body := "The agent finished — review the result and changes"
 		if s.LastMessage != "" {
 			body = notify.Short(s.LastMessage, 160)
 		}
-		d.notifyTask(t, &s, core.NotifyWaiting, "Ready for review", body, false)
+		d.notifyTask(t, &s, core.NotifyWaiting, "Ready for review", body, true)
 	}
 }
 

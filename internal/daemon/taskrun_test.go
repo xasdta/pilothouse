@@ -317,9 +317,59 @@ func TestStartTaskLocalDiffDiscard(t *testing.T) {
 	}
 }
 
+// TestTaskCloseNothingToShip: a review task that changed no files can be
+// closed: the agent stops, the worktree goes and the branch stays.
+func TestTaskCloseNothingToShip(t *testing.T) {
+	h, _ := newTaskHarness(t)
+	repo := newGitRepo(t, "app")
+	h.cfg.Tasks.Repos = []string{repo}
+	h.start(t)
+	// This task's agent changes nothing.
+	bin := t.TempDir()
+	writeExec(t, filepath.Join(bin, "claude"), "#!/bin/sh\nexit 0\n")
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	tk, err := h.c.StartTask(bg, api.TaskStart{Repo: repo, Prompt: "say hello"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := map[string]string{"PILOTHOUSE_SESSION_ID": tk.SessionID}
+	if _, err := h.hookEnv(bg, shell("ls"), env); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.hookEnv(bg, adapters.HookEvent{Kind: adapters.HookStop, Message: "Hello."}, env); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "review", func() bool {
+		st, _ := h.c.Task(bg, tk.ID)
+		return st.Status == api.TaskReview
+	})
+	diff, err := h.c.TaskDiff(bg, tk.ID)
+	if err != nil || len(diff.Files) != 0 {
+		t.Fatalf("diff %+v %v", diff, err)
+	}
+
+	out, err := h.c.FinishTask(bg, tk.ID, api.TaskFinish{Action: "close"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Status != api.TaskDone || out.PRURL != "" || !strings.Contains(out.Note, "No changes to ship") {
+		t.Fatalf("closed %+v", out)
+	}
+	if _, err := os.Stat(tk.Worktree); !os.IsNotExist(err) {
+		t.Fatalf("worktree left: %v", err)
+	}
+	if b := git(t, repo, "branch", "--list", tk.Branch); b == "" {
+		t.Fatal("branch removed")
+	}
+	if _, err := h.c.FinishTask(bg, tk.ID, api.TaskFinish{Action: "close"}); !client.IsCode(err, "invalid") || !strings.Contains(err.Error(), "not ready for review") {
+		t.Fatalf("second close: %v", err)
+	}
+}
+
 // TestTaskReadyForReview: a task's agent finishing its turn moves the task
-// to review and, while the person is away, sends one "ready for review"
-// notification that links to the task (and no generic "finished").
+// to review and sends one "ready for review" notification that links to
+// the task (and no generic "finished"). It is remote while away and
+// desktop-only at the desk.
 func TestTaskReadyForReview(t *testing.T) {
 	h, _ := newTaskHarness(t)
 	repo := newGitRepo(t, "app")
@@ -403,7 +453,7 @@ func TestTaskReadyForReview(t *testing.T) {
 		t.Fatalf("tasks.json after discard %s", ts[0].Status)
 	}
 
-	// At the desk: status changes, no notification.
+	// At the desk: status changes and the desktop notification still fires.
 	h.presence.setAway(false)
 	waitFor(t, "here", func() bool { return h.d.Presence().State == api.PresencePresent })
 	tk2, err := h.c.StartTask(bg, api.TaskStart{Repo: repo, Prompt: "at the desk"})
@@ -415,15 +465,25 @@ func TestTaskReadyForReview(t *testing.T) {
 	if _, err := h.hookEnv(bg, shell("ls"), env2); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.hookEnv(bg, adapters.HookEvent{Kind: adapters.HookStop}, env2); err != nil {
+	if _, err := h.hookEnv(bg, adapters.HookEvent{Kind: adapters.HookStop, Message: "Desk result."}, env2); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, "review at the desk", func() bool {
 		st, _ := h.c.Task(bg, tk2.ID)
 		return st.Status == api.TaskReview
 	})
-	if len(h.notes.all()) != before {
-		t.Fatalf("notified at the desk: %+v", h.notes.all()[before:])
+	var desk core.Notification
+	waitFor(t, "desk notification", func() bool {
+		for _, x := range h.notes.all()[before:] {
+			if x.URL == "/t/"+tk2.ID {
+				desk = x
+				return true
+			}
+		}
+		return false
+	})
+	if desk.Kind != core.NotifyWaiting || desk.Remote || desk.Title != "Ready for review · app" || desk.Body != "at-the-desk: Desk result." || desk.Session == nil {
+		t.Fatalf("notified at the desk: %+v", desk)
 	}
 }
 
