@@ -14,14 +14,41 @@ const STATUS = {
   review: { label: 'Review', icon: 'eye' },
   done: { label: 'Done', icon: 'check' },
   abandoned: { label: 'Discarded', icon: 'x' },
+  failed: { label: 'Failed', icon: 'alert' },
 };
-const AGENTS = ['claude', 'codex'];
+const AGENTS = ['claude', 'codex', 'opencode'];
 const LAST_REPO = 'pilothouse.task.repo';
 const LAST_AGENT = 'pilothouse.task.agent';
 
 function statusChip(t) {
   const s = STATUS[t.status] || { label: t.status || 'Unknown', icon: 'info' };
   return h('span', { class: 'task-chip ' + (t.status || '') }, ico(s.icon, 'sm'), s.label);
+}
+
+/** The agents the new-task form offers: Claude and Codex always (the
+ * computer says so if one isn't installed), OpenCode once Pilothouse has
+ * seen it, since it reports to Pilothouse only through its plugin. */
+function taskAgents() {
+  const seen = [...store.sessions.values(), ...(store2.tasks || [])].some((x) => x.agent === 'opencode');
+  return AGENTS.filter((a) => a !== 'opencode' || seen);
+}
+
+/** One line on what .pilothouse/task.yaml did, or null. */
+export function setupLine(st) {
+  if (!st) return null;
+  const n = st.commands || 0;
+  const cmds = `${n} setup command${n === 1 ? '' : 's'}`;
+  const copied = st.copied && st.copied.length
+    ? 'copied ' + st.copied.slice(0, 3).join(', ') + (st.copied.length > 3 ? ` and ${st.copied.length - 3} more` : '')
+    : '';
+  const what = {
+    running: `Running ${cmds}…`,
+    ok: n ? `Ran ${cmds}` : '',
+    failed: `A setup command failed${st.log ? ' — its output is in ' + st.log + ' on your computer' : ''}`,
+    skipped: 'Setup commands skipped: the repository isn’t trusted on your computer',
+  }[st.status] || '';
+  const line = [what, copied].filter(Boolean).join('; ');
+  return line ? line[0].toUpperCase() + line.slice(1) : null;
 }
 
 function startedBy(t) {
@@ -115,6 +142,7 @@ export function tasksView() {
 function taskRow(t) {
   const s = t.session_id && store.sessions.get(t.session_id);
   const detail = t.status === 'running' && s ? (s.state_detail || stateLabel(s)) : null;
+  const note = t.status === 'failed' ? t.note || 'The agent didn’t start' : null;
   return link('/t/' + t.id, { class: 'row task-row' },
     h('span', { class: 'task-tile ' + (t.status || ''), 'aria-hidden': 'true' }, ico((STATUS[t.status] || {}).icon || 'branch', 'sm')),
     h('span', { class: 'row-main' },
@@ -123,7 +151,8 @@ function taskRow(t) {
       h('span', { class: 'task-meta' },
         h('span', { class: 'agent-dot ' + agentClass(t.agent) }), agentName(t.agent),
         startedBy(t) ? ' · ' + startedBy(t) : '', ' · ', h('time', { datetime: t.created_at }, agoLong(t.created_at))),
-      detail ? h('span', { class: 'task-detail' }, detail) : null),
+      detail ? h('span', { class: 'task-detail' }, detail) : null,
+      note ? h('span', { class: 'task-detail bad' }, note) : null),
     icon('chev', 'sm', 'chev'));
 }
 
@@ -142,12 +171,13 @@ export function newTaskView() {
   const submit = h('button', { class: 'btn primary block', type: 'submit' }, ico('play', 'sm'), 'Start task');
   let repos = null;
   let repoErr = null;
+  const agents = taskAgents();
   let agent = localStorage.getItem(LAST_AGENT) || 'claude';
-  if (!AGENTS.includes(agent)) agent = 'claude';
+  if (!agents.includes(agent)) agent = 'claude';
   let repo = localStorage.getItem(LAST_REPO) || '';
 
   const agentBox = h('div', { class: 'agent-pick', role: 'radiogroup', 'aria-labelledby': 'agent-legend' },
-    AGENTS.map((a) => {
+    agents.map((a) => {
       const id = 'agent-' + a;
       const input = h('input', { type: 'radio', name: 'agent', id, value: a, class: 'sr-only' });
       input.checked = a === agent;
@@ -286,6 +316,7 @@ export function taskView(id) {
         h('span', { class: 'repo-name' }, basename(t.repo)),
         h('span', { class: 'task-branches' }, ico('branch', 'sm'), h('code', null, t.branch || '—'), t.base_ref ? [h('span', { class: 'arrow', 'aria-hidden': 'true' }, ' ← '), h('span', { class: 'sr-only' }, ' from '), h('code', null, t.base_ref)] : null)),
       h('p', { class: 'task-meta' }, h('span', { class: 'agent-dot ' + agentClass(t.agent) }), agentName(t.agent), by ? ' · started ' + by : ''),
+      t.note ? h('p', { class: 'task-note' + (t.status === 'failed' ? ' bad' : ''), role: t.status === 'failed' ? 'alert' : null }, t.note) : null,
       t.prompt ? h('details', { class: 'task-prompt' }, h('summary', null, 'Prompt', ico('down', 'sm')), h('p', null, t.prompt)) : null,
       t.pr_url && /^https:\/\//.test(t.pr_url) ? h('a', { class: 'btn secondary compact task-pr', href: t.pr_url, target: '_blank', rel: 'noopener noreferrer' }, ico('pr', 'sm'), 'View pull request', ico('ext', 'sm')) : null));
     renderProgress(t);
@@ -296,18 +327,28 @@ export function taskView(id) {
 
   function renderProgress(t) {
     const s = t.session_id && store.sessions.get(t.session_id);
-    const steps = [
-      { key: 'start', label: 'Started', sub: t.base_ref ? `New branch from ${t.base_ref}` : 'New worktree' },
-      { key: 'work', label: 'Working', sub: t.status === 'running' && s ? (s.state_detail || stateLabel(s)) : null },
-      { key: 'review', label: 'Review', sub: t.status === 'review' ? 'The agent finished — look over the changes' : null },
-      t.status === 'abandoned'
-        ? { key: 'end', label: 'Discarded', sub: 'Worktree and branch removed', bad: true }
-        : { key: 'end', label: 'Shipped', sub: 'Pushed with a pull request' },
-    ];
-    const at = { running: 1, review: 2, done: 4, abandoned: 4 }[t.status] ?? 1;
+    const setup = t.setup && (t.setup.status !== 'none' || (t.setup.copied || []).length) ? t.setup : null;
+    const setupRunning = !!setup && setup.status === 'running' && t.status === 'running';
+    const steps = [{ key: 'start', label: 'Started', sub: t.base_ref ? `New branch from ${t.base_ref}` : 'New worktree', state: 'done' }];
+    if (setup) {
+      steps.push({ key: 'setup', label: 'Setup', sub: setupLine(setup), state: setupRunning ? 'now' : 'done', bad: setup.status === 'failed' });
+    }
+    if (t.status === 'failed') {
+      steps.push({ key: 'end', label: 'Failed', sub: 'The agent didn’t start. Discard the task to remove its worktree.', state: 'done', bad: true });
+    } else {
+      const rest = [
+        { key: 'work', label: 'Working', sub: t.status === 'running' && s ? (s.state_detail || stateLabel(s)) : null },
+        { key: 'review', label: 'Review', sub: t.status === 'review' ? 'The agent finished — look over the changes' : null },
+        t.status === 'abandoned'
+          ? { key: 'end', label: 'Discarded', sub: 'Worktree and branch removed', bad: true }
+          : { key: 'end', label: 'Shipped', sub: 'Pushed with a pull request' },
+      ];
+      const at = { running: 0, review: 1, done: 3, abandoned: 3 }[t.status] ?? 0;
+      rest.forEach((st, i) => { st.state = i < at ? 'done' : i === at && !setupRunning ? 'now' : 'todo'; steps.push(st); });
+    }
     fill(progEl, section('Progress', 0, h('div', { class: 'card task-prog' },
-      h('ol', { class: 'steps-v2' }, steps.map((st, i) => {
-        const state = i < at ? 'done' : i === at ? 'now' : 'todo';
+      h('ol', { class: 'steps-v2' }, steps.map((st) => {
+        const state = st.state;
         return h('li', { class: `step ${state}${st.bad ? ' bad' : ''}`, 'aria-current': state === 'now' ? 'step' : null },
           h('span', { class: 'step-dot' }, state === 'done' ? ico(st.bad ? 'x' : 'check', 'sm') : state === 'now' && t.status === 'running' ? spinner('sm') : null),
           h('span', { class: 'step-t' }, h('b', null, st.label), st.sub && state !== 'todo' ? h('span', null, st.sub) : null));
@@ -374,6 +415,13 @@ export function taskView(id) {
 
   // ---- Ship / Discard ----
   function renderActions(t) {
+    if (t.status === 'failed') {
+      const discard = h('button', { class: 'btn danger', type: 'button', id: 'task-discard', disabled: !!busy }, busy === 'discard' ? spinner() : ico('trash', 'sm'), 'Discard');
+      discard.addEventListener('click', () => finish(t, 'discard'));
+      fill(actEl, h('div', { class: 'task-actions' }, h('div', { class: 'task-actions-in one' }, discard),
+        h('p', null, 'Discard removes the task’s worktree and branch on your computer.')));
+      return;
+    }
     if (t.status !== 'review' && t.status !== 'running') { fill(actEl); return; }
     const ship = h('button', { class: 'btn primary', type: 'button', id: 'task-ship', disabled: t.status !== 'review' || !!busy }, busy === 'ship' ? spinner() : ico('pr', 'sm'), 'Ship');
     const discard = h('button', { class: 'btn danger', type: 'button', id: 'task-discard', disabled: !!busy }, busy === 'discard' ? spinner() : ico('trash', 'sm'), 'Discard');

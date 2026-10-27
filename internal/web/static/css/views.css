@@ -292,6 +292,9 @@ main:has(> .term-view) { max-width: 1100px; }
 .task-branch { color: var(--text-3); font-family: var(--mono); font-size: 12.5px; }
 .task-meta { display: block; margin-top: 3px; color: var(--text-3); font-size: 12.5px; }
 .task-detail { display: block; margin-top: 4px; overflow: hidden; color: var(--info); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.task-detail.bad { color: var(--deny-text); }
+.task-chip.failed { color: var(--deny-text); background: var(--deny-soft); }
+.task-tile.failed { color: var(--deny); background: var(--deny-soft); }
 .agent-dot { display: inline-block; flex: none; width: 8px; height: 8px; margin-right: 5px; border-radius: 2px; vertical-align: 0; background: var(--agent, var(--generic)); }
 .agent-dot.claude { --agent: var(--claude); }
 .agent-dot.codex { --agent: var(--codex); }
@@ -350,6 +353,8 @@ textarea#task-prompt { min-height: 130px; }
 .task-branches { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; color: var(--text-3); }
 .task-branches code { color: var(--text-2); overflow-wrap: anywhere; }
 .task-hero .task-meta { margin-top: 6px; font-size: 13px; }
+.task-note { margin: 10px 0 0; color: var(--text-2); font-size: 14px; overflow-wrap: anywhere; }
+.task-note.bad { padding: 10px 12px; border-radius: var(--radius-sm); background: var(--deny-soft); color: var(--deny-text); }
 .task-prompt { margin-top: 14px; padding-top: 12px; border-top: 0.5px solid var(--border-strong); }
 .task-prompt summary { display: inline-flex; align-items: center; gap: 4px; list-style: none; cursor: pointer; color: var(--text-3); font-size: 13px; font-weight: 600; }
 .task-prompt summary::-webkit-details-marker { display: none; }
@@ -390,6 +395,7 @@ textarea#task-prompt { min-height: 130px; }
   -webkit-backdrop-filter: saturate(180%) blur(18px); backdrop-filter: saturate(180%) blur(18px);
 }
 .task-actions-in { display: grid; grid-template-columns: 1fr 1.6fr; gap: 8px; }
+.task-actions-in.one { grid-template-columns: 1fr; }
 .task-actions .btn { grid-column: auto; min-height: 50px; font-size: 16px; }
 .task-actions p { margin: 8px 4px 0; color: var(--text-2); font-size: 12.5px; text-align: center; }
 .btn.danger.solid { background: var(--deny); color: #fff; }

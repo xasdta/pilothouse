@@ -60,6 +60,7 @@ await run(async () => {
   const repos = await page.$$eval('.repo-name', (r) => r.map((x) => x.innerText));
   check('repo picker lists /api/repos, most recent first', JSON.stringify(repos) === JSON.stringify(['pilothouse', 'api-server', 'proofline', 'site']), JSON.stringify(repos));
   check('first repo picked by default', await page.$eval('#repo-0', (e) => e.checked));
+  check('agents: Claude and Codex; no OpenCode before Pilothouse has seen it', !!(await page.$('#agent-claude')) && !!(await page.$('#agent-codex')) && !(await page.$('#agent-opencode')));
   apiR.clear();
   await tap(page, '.task-form button[type=submit]');
   check('empty prompt → asks for one, nothing sent', (await text(page, '#task-err')).includes('Tell the agent what to do') && apiR.find('POST', /\/api\/tasks$/).length === 0);
@@ -138,6 +139,35 @@ await run(async () => {
   vf = c ? verifyAction(spki, 'task', 't_dark002', c.body) : { ok: false, why: 'no call' };
   check('discard is a signed `task` action with the task id', vf.ok && vf.payload.action === 'discard', vf.why || JSON.stringify(vf.payload));
   check('after discard: Discarded step, no actions', (await text(page, '.task-prog')).includes('Discarded') && !(await page.$('#task-discard')));
+
+  // ---- Failed task: its note, setup that failed, Discard only ----
+  const failed = { ...w.tasks[2], id: 't_fail005', title: 'Upgrade the ORM', status: 'failed', session_id: '', note: 'setup command 2 of 2 exited with status 3', setup: { copied: ['.env', '.env.local'], commands: 2, status: 'failed', log: '/Users/dev/.pilothouse/tasks/t_fail005/setup.log' }, created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+  w.tasks.push(failed);
+  sse.push('/events', 'event', { seq: 1e9 + 6, at: new Date().toISOString(), type: 'task.updated', data: failed });
+  await go(page, '/tasks');
+  await page.waitForSelector('.task-row', { timeout: 6000 });
+  const failRow = await page.$$eval('.task-row', (r) => r.map((x) => x.innerText.replace(/\s+/g, ' ')).find((t) => t.includes('Upgrade the ORM')) || '');
+  check('failed task: “Failed” chip and its note in the list', failRow.includes('Failed') && failRow.includes('exited with status 3'), failRow);
+  await go(page, '/t/t_fail005');
+  await page.waitForSelector('.task-prog', { timeout: 6000 });
+  check('failed task: the note in the header', (await text(page, '.task-note.bad')).includes('setup command 2 of 2 exited with status 3'));
+  const prog = await text(page, '.task-prog');
+  check('failed task: setup step says what failed and where its log is, and what was copied', prog.includes('Setup') && prog.includes('A setup command failed') && prog.includes('setup.log') && prog.includes('.env, .env.local'), prog.replace(/\s+/g, ' '));
+  check('failed task: ends at a Failed step, no Working/Review', prog.includes('Failed') && !prog.includes('Working') && !prog.includes('Review'));
+  check('failed task: Discard but no Ship', !!(await page.$('#task-discard')) && !(await page.$('#task-ship')));
+  // Setup still running: the Setup step is current, Working waits.
+  const settingUp = { ...failed, id: 't_setup06', title: 'Add rate limits', status: 'running', note: '', setup: { commands: 1, status: 'running' } };
+  w.tasks.push(settingUp);
+  sse.push('/events', 'event', { seq: 1e9 + 7, at: new Date().toISOString(), type: 'task.updated', data: settingUp });
+  await go(page, '/t/t_setup06');
+  await page.waitForSelector('.task-prog', { timeout: 6000 });
+  check('setup running: Setup is the current step', (await page.$eval('.step[aria-current="step"]', (e) => e.innerText)).includes('Running 1 setup command'));
+  // OpenCode: offered once Pilothouse has seen it.
+  sse.push('/events', 'event', { seq: 1e9 + 8, at: new Date().toISOString(), type: 'task.updated', data: { ...settingUp, id: 't_oc007', agent: 'opencode', title: 'OpenCode task' } });
+  await sleep(300);
+  await go(page, '/new');
+  await page.waitForSelector('.repo-opt input', { timeout: 6000 });
+  check('agents: OpenCode offered once Pilothouse has seen it', !!(await page.$('#agent-opencode')));
 
   // ---- Not supported, not found ----
   apiR.on('GET', /^\/api\/tasks\/t_retry01\/diff$/, () => ({ status: 501, json: { error: 'not supported here', code: 'unsupported' } }));
