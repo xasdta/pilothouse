@@ -5,6 +5,7 @@ package daemon
 // prefixed "act" so they never collide with other workstreams' tests.
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -406,5 +407,68 @@ func TestUsageBackfill(t *testing.T) {
 	st.reader.Forget("unused") // the call is safe on unknown keys
 	if spent := st.reader.SpentSince(time.Time{}); spent != 0 {
 		t.Errorf("a backfilled session's feed stayed in memory (spent %v)", spent)
+	}
+}
+
+// OpenCode keeps its transcript in SQLite; Activity reads it directly.
+func TestActivityOpenCode(t *testing.T) {
+	h := newHarness(t)
+	h.start(t)
+	path := filepath.Join(os.Getenv("PILOTHOUSE_USER_HOME"), ".local", "share", "opencode", "opencode.db")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, q := range []string{
+		`CREATE TABLE session (id TEXT PRIMARY KEY, cost REAL, tokens_input INTEGER, tokens_output INTEGER,
+			tokens_reasoning INTEGER, tokens_cache_read INTEGER, tokens_cache_write INTEGER, model TEXT)`,
+		`CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)`,
+		`CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const sid = "ses_oc"
+	now := time.Now().UTC()
+	ms := now.UnixMilli()
+	for _, q := range []struct {
+		stmt string
+		args []any
+	}{
+		{`INSERT INTO session (id, cost, tokens_input, tokens_output, tokens_reasoning,
+			tokens_cache_read, tokens_cache_write, model) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			[]any{sid, 0.12, 800, 40, 3, 200, 0, `{"id":"oc-model"}`}},
+		{`INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)`,
+			[]any{"m1", sid, ms - 3000, ms - 3000, `{"role":"user"}`}},
+		{`INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)`,
+			[]any{"m2", sid, ms - 2000, ms - 1000, `{"role":"assistant"}`}},
+		{`INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?, ?)`,
+			[]any{"p1", "m1", sid, ms - 3000, ms - 3000, `{"type":"text","text":"fix the build"}`}},
+		{`INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?, ?)`,
+			[]any{"p2", "m2", sid, ms - 2000, ms - 1000, `{"type":"tool","tool":"bash","state":{"status":"completed","input":{"command":"go test ./..."},"output":"ok"}}`}},
+	} {
+		if _, err := db.Exec(q.stmt, q.args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("OPENCODE_DB", path)
+	actPutSession(t, h, api.Session{ID: "s_oc", Agent: api.AgentOpenCode, AgentSessionID: sid, Cwd: "/src/app"})
+	act, err := h.c.Activity(bg, "s_oc", api.ActivityQuery{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !act.Available || len(act.Items) != 2 {
+		t.Fatalf("activity = %+v", act)
+	}
+	if act.Items[0].Kind != api.ActivityPrompt || act.Items[1].Summary != "Run: go test ./..." {
+		t.Fatalf("items = %+v", act.Items)
+	}
+	if act.Usage == nil || act.Usage.CostUSD != 0.12 || act.Usage.InputTokens != 800 {
+		t.Fatalf("usage = %+v", act.Usage)
 	}
 }

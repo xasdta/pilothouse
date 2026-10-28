@@ -103,7 +103,9 @@ pilothouse log -f                # live event log
 
 Pilothouse reads Claude Code and Codex transcripts (read-only, on this machine)
 to show each session's activity and token use, and estimates cost from list
-prices. Set a daily budget to get a notification at 80 % and 100 % of it:
+prices. OpenCode activity is read from its own SQLite database; OpenCode usage
+is not parsed yet. Set a daily budget to get a notification at 80 % and 100 %
+of it:
 
 ```yaml
 # ~/.pilothouse/config.yaml

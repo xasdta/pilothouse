@@ -101,6 +101,26 @@ func (d *Daemon) Activity(ctx context.Context, sessionID string, q api.ActivityQ
 	st := d.act()
 	now := d.now()
 	out := api.Activity{SessionID: s.ID, Items: []api.ActivityItem{}}
+	if s.Agent == api.AgentOpenCode {
+		res, err := transcript.ReadOpenCode(transcript.OpenCodeDB(), s.AgentSessionID, s.Cwd, q.Cursor, q.Limit, now)
+		if err != nil {
+			if errors.Is(err, transcript.ErrMissing) {
+				out.Note = "No OpenCode transcript yet: OpenCode hasn't written this session to its database."
+			} else {
+				out.Note = "Couldn't read OpenCode's database."
+			}
+			return out, nil
+		}
+		if err := d.markReplies(ctx, s.ID, res.Items); err != nil {
+			return api.Activity{}, err
+		}
+		out.Available, out.Items, out.Cursor = true, res.Items, res.Cursor
+		if res.Usage != (api.Usage{}) {
+			u := res.Usage
+			out.Usage = &u
+		}
+		return out, nil
+	}
 	src, note, ok := st.source(s, now)
 	if !ok {
 		out.Note = note

@@ -25,7 +25,7 @@ it through a plugin instead (see OpenCode).
 | Questions and plans from anywhere (0.2) | Yes: `AskUserQuestion` answers and `ExitPlanMode` approve / request changes through `PermissionRequest` (see Questions and plans) | Read-only: `request_user_input` shows as "blocked (question)"; answer it in Codex (no hook can) | Questions: yes (`question.asked` → `/question/{id}/reply`, multi-select and free text). OpenCode has no plan approval | **No**: a question or plan-approval tool can only be answered in Grok |
 | Resume a session | `claude --resume <session_id>` | `codex resume <session_id>` | `opencode --session <session_id>` | `grok --resume <session_id>` |
 | Replies (follow-up prompt from the phone/CLI) | Wrapped: typed into the terminal (interrupt with Esc). Started on its own: Claude's session messaging socket (2.1.224+; no interrupt) | Wrapped only (`pilothouse run codex`): hooks can't inject a prompt | Through its plugin (`session.promptAsync`; interrupt aborts the turn) | Wrapped only (`pilothouse run grok`): hooks can't inject a prompt |
-| Activity feed and usage (read from the transcript, see [USAGE.md](USAGE.md)) | `~/.claude/projects/…/<session>.jsonl` + subagent files; usage per response | `~/.codex/sessions/…/rollout-*.jsonl`, found by thread id until hooks name it; usage from `token_count` | Not yet (OpenCode keeps sessions in its SQLite database) | Activity from `$GROK_HOME/sessions/<encoded-cwd>/<session>/updates.jsonl`; usage not parsed yet (`usage.json`) |
+| Activity feed and usage (read from the transcript, see [USAGE.md](USAGE.md)) | `~/.claude/projects/…/<session>.jsonl` + subagent files; usage per response | `~/.codex/sessions/…/rollout-*.jsonl`, found by thread id until hooks name it; usage from `token_count` | Activity from OpenCode's `opencode.db` (messages and parts); usage not parsed yet | Activity from `$GROK_HOME/sessions/<encoded-cwd>/<session>/updates.jsonl`; usage not parsed yet (`usage.json`) |
 | OSC 7501 status (wrap mode, L1) | Emits it (v2.1.295+) when it detects terminal support | Emits it whenever stdout is a terminal | No | Not yet verified |
 
 "Remote approvals" means: when the person is away, the hook holds the agent's
@@ -658,8 +658,8 @@ its sessions with its first poll. The text of a reply is in the event log
   off, and so does a config that can't be parsed.
 - Policy `allow` can't skip OpenCode's own prompt (only a person's grant
   does, at the prompt).
-- No activity feed or usage for OpenCode sessions yet (they live in
-  OpenCode's database, not in a transcript file).
+- Activity is read from OpenCode's own database (`opencode.db`); usage is not
+  parsed yet.
 - `pilothouse run opencode` names the session OpenCode and the plugin
   forwards `PILOTHOUSE_SESSION_ID`, so its hooks join the wrapped session
   (one session, not a second observed one); replies to it go through the
