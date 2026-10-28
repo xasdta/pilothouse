@@ -343,8 +343,8 @@ function build(req, opts) {
   let denyConfirm;
   let ruleBtn;
   function buildPermission() {
-    allowBtn = h('button', { class: 'btn primary', type: 'button' }, icon('check'), 'Allow');
-    sessionBtn = h('button', { class: 'btn secondary', type: 'button' }, 'Allow for session');
+    allowBtn = h('button', { class: 'btn primary', type: 'button', title: 'Allow this one call' }, icon('check'), 'Allow once');
+    sessionBtn = h('button', { class: 'btn secondary', type: 'button', title: 'Allow this tool or command prefix until the session ends' }, 'Allow for session');
     denyBtn = h('button', { class: 'btn danger', type: 'button' }, 'Deny');
     controls.push(allowBtn, sessionBtn, denyBtn);
     const reasonId = uid('reason');
@@ -570,7 +570,7 @@ function build(req, opts) {
     els.timer.classList.toggle('low', low);
     els.left.classList.toggle('low', low);
     els.left.hidden = false;
-    fill(els.left, icon('clock', 'sm'), rem > 0 ? left(current.expires_at, now) + ' left' : 'Expiring…');
+    fill(els.left, icon('clock', 'sm'), rem > 0 ? 'Hands back in ' + left(current.expires_at, now) : 'Handing back…');
   }
 
   let renderedBodyFor = '';
@@ -631,6 +631,7 @@ function build(req, opts) {
 
   const ctl = {
     id: req.id,
+    kind,
     wrap,
     card,
     update,

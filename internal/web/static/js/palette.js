@@ -76,10 +76,23 @@ function targetCard() {
   return first ? controllerFor(first) : null;
 }
 
-function act(what) {
+// Allow is destructive and easy to hit while typing, so a permission card
+// takes two presses: the same key, on the same request, within a few seconds.
+let pendingAllow = { id: '', key: '', at: 0 };
+
+function act(what, key = '') {
   const c = targetCard();
   if (!c) { toast('Nothing waiting for an answer'); return; }
   select(c.card, false);
+  if (c.kind === 'permission' && (what === 'allow' || what === 'allowSession')) {
+    const now = Date.now();
+    if (pendingAllow.id !== c.id || pendingAllow.key !== key || now - pendingAllow.at > 3000) {
+      pendingAllow = { id: c.id, key, at: now };
+      toast(key === 's' ? 'Press s again to allow for this session' : 'Press a again to allow once');
+      return;
+    }
+    pendingAllow = { id: '', key: '', at: 0 };
+  }
   c[what]();
 }
 
@@ -141,9 +154,9 @@ function onKey(e) {
   switch (k) {
     case 'j': case 'ArrowDown': if (k === 'ArrowDown' && !cur) return; e.preventDefault(); move(1); break;
     case 'k': case 'ArrowUp': if (k === 'ArrowUp' && !cur) return; e.preventDefault(); move(-1); break;
-    case 'a': e.preventDefault(); act('allow'); break;
-    case 's': e.preventDefault(); act('allowSession'); break;
-    case 'd': e.preventDefault(); act('deny'); break;
+    case 'a': e.preventDefault(); act('allow', 'a'); break;
+    case 's': e.preventDefault(); act('allowSession', 's'); break;
+    case 'd': e.preventDefault(); act('deny', 'd'); break;
     case 'r': e.preventDefault(); reply(); break;
     case 'n': e.preventDefault(); go('/new'); break;
     case '/': e.preventDefault(); openPalette(); break;
@@ -212,7 +225,7 @@ function commands() {
     const what = r.checkpoint === 'question' ? 'Answer: ' + ((r.questions && r.questions[0] && r.questions[0].question) || 'a question')
       : r.checkpoint === 'plan' ? 'Review the plan: ' + (r.summary || '').replace(/^Plan:\s*/, '')
         : (r.command ? 'Allow? ' + r.command : r.summary || r.tool);
-    out.push({ group: 'Needs you', title: what, sub: `${repoName(s, r)} · ${agentName(r.agent)} · ${left(r.expires_at, now)} left`, ico: 'hourglass', agent: r.agent, run: () => go('/r/' + r.id) });
+    out.push({ group: 'Needs you', title: what, sub: `${repoName(s, r)} · ${agentName(r.agent)} · hands back in ${left(r.expires_at, now)}`, ico: 'hourglass', agent: r.agent, run: () => go('/r/' + r.id) });
   }
   const sessions = [...store.sessions.values()].sort((a, b) => toMs(b.updated_at) - toMs(a.updated_at));
   for (const s of sessions) {
@@ -346,8 +359,8 @@ export function openHelp() {
     h('div', { class: 'sheet-body' },
       h('h3', { class: 'keys-group' }, 'Requests'),
       h('dl', { class: 'keys' },
-        row(['a'], 'Allow / approve'), row(['d'], 'Deny / request changes'),
-        row(['s'], 'Allow for this session'), row(['1', '–', '9'], 'Pick an answer')),
+        row(['a'], 'Allow once / approve (press twice)'), row(['d'], 'Deny / request changes'),
+        row(['s'], 'Allow for this session (press twice)'), row(['1', '–', '9'], 'Pick an answer')),
       h('h3', { class: 'keys-group' }, 'Move around'),
       h('dl', { class: 'keys' },
         row(['j'], 'Next item'), row(['k'], 'Previous item'),

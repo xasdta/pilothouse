@@ -89,7 +89,7 @@ export function inboxView() {
     } else if (wide && open.length) {
       fill(empty, h('p', { class: 'hint-card' }, icon('hourglass'),
         h('span', null, `${n} waiting in Needs you, on the right. Press `, h('kbd', null, 'j'), ' to step through them, ',
-          h('kbd', null, 'a'), ' to allow, ', h('kbd', null, 'd'), ' to deny.')));
+          h('kbd', null, 'a'), ' twice to allow once, ', h('kbd', null, 'd'), ' to deny.')));
     } else {
       fill(empty);
     }
@@ -110,7 +110,7 @@ export function inboxView() {
       if (!d) return;
       const chip = (value, label, cls = '') => link('/insights', { class: 'stat-chip ' + cls }, h('b', null, value), label);
       fill(today,
-        chip(money(d.usage.cost_usd), 'today'),
+        chip(money(d.usage.cost_usd), 'spent today'),
         chip(String(d.auto_allowed), 'auto-allowed', 'good'),
         chip(String(d.asked), 'asked you'),
         d.blocked ? chip(String(d.blocked), 'blocked') : null);
