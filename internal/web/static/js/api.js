@@ -154,14 +154,21 @@ export function onEvent(fn) {
 
 let es = null;
 let retryTimer = 0;
+let degradeTimer = 0;
 let backoff = 0;
 let hiddenAt = 0;
 let lastHeard = 0;
+let everLive = false;
+let failingSince = 0;
 
 // A connection can die silently (Wi-Fi handoff, sleeping proxy) without an
-// error event. The server sends `event: ping` every 15 s; after 45 s with
+// error event. The server sends `event: ping` every 15 s; after 30 s with
 // nothing at all, reconnect.
-const SILENCE_MS = 45000;
+const SILENCE_MS = 30000;
+// Phones suspend the page and its stream. Keep the last healthy state
+// through a short blip or a background pause; only surface a reconnect after
+// this long while the page is visible.
+const DEGRADE_MS = 8000;
 const heard = () => { lastHeard = Date.now(); };
 
 function setConn(c) {
@@ -169,6 +176,27 @@ function setConn(c) {
     store.conn = c;
     changed('conn');
   }
+}
+
+function live() {
+  everLive = true;
+  failingSince = 0;
+  clearTimeout(degradeTimer);
+  degradeTimer = 0;
+  setConn('live');
+}
+
+function degrade(c) {
+  // Before the first successful connection, show the honest state at once.
+  if (!everLive) { setConn(c); return; }
+  if (!failingSince) failingSince = Date.now();
+  if (document.hidden) return;
+  clearTimeout(degradeTimer);
+  const wait = Math.max(0, DEGRADE_MS - (Date.now() - failingSince));
+  degradeTimer = setTimeout(() => {
+    degradeTimer = 0;
+    if (failingSince && !document.hidden) setConn(c);
+  }, wait);
 }
 
 export async function resync() {
@@ -179,14 +207,16 @@ export async function resync() {
 export function connect() {
   clearTimeout(retryTimer);
   if (es) { es.close(); es = null; }
-  setConn(store.conn === 'live' ? 'live' : 'connecting');
+  // Once we have been live, reconnects are silent: the badge and Settings
+  // keep saying Connected until a failure has lasted past DEGRADE_MS.
+  if (!everLive) setConn('connecting');
   const src = new EventSource('/api/events?after=' + store.seq);
   es = src;
   heard();
   src.addEventListener('open', () => {
     heard();
     backoff = 0;
-    setConn('live');
+    live();
   });
   src.addEventListener('ping', heard);
   src.addEventListener('event', (m) => {
@@ -216,7 +246,7 @@ export function connect() {
 }
 
 async function fail(err) {
-  setConn(backoff >= 2 ? 'offline' : 'connecting');
+  degrade(backoff >= 2 ? 'offline' : 'connecting');
   // A 401 means this device was revoked or signed out elsewhere.
   if (!err || err.status !== 401) {
     try { await api('GET', '/api/me'); } catch (e) { err = e; }
@@ -227,23 +257,31 @@ async function fail(err) {
   retryTimer = setTimeout(connect, delay);
 }
 
-// Phones freeze background pages; reconnect at once when shown again.
+// Phones freeze background pages. On return, reconnect at once: an open
+// EventSource can look alive while its TCP connection is long gone.
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) { hiddenAt = Date.now(); return; }
   if (!store.loaded) return;
-  if (!es || store.conn !== 'live' || Date.now() - hiddenAt > 20000) {
+  const stale = Date.now() - lastHeard > 20000;
+  if (!es || store.conn !== 'live' || stale || Date.now() - hiddenAt > 3000) {
     backoff = 0;
+    failingSince = 0;
     connect();
   }
 });
-addEventListener('online', () => { if (store.loaded) { backoff = 0; connect(); } });
+addEventListener('online', () => {
+  if (!store.loaded) return;
+  backoff = 0;
+  failingSince = 0;
+  connect();
+});
 
 setInterval(() => {
+  if (document.hidden) return;
   if (!es || !store.loaded || Date.now() - lastHeard < SILENCE_MS) return;
-  console.warn('event stream silent for 45 s; reconnecting');
+  console.warn(`event stream silent for ${SILENCE_MS / 1000} s; reconnecting`);
   es.close();
   es = null;
-  setConn('connecting');
   backoff = 0;
   connect();
 }, 5000);
@@ -254,8 +292,10 @@ setInterval(() => {
 // catching up from store.seq, when the page is restored.
 addEventListener('pagehide', () => {
   clearTimeout(retryTimer);
+  clearTimeout(degradeTimer);
+  degradeTimer = 0;
   if (es) { es.close(); es = null; }
 });
 addEventListener('pageshow', (e) => {
-  if (e.persisted && store.loaded) { backoff = 0; connect(); }
+  if (e.persisted && store.loaded) { backoff = 0; failingSince = 0; connect(); }
 });

@@ -71,6 +71,8 @@ cdp.on('Fetch.requestPaused', async (e) => {
 });
 await cdp.send('Fetch.enable', { patterns: [{ urlPattern: '*/api/events*', requestStage: 'Request' }] });
 sh(`kill -9 $(cat /tmp/qa2/daemon.pid); sleep 0.3; startd`);
+await sleep(3000);
+check('stream break → still Connected through the grace window', !(await banner()).show, JSON.stringify(await banner()));
 await page.waitForFunction(() => document.querySelector('.banner.show'), { timeout: 15000 }).catch(() => {});
 await shot(page, '03-reconnecting-banner');
 check('stream break → banner', !!(await banner()).show, JSON.stringify(await banner()));

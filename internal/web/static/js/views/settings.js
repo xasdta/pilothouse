@@ -211,7 +211,7 @@ export function settingsView() {
     const me = store.me;
     fill(conn,
       h('div', { class: 'setting' }, tile('blue', 'desk'),
-        h('div', { class: 'label' }, h('b', null, store.machine || me.machine), h('span', null, store.conn === 'live' ? 'Connected · live' : 'Reconnecting…')),
+        h('div', { class: 'label' }, h('b', null, store.machine || me.machine), h('span', null, store.conn === 'live' ? 'Connected' : 'Reconnecting…')),
         h('div', { class: 'value' }, /^\d/.test(me.version) ? 'v' + me.version : me.version)),
       h('div', { class: 'setting' }, tile('gray', 'link'),
         h('div', { class: 'label' }, h('b', null, 'Address'), h('span', { class: 'mono' }, location.origin)),

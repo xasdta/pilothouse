@@ -201,7 +201,7 @@ export function refreshChrome() {
         : 'At desk: requests show in the terminal. Change in settings.');
     }
   }
-  const connLabel = store.conn === 'live' ? 'Live' : store.conn === 'offline' ? 'Offline' : 'Connecting';
+  const connLabel = store.conn === 'live' ? 'Connected' : store.conn === 'offline' ? 'Offline' : 'Connecting';
   for (const c of [el.conn, el.sideConn]) {
     c.className = 'conn ' + (store.conn === 'live' ? '' : store.conn);
     c.setAttribute('aria-label', connLabel);
