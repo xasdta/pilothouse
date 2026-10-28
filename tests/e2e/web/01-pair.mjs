@@ -19,6 +19,9 @@ check('code removed from URL/history', !page.url().includes(r.code), page.url())
 const done = await waitText(page, 'You’re paired', 5000);
 check('success screen shows "You’re paired"', done, (await text(page)).slice(0, 200));
 check('success names device', (await text(page)).includes('QA Phone'));
+check('primary action opens the inbox', (await text(page, '.pair-actions .btn.primary')) === 'Open inbox');
+const secondary = await page.$('.pair-actions .btn.secondary');
+if (secondary) check('notifications are optional', (await text(page, '.pair-actions .btn.secondary')) === 'Set up notifications');
 await shot(page, '01-pair-done-mobile');
 
 // Cookie flags.
@@ -47,11 +50,11 @@ check('private key extractable=false', key.extractable === false, JSON.stringify
 check('exportKey(pkcs8/jwk) throws', key.exported === false && key.jwk === false, key.err);
 check('key is ECDSA P-256', key.alg && key.alg.name === 'ECDSA' && key.alg.namedCurve === 'P-256');
 
-// Open inbox.
-await page.click('button.btn.primary');
+// Open inbox (the primary action, even when notifications are off).
+await page.click('.pair-actions .btn.primary');
 await sleep(800);
 await shot(page, '01-after-pair-next');
-check('after pair → app (settings or inbox)', /\/(settings)?$/.test(new URL(page.url()).pathname), page.url());
+check('after pair → inbox', new URL(page.url()).pathname === '/', page.url());
 
 // Code reuse rejected (fresh context, same code).
 const ctx2 = await browser.createBrowserContext();

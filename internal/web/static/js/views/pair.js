@@ -113,15 +113,24 @@ export function pairView({ code, mode, onDone }) {
 
   async function showDone(me) {
     const st = await pushStatus().catch(() => 'unsupported');
-    const next = h('button', { class: 'btn primary block', type: 'button', onclick: () => onDone(me, st === 'off' || st === 'ios-install') },
-      st === 'off' || st === 'ios-install' ? 'Set up notifications' : 'Open inbox');
+    // Pairing is complete either way: notifications are an option, not a gate.
+    const offerNotifications = st === 'off' || st === 'ios-install';
+    const open = h('button', { class: 'btn primary block', type: 'button', onclick: () => onDone(me, false) }, 'Open inbox');
+    const actions = h('div', { class: 'pair-actions' },
+      open,
+      offerNotifications
+        ? h('button', { class: 'btn secondary block', type: 'button', onclick: () => onDone(me, true) }, 'Set up notifications')
+        : null);
     fill(root,
       h('div', { class: 'pair-hero' },
         h('div', { class: 'done-mark' }, icon('check')),
         h('h1', null, 'You’re paired'),
         h('p', null, `${me.device.name} can now answer for ${me.machine}.`)),
-      next);
-    next.focus();
+      actions,
+      offerNotifications
+        ? h('p', { class: 'fineprint' }, icon('bell', 'sm'), 'You can turn on notifications later in Settings.')
+        : null);
+    open.focus();
   }
 
   return { el: root, focus: () => (code ? nameInput : codeInput).focus() };
