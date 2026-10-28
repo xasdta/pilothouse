@@ -103,9 +103,9 @@ pilothouse log -f                # live event log
 
 Pilothouse reads Claude Code and Codex transcripts (read-only, on this machine)
 to show each session's activity and token use, and estimates cost from list
-prices. OpenCode activity is read from its own SQLite database; OpenCode usage
-is not parsed yet. Set a daily budget to get a notification at 80 % and 100 %
-of it:
+prices. OpenCode activity and session tokens/cost are read from its own SQLite
+database; OpenCode is not yet included in the global usage page. Set a daily
+budget to get a notification at 80 % and 100 % of it:
 
 ```yaml
 # ~/.pilothouse/config.yaml
@@ -296,7 +296,7 @@ steps. See [docs/TASKS.md](docs/TASKS.md).
 | Ask rules | ✓ (its prompt) | denied with a note (no prompt from a hook) | held for you in Pilothouse, at the desk too | forces Grok's own prompt (at the desk only) |
 | Remote approvals | ✓ | ✓ | ✓ | — (no permission hook) |
 | Questions from anywhere | ✓ (and plans) | shown, answered in the terminal | ✓ | answered in its terminal |
-| Activity and usage | ✓ | ✓ | activity only | activity only |
+| Activity and usage | ✓ | ✓ | activity + session cost | activity only |
 
 v0.1 supported **Claude Code** and **Codex**; 0.2 added Claude Code questions
 and plan approval from anywhere, and **OpenCode** (1.x) through a plugin.
