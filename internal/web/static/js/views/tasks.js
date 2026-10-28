@@ -16,7 +16,7 @@ const STATUS = {
   abandoned: { label: 'Discarded', icon: 'x' },
   failed: { label: 'Failed', icon: 'alert' },
 };
-const AGENTS = ['claude', 'codex', 'opencode'];
+const AGENTS = ['claude', 'codex', 'opencode', 'grok'];
 const LAST_REPO = 'pilothouse.task.repo';
 const LAST_AGENT = 'pilothouse.task.agent';
 
@@ -27,10 +27,12 @@ function statusChip(t) {
 
 /** The agents the new-task form offers: Claude and Codex always (the
  * computer says so if one isn't installed), OpenCode once Pilothouse has
- * seen it, since it reports to Pilothouse only through its plugin. */
+ * seen it; Grok Build likewise, since it also reports only through hooks. */
 function taskAgents() {
-  const seen = [...store.sessions.values(), ...(store2.tasks || [])].some((x) => x.agent === 'opencode');
-  return AGENTS.filter((a) => a !== 'opencode' || seen);
+  const seen = [...store.sessions.values(), ...(store2.tasks || [])];
+  const opencode = seen.some((x) => x.agent === 'opencode');
+  const grok = seen.some((x) => x.agent === 'grok');
+  return AGENTS.filter((a) => (a !== 'opencode' || opencode) && (a !== 'grok' || grok));
 }
 
 /** One line on what .pilothouse/task.yaml did, or null. */

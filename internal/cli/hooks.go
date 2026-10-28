@@ -28,13 +28,13 @@ import (
 func newHooksCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "hooks",
-		Short: "Install, remove or check Pilothouse's hooks in Claude Code, Codex and OpenCode",
+		Short: "Install, remove or check Pilothouse's hooks in Claude Code, Codex, OpenCode and Grok Build",
 		Long: `Pilothouse sees agents through their hooks. ` + "`hooks install`" + ` merges a call to
 ` + "`pilothouse hook <agent>`" + ` into each agent's settings (~/.claude/settings.json,
-~/.codex/hooks.json), keeping every other setting and hook, and backs the file
-up first. OpenCode has no command hooks: install writes Pilothouse's plugin to
-~/.config/opencode/plugins/pilothouse.js instead. ` + "`hooks uninstall`" + ` removes exactly
-what install added.`,
+~/.codex/hooks.json, ~/.grok/hooks/pilothouse.json), keeping every other setting
+and hook, and backs the file up first. OpenCode has no command hooks: install
+writes Pilothouse's plugin to ~/.config/opencode/plugins/pilothouse.js instead.
+` + "`hooks uninstall`" + ` removes exactly what install added.`,
 		Args: cobra.NoArgs,
 	}
 	cmd.AddCommand(newHooksChangeCmd(true), newHooksChangeCmd(false), newHooksStatusCmd())
@@ -46,7 +46,7 @@ func newHooksChangeCmd(install bool) *cobra.Command {
 	var dryRun bool
 	use, short := "uninstall", "Remove Pilothouse's hooks (and nothing else)"
 	if install {
-		use, short = "install", "Wire Pilothouse's hooks into Claude Code, Codex and OpenCode"
+		use, short = "install", "Wire Pilothouse's hooks into Claude Code, Codex, OpenCode and Grok Build"
 	}
 	cmd := &cobra.Command{
 		Use:   use,
@@ -89,6 +89,9 @@ func runHooksChange(w io.Writer, targets []adapters.Adapter, opts adapters.Insta
 		}
 		changed = changed || ch.Changed
 		printChange(w, a.DisplayName(), ch, opts.DryRun)
+		if install && a.Kind() == api.AgentGrok {
+			fmt.Fprintln(w, "  Grok runs personal hooks only in trusted folders: run /hooks-trust (or start it with --trust) in each project.")
+		}
 	}
 	switch {
 	case len(failed) > 0:
@@ -272,12 +275,12 @@ func hookTargets(agent string, install bool) ([]adapters.Adapter, error) {
 		out = append(out, a)
 	}
 	if install && len(out) == 0 {
-		return nil, errors.New("found no supported agent (Claude Code in ~/.claude, Codex in ~/.codex, OpenCode in ~/.config/opencode); pass --agent <name> to install anyway")
+		return nil, errors.New("found no supported agent (Claude Code in ~/.claude, Codex in ~/.codex, OpenCode in ~/.config/opencode, Grok Build in ~/.grok); pass --agent <name> to install anyway")
 	}
 	return out, nil
 }
 
-// agentChoices lists the --agent values: "claude, codex or opencode".
+// agentChoices lists the --agent values: "claude, codex, opencode or grok".
 func agentChoices() string {
 	var kinds []string
 	for _, a := range all.List() {

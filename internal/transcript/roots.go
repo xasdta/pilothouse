@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/xasdta/pilothouse/internal/adapters/codex"
+	"github.com/xasdta/pilothouse/internal/adapters/grok"
 	"github.com/xasdta/pilothouse/internal/api"
 	"github.com/xasdta/pilothouse/internal/paths"
 )
@@ -24,6 +25,7 @@ import (
 type Roots struct {
 	Claude []string // ~/.claude/projects, $CLAUDE_CONFIG_DIR/projects
 	Codex  []string // $CODEX_HOME/sessions (default ~/.codex/sessions)
+	Grok   []string // $GROK_HOME/sessions (default ~/.grok/sessions)
 }
 
 // DefaultRoots are the agents' own transcript folders. Under
@@ -34,6 +36,7 @@ func DefaultRoots() Roots {
 	r := Roots{
 		Claude: []string{filepath.Join(paths.UserHome(), ".claude", "projects")},
 		Codex:  []string{filepath.Join(codex.Home(), "sessions")},
+		Grok:   []string{filepath.Join(grok.Home(), "sessions")},
 	}
 	if d := os.Getenv("CLAUDE_CONFIG_DIR"); d != "" && filepath.IsAbs(d) {
 		uh := os.Getenv("PILOTHOUSE_USER_HOME")
@@ -53,6 +56,8 @@ func (r Roots) For(agent api.AgentKind) []string {
 		return r.Claude
 	case api.AgentCodex:
 		return r.Codex
+	case api.AgentGrok:
+		return r.Grok
 	}
 	return nil
 }
@@ -159,6 +164,44 @@ var sessionIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$`)
 
 // maxProjectDirs bounds the directory scan in FindClaude.
 const maxProjectDirs = 5000
+
+// FindGrokUpdates looks for
+// <root>/<url-encoded-cwd>/<sessionID>/updates.jsonl when a session's hooks
+// carried no transcript path. Grok Build keeps the durable update stream in
+// a directory named after the cwd, so the whole session tree is scanned.
+func FindGrokUpdates(roots []string, sessionID string) (string, bool) {
+	if !sessionIDPattern.MatchString(sessionID) {
+		return "", false
+	}
+	var best string
+	var bestMod time.Time
+	scanned := 0
+roots:
+	for _, root := range roots {
+		ents, err := os.ReadDir(root)
+		if err != nil {
+			continue
+		}
+		for _, e := range ents {
+			if scanned >= maxProjectDirs {
+				break roots
+			}
+			if !e.IsDir() {
+				continue
+			}
+			scanned++
+			p := filepath.Join(root, e.Name(), sessionID, "updates.jsonl")
+			st, err := os.Lstat(p)
+			if err != nil || !st.Mode().IsRegular() {
+				continue
+			}
+			if best == "" || st.ModTime().After(bestMod) {
+				best, bestMod = p, st.ModTime()
+			}
+		}
+	}
+	return best, best != ""
+}
 
 // FindClaude looks for <root>/<project>/<sessionID>.jsonl when a session's
 // hooks never said where its transcript is.

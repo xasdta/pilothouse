@@ -6,7 +6,7 @@
  *   surfaces   --bg --surface --surface-2 --surface-3 --raised --border --border-strong
  *   text       --text --text-2 --text-3 (all ≥ 4.5:1 on --bg and --surface)
  *   intent     --brand --allow --deny --warn --info (+ -soft backgrounds, -ink text on soft)
- *   agents     --claude --codex --opencode --generic; set --agent on an element and use
+ *   agents     --claude --codex --opencode --grok --generic; set --agent on an element and use
  *              --agent-ink (text) / --agent-soft (background)
  *   code       --code-bg --code-text --code-dim --code-border, --hl-* (syntax), --diff-*
  *   type       --fs-xs … --fs-3xl, --font, --mono
@@ -97,6 +97,7 @@
   --claude: #d97757;
   --codex: #0b8fd4;
   --opencode: #9b5de5;
+  --grok: #1c1f26;
   --generic: #6b7383;
   /* Agent text on its own tint, darkened in light mode for 4.5:1. */
   --agent-mix: 64%;
@@ -155,6 +156,7 @@
     --claude: #ec8f6e;
     --codex: #4fb6f0;
     --opencode: #bb8cf5;
+    --grok: #d9dee7;
     --generic: #9aa3b2;
     --agent-mix: 100%;
     --ring-color: #3ddc97;
@@ -207,6 +209,7 @@
   --claude: #ec8f6e;
   --codex: #4fb6f0;
   --opencode: #bb8cf5;
+  --grok: #d9dee7;
   --generic: #9aa3b2;
   --agent-mix: 100%;
   --ring-color: #3ddc97;
@@ -465,6 +468,7 @@ textarea.input { min-height: 80px; resize: vertical; line-height: 1.4; }
 .agent.claude, .avatar.claude, .claude { --agent: var(--claude); }
 .agent.codex, .avatar.codex, .codex { --agent: var(--codex); }
 .agent.opencode, .avatar.opencode, .opencode { --agent: var(--opencode); }
+.agent.grok, .avatar.grok, .grok { --agent: var(--grok); }
 .agent.generic, .avatar.generic { --agent: var(--generic); }
 .avatar.ok { --agent: var(--allow); }
 .avatar.bad { --agent: var(--deny); }

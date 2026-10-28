@@ -299,6 +299,9 @@ func (s *session) reset(src Source, o Options) {
 		// Rollout lines are small and few: the head pass is a full parse.
 		p := &codexParser{f: s.feed}
 		s.main.parse, s.main.head = p.line, p.line
+	case api.AgentGrok:
+		p := &grokParser{f: s.feed}
+		s.main.parse, s.main.head = p.line, p.line
 	default:
 		s.main.parse = func([]byte, int64) {}
 	}

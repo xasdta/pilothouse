@@ -174,11 +174,11 @@ export function appIcon(cls = 'mark') {
 
 // ---------- Agents ----------
 
-const AGENTS = { claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode', generic: 'Agent' };
-const AGENT_INITIALS = { claude: 'CC', codex: 'Cx', opencode: 'Oc', generic: '>_' };
+const AGENTS = { claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode', grok: 'Grok Build', generic: 'Agent' };
+const AGENT_INITIALS = { claude: 'CC', codex: 'Cx', opencode: 'Oc', grok: 'Gk', generic: '>_' };
 export const agentName = (a) => AGENTS[a] || (a ? a[0].toUpperCase() + a.slice(1) : 'Agent');
 export const agentInitials = (a) => AGENT_INITIALS[a] || (a || '?').slice(0, 2);
-export const agentClass = (a) => (a === 'claude' || a === 'codex' || a === 'opencode' ? a : 'generic');
+export const agentClass = (a) => (a === 'claude' || a === 'codex' || a === 'opencode' || a === 'grok' ? a : 'generic');
 
 export function agentBadge(agent) {
   return h('span', { class: 'agent ' + agentClass(agent) }, agentName(agent));

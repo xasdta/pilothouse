@@ -28,11 +28,12 @@ them from this computer's browser or your phone.
 Setup is safe to run again any time; it only changes what is missing or out
 of date. It walks through:
 
-1. **Agents.** It finds Claude Code and Codex and shows the **exact diff** of
-   each settings file it would change (`~/.claude/settings.json`,
-   `~/.codex/hooks.json` and the hook trust entries in `~/.codex/config.toml`)
-   before asking. Your own hooks are kept, and a backup is written first.
-   Long diffs are cut; `pilothouse hooks install --dry-run` shows all of it.
+1. **Agents.** It finds the agents you have installed (Claude Code, Codex,
+   OpenCode and Grok Build) and shows the **exact diff** of each file it would
+   change (`~/.claude/settings.json`, `~/.codex/hooks.json` with its hook trust
+   entries, the OpenCode plugin and `~/.grok/hooks/pilothouse.json`) before
+   asking. Your own hooks are kept, and a backup is written first. Long diffs
+   are cut; `pilothouse hooks install --dry-run` shows all of it.
 2. **Daemon.** It runs the daemon at login with launchd (macOS) or systemd
    (Linux), or starts it in the background.
 3. **Phone.**

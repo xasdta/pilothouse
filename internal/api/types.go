@@ -18,6 +18,7 @@ const (
 	AgentClaude   AgentKind = "claude"
 	AgentCodex    AgentKind = "codex"
 	AgentOpenCode AgentKind = "opencode"
+	AgentGrok     AgentKind = "grok"
 	AgentGeneric  AgentKind = "generic" // anything run under `pilothouse run` without an adapter
 )
 

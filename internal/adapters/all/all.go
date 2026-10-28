@@ -5,13 +5,14 @@ import (
 	"github.com/xasdta/pilothouse/internal/adapters"
 	"github.com/xasdta/pilothouse/internal/adapters/claude"
 	"github.com/xasdta/pilothouse/internal/adapters/codex"
+	"github.com/xasdta/pilothouse/internal/adapters/grok"
 	"github.com/xasdta/pilothouse/internal/adapters/opencode"
 	"github.com/xasdta/pilothouse/internal/api"
 )
 
 // List returns every adapter, in display order.
 func List() []adapters.Adapter {
-	return []adapters.Adapter{claude.New(), codex.New(), opencode.New()}
+	return []adapters.Adapter{claude.New(), codex.New(), opencode.New(), grok.New()}
 }
 
 // Get returns the adapter for kind, or nil.

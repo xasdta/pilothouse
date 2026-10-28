@@ -7,25 +7,26 @@ prints the daemon's answer; if the daemon is down or slow it prints nothing and
 exits 0, so the agent behaves as if Pilothouse were not installed (fail open).
 
 This page records what each agent really supports, with sources, as of
-2026-10-24. It is the reference for `internal/adapters/claude`,
-`internal/adapters/codex` and `internal/adapters/opencode`. OpenCode has no
-command hooks; Pilothouse reaches it through a plugin instead (see OpenCode).
+2026-10-27. It is the reference for `internal/adapters/claude`,
+`internal/adapters/codex`, `internal/adapters/opencode` and
+`internal/adapters/grok`. OpenCode has no command hooks; Pilothouse reaches
+it through a plugin instead (see OpenCode).
 
 ## At a glance
 
-| | Claude Code | Codex CLI | OpenCode (1.x) |
-|---|---|---|---|
-| Hook config Pilothouse edits | `~/.claude/settings.json` | `~/.codex/hooks.json` + trust entries in `~/.codex/config.toml` | Installs a plugin: `~/.config/opencode/plugins/pilothouse.js` |
-| State detection | Full: session start/end, prompt, every tool call, permission prompts, notifications (idle, permission waiting), stop | Full except notifications: session start/end, prompt, tool calls, permission prompts, stop, **interrupt** | Session start/end, prompt, tool calls, permission prompts, questions, idle (with the last message), compaction |
-| Policy `deny` (before every tool call) | Yes (`PreToolUse` → `permissionDecision: "deny"`) | Yes (`PreToolUse` → exit code 2, reason on stderr) | Yes (`tool.execute.before` throws; the model reads the reason) |
-| Policy `ask` (force the agent's prompt) | Yes (`permissionDecision: "ask"`) | **No prompt** — Codex has no `ask` at `PreToolUse`, so Pilothouse **denies** the call and tells the agent a person must do it (see Responses) | **No prompt** a plugin can raise, so the call is **held for a person in Pilothouse, at the desk too** (inbox, CLI, phone); unanswered means denied |
-| Policy / grant `allow` (skip the prompt) | Yes (`permissionDecision: "allow"`; the agent's own deny/ask rules still win) | **No** at `PreToolUse` (Codex rejects `allow` without `updatedInput`); see Caveats | Policy allow: no (OpenCode's own permission settings decide). Grants: yes, at OpenCode's permission prompt |
-| Remote approvals (phone answers the prompt) | Yes (`PermissionRequest` → `decision.behavior` allow/deny), held up to 600 s | Yes (`PermissionRequest` → `decision.behavior` allow/deny), held up to 600 s | Yes (`permission.asked` → `/permission/{id}/reply`), held up to `approvals.hold_limit`; OpenCode asks only for what its `permission` settings say (setup offers bash/edit = ask) |
-| Questions and plans from anywhere (0.2) | Yes: `AskUserQuestion` answers and `ExitPlanMode` approve / request changes through `PermissionRequest` (see Questions and plans) | Read-only: `request_user_input` shows as "blocked (question)"; answer it in Codex (no hook can) | Questions: yes (`question.asked` → `/question/{id}/reply`, multi-select and free text). OpenCode has no plan approval |
-| Resume a session | `claude --resume <session_id>` | `codex resume <session_id>` | `opencode --session <session_id>` |
-| Replies (follow-up prompt from the phone/CLI) | Wrapped: typed into the terminal (interrupt with Esc). Started on its own: Claude's session messaging socket (2.1.224+; no interrupt) | Wrapped only (`pilothouse run codex`): hooks can't inject a prompt | Through its plugin (`session.promptAsync`; interrupt aborts the turn) |
-| Activity feed and usage (read from the transcript, see [USAGE.md](USAGE.md)) | `~/.claude/projects/…/<session>.jsonl` + subagent files; usage per response | `~/.codex/sessions/…/rollout-*.jsonl`, found by thread id until hooks name it; usage from `token_count` | Not yet (OpenCode keeps sessions in its SQLite database) |
-| OSC 7501 status (wrap mode, L1) | Emits it (v2.1.295+) when it detects terminal support | Emits it whenever stdout is a terminal | No |
+| | Claude Code | Codex CLI | OpenCode (1.x) | Grok Build |
+|---|---|---|---|---|
+| Hook config Pilothouse edits | `~/.claude/settings.json` | `~/.codex/hooks.json` + trust entries in `~/.codex/config.toml` | Installs a plugin: `~/.config/opencode/plugins/pilothouse.js` | `~/.grok/hooks/pilothouse.json` (personal; folder trust gate) |
+| State detection | Full: session start/end, prompt, every tool call, permission prompts, notifications (idle, permission waiting), stop | Full except notifications: session start/end, prompt, tool calls, permission prompts, stop, **interrupt** | Session start/end, prompt, tool calls, permission prompts, questions, idle (with the last message), compaction | Session start/end, prompt, every tool call, permission denied, notifications, stop/failure/cancel, subagents, compaction (**no permission prompt**) |
+| Policy `deny` (before every tool call) | Yes (`PreToolUse` → `permissionDecision: "deny"`) | Yes (`PreToolUse` → exit code 2, reason on stderr) | Yes (`tool.execute.before` throws; the model reads the reason) | Yes (`PreToolUse` → `decision: "deny"`; the model reads the reason) |
+| Policy `ask` (force the agent's prompt) | Yes (`permissionDecision: "ask"`) | **No prompt** — Codex has no `ask` at `PreToolUse`, so Pilothouse **denies** the call and tells the agent a person must do it (see Responses) | **No prompt** a plugin can raise, so the call is **held for a person in Pilothouse, at the desk too** (inbox, CLI, phone); unanswered means denied | **At the desk only**: `decision: "ask"` forces Grok's own permission prompt. No remote answer (no `PermissionRequest` hook), so it waits at the terminal |
+| Policy / grant `allow` (skip the prompt) | Yes (`permissionDecision: "allow"`; the agent's own deny/ask rules still win) | **No** at `PreToolUse` (Codex rejects `allow` without `updatedInput`); see Caveats | Policy allow: no (OpenCode's own permission settings decide). Grants: yes, at OpenCode's permission prompt | **No**: `allow` only means "not blocked"; Grok's rules, mode and saved grants still decide |
+| Remote approvals (phone answers the prompt) | Yes (`PermissionRequest` → `decision.behavior` allow/deny), held up to 600 s | Yes (`PermissionRequest` → `decision.behavior` allow/deny), held up to 600 s | Yes (`permission.asked` → `/permission/{id}/reply`), held up to `approvals.hold_limit`; OpenCode asks only for what its `permission` settings say (setup offers bash/edit = ask) | **No** — Grok has no permission-request hook |
+| Questions and plans from anywhere (0.2) | Yes: `AskUserQuestion` answers and `ExitPlanMode` approve / request changes through `PermissionRequest` (see Questions and plans) | Read-only: `request_user_input` shows as "blocked (question)"; answer it in Codex (no hook can) | Questions: yes (`question.asked` → `/question/{id}/reply`, multi-select and free text). OpenCode has no plan approval | **No**: a question or plan-approval tool can only be answered in Grok |
+| Resume a session | `claude --resume <session_id>` | `codex resume <session_id>` | `opencode --session <session_id>` | `grok --resume <session_id>` |
+| Replies (follow-up prompt from the phone/CLI) | Wrapped: typed into the terminal (interrupt with Esc). Started on its own: Claude's session messaging socket (2.1.224+; no interrupt) | Wrapped only (`pilothouse run codex`): hooks can't inject a prompt | Through its plugin (`session.promptAsync`; interrupt aborts the turn) | Wrapped only (`pilothouse run grok`): hooks can't inject a prompt |
+| Activity feed and usage (read from the transcript, see [USAGE.md](USAGE.md)) | `~/.claude/projects/…/<session>.jsonl` + subagent files; usage per response | `~/.codex/sessions/…/rollout-*.jsonl`, found by thread id until hooks name it; usage from `token_count` | Not yet (OpenCode keeps sessions in its SQLite database) | Activity from `$GROK_HOME/sessions/<encoded-cwd>/<session>/updates.jsonl`; usage not parsed yet (`usage.json`) |
+| OSC 7501 status (wrap mode, L1) | Emits it (v2.1.295+) when it detects terminal support | Emits it whenever stdout is a terminal | No | Not yet verified |
 
 "Remote approvals" means: when the person is away, the hook holds the agent's
 permission request while Pilothouse pushes it to a paired device, and the answer
@@ -380,6 +381,134 @@ Only answers without an exit-code form use JSON on stdout.
   program run after each turn with one JSON argument
   (`codex-rs/hooks/src/legacy_notify.rs`, marked for removal). It cannot block
   or answer anything and hooks cover it, so Pilothouse does not install it.
+
+## Grok Build
+
+Source: <https://docs.x.ai/build/features/hooks> and the Grok Build **1.0.70**
+user guide (`~/.grok/docs/user-guide/*.md`, especially `10-hooks.md`,
+`17-sessions.md` and `24-monitoring-usage.md`). The adapter fixtures are built
+from that documentation and a local install; they have **not** yet been
+captured from a live authenticated session.
+
+### What `pilothouse hooks install --agent grok` writes
+
+One personal file, `~/.grok/hooks/pilothouse.json`, merged with anything else
+there and backed up first. Grok also reads `~/.claude/settings.json` and
+`~/.cursor/hooks.json`; Pilothouse never writes those for Grok.
+
+| Event | Matcher | Timeout | Pilothouse kind |
+|---|---|---|---|
+| `SessionStart` | (all) | default | `session_start` |
+| `SessionEnd` | (all) | default | `session_end` |
+| `UserPromptSubmit` | n/a | default | `prompt_submit` |
+| `PreToolUse` | `*` | 30 s | `pre_tool` |
+| `PostToolUse` | `*` | default | `post_tool` |
+| `PostToolUseFailure` | `*` | default | `post_tool` (the tool ran, so the prompt was answered) |
+| `PermissionDenied` | `*` | default | `unknown` (informational; no dialog is waiting) |
+| `Stop` | n/a | default | `stop` |
+| `StopFailure` | n/a | default | `stop` (the error is the message) |
+| `StopCancelled` | n/a | default | `stop` (the reason is the message) |
+| `Notification` | (all) | default | `notification` |
+| `SubagentStart` | (all) | default | `unknown` |
+| `SubagentStop` | (all) | default | `subagent_stop` |
+| `PreCompact` | (all) | default | `pre_compact` |
+| `PostCompact` | (all) | default | `unknown` |
+
+There is **no `PermissionRequest`** event. Grok's hook timeout defaults to 5 s;
+Pilothouse's shim is fast except when a person is answering, so 30 s on
+`PreToolUse` is ample. A malformed answer, crash or timeout **fails open**;
+only an explicit `deny` blocks.
+
+### Folder trust gates every hook
+
+Grok records folder trust in `~/.grok/trusted_folders.toml`. A folder that is
+not trusted loads no personal hooks — including this file — and no project
+hooks. Trust it with `/hooks-trust`, or launch with `--trust` (the grant covers
+MCP, LSP, hooks and project instructions for that repository and its
+subdirectories). The person's home directory, filesystem roots and shared
+temporary directories count as trusted. A headless run (`grok -p …`) counts its
+folder as trusted **for personal hooks only**; project hooks and a project
+agent's own hooks still need trust. `pilothouse hooks install` prints this
+reminder, and `pilothouse hooks status` checks the file itself, not folder
+trust, so a trusted folder is still a per-project step for interactive use.
+
+### Payloads
+
+Grok's native fields are camelCase: `hookEventName`, `sessionId`, `cwd`,
+`workspaceRoot`, `permissionMode`, `toolName`, `toolInput`, `toolUseId`,
+`timestamp`, `promptId`, `transcript_path` and the event-specific fields. It
+also sends Claude's snake_case spellings (`session_id`, `tool_name`,
+`tool_input`, `tool_use_id`, …). The two event-name keys differ:
+
+- `hookEventName` carries Grok's snake_case name (`pre_tool_use`, `stop_failure`).
+- `hook_event_name` carries Claude's PascalCase name (`PreToolUse`).
+
+Pilothouse accepts either and normalizes (`pre_tool_use` → `PreToolUse`).
+`transcript_path` points at the session's `updates.jsonl`.
+
+Tool names are Grok's own, with Claude aliases for matchers:
+`run_terminal_command` (`Bash`), `read_file` (`Read`), `search_replace`,
+`hashline_edit`, `write` (`Edit`/`Write`/`MultiEdit`), `grep` (`Grep`),
+`list_dir` (`Glob`/`LS`), `web_search` (`WebSearch`), `web_fetch` (`Fetch`),
+`spawn_subagent` (`Task`) and the internal `use_tool` / `search_tool`
+dispatchers. MCP calls arrive as `server__tool` (no `mcp__` prefix). Under the
+Cursor preset, `StrReplace` and `Write` use `path` + `contents`, and
+`EditNotebook` uses `target_notebook`; the adapter reads those keys too.
+`toolInput` is capped at 128 KiB with `toolInputTruncated: true` when strings
+were cut.
+
+### Responses
+
+- **`deny`**: `{"decision":"deny","reason":"…"}`; the reason is shown to the
+  model and the call does not run.
+- **`ask`**: `{"decision":"ask","reason":"…"}`; this forces Grok's own
+  permission prompt. It overrides always-approve, auto mode, a saved "always
+  allow" grant and safe-command handling, but a client that blanket-approves
+  every prompt still approves it. An ask cannot widen a permission policy
+  deny, an auto-mode block or plan mode.
+- **`allow`**: `{"decision":"allow"}` only means "not blocked"; it does **not**
+  auto-approve. Pilothouse sends no opinion instead.
+- **`defer`** is "no opinion"; Pilothouse writes no output, which has the same
+  effect without a warning in Grok's log.
+- Exit 2 with a `deny` on stdout keeps the deny. A crash, timeout or malformed
+  reply fails open.
+- `PreToolUse` runs before Grok's plan-mode and permission checks. A bash-mode
+  (`!`) command typed in the TUI raises no hooks at all, so no hook can deny it.
+- Grok's `Stop` can be blocked with `decision: "block"` to keep working;
+  Pilothouse never does that. `UserPromptSubmit` can block a prompt; Pilothouse
+  does not.
+
+Policy `ask` is therefore honest at the desk and **not remote-answerable**:
+there is no permission hook to hold. Away from the desk the terminal prompt
+waits; Pilothouse does not pretend it can answer it from a phone.
+
+### Activity and sessions
+
+Sessions live under `$GROK_HOME/sessions/<url-encoded-cwd>/<session-id>/`.
+`updates.jsonl` is the event stream: each line has
+`{timestamp, method, params:{sessionId, update, _meta:{eventId, agentTimestampMs}}}`,
+where `method` is `session/update` or `_x.ai/session/update` and `update` is an
+ACP update (`user_message_chunk`, `agent_message_chunk`, `agent_thought_chunk`,
+`tool_call`, `tool_call_update`, `plan`, …) or an xAI extension
+(`subagent_spawned`, `task_backgrounded`, `auto_compact_started`,
+`compaction_checkpoint`, `rewind_marker`, …). Older bare `{sessionId, update}`
+lines are accepted. Tool calls carry `toolCallId`, `title`, `kind`, `status`
+(`pending`/`in_progress`/`completed`/`failed`), `rawInput`, `rawOutput` and
+`locations[].path`; diff content blocks carry `{type:"diff",path,oldText,newText}`.
+`usage.json` (camelCase tokens/cost/turns) is not parsed yet, so the activity
+feed has no token usage for Grok.
+
+### Caveats
+
+- No remote approvals and no way to answer Grok's questions or plan approval
+  from Pilothouse.
+- No usage/token numbers yet (`usage.json` is documented but unparsed).
+- Live hook payloads, tool names and the trust flow still need an end-to-end
+  run against an authenticated Grok Build; the parser accepts documented
+  camelCase and Claude-compatible shapes in the meantime.
+- Personal hooks are skipped until each interactive project is trusted; use
+  `/hooks-trust` or `--trust`. Headless `grok -p` runs do not hit this for
+  personal hooks.
 
 ## OpenCode
 

@@ -38,19 +38,21 @@ type testEnv struct {
 	t      testing.TB
 	claude string // …/.claude/projects
 	codex  string // …/.codex/sessions
+	grok   string // …/.grok/sessions
 	opts   Options
 }
 
 func newEnv(t testing.TB) *testEnv {
 	t.Helper()
 	home := t.TempDir()
-	e := &testEnv{t: t, claude: filepath.Join(home, ".claude", "projects"), codex: filepath.Join(home, ".codex", "sessions")}
-	for _, d := range []string{e.claude, e.codex} {
+	e := &testEnv{t: t, claude: filepath.Join(home, ".claude", "projects"), codex: filepath.Join(home, ".codex", "sessions"),
+		grok: filepath.Join(home, ".grok", "sessions")}
+	for _, d := range []string{e.claude, e.codex, e.grok} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
 			t.Fatal(err)
 		}
 	}
-	e.opts = Options{Roots: Roots{Claude: []string{e.claude}, Codex: []string{e.codex}}, Pricer: fakePricer{}, Location: time.UTC}
+	e.opts = Options{Roots: Roots{Claude: []string{e.claude}, Codex: []string{e.codex}, Grok: []string{e.grok}}, Pricer: fakePricer{}, Location: time.UTC}
 	return e
 }
 

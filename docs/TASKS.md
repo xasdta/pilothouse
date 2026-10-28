@@ -154,8 +154,8 @@ From the phone, a task with setup commands appears right away with setup
   same check as approvals). `pilothouse task new` itself runs in your
   terminal like any command — an agent could run it too, just as it could
   run `git worktree add`. A device can only pick a repository from the list
-  above and an agent from Claude Code, Codex and OpenCode — never an
-  arbitrary command. The base branch may not start with `-`.
+  above and an agent from Claude Code, Codex, OpenCode and Grok Build — never
+  an arbitrary command. The base branch may not start with `-`.
 - **Where the agent runs.** The daemon starts the agent in a detached
   holder, so it never runs as a descendant of another agent or of the web
   request; it gets your prompt as data, never as options.

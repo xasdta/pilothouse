@@ -208,7 +208,7 @@ func newPolicyTestCmd() *cobra.Command {
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&f.agent, "agent", string(api.AgentClaude), "agent: claude, codex, opencode or generic")
+	fl.StringVar(&f.agent, "agent", string(api.AgentClaude), "agent: claude, codex, opencode, grok or generic")
 	fl.StringVar(&f.tool, "tool", "", "vendor tool name, e.g. Bash, Edit, Read (inferred when omitted)")
 	fl.StringVar(&f.kind, "kind", "", "shell, edit, read, web, mcp or other (inferred from --tool/--command)")
 	fl.StringVar(&f.command, "command", "", "shell command line")
@@ -280,9 +280,9 @@ func polBuildInput(cmd *cobra.Command, f polTestFlags) (policy.Input, []string, 
 	}
 	agent := api.AgentKind(f.agent)
 	switch agent {
-	case api.AgentClaude, api.AgentCodex, api.AgentOpenCode, api.AgentGeneric:
+	case api.AgentClaude, api.AgentCodex, api.AgentOpenCode, api.AgentGrok, api.AgentGeneric:
 	default:
-		return policy.Input{}, nil, fmt.Errorf("unknown --agent %q (claude, codex, opencode or generic)", f.agent)
+		return policy.Input{}, nil, fmt.Errorf("unknown --agent %q (claude, codex, opencode, grok or generic)", f.agent)
 	}
 	kind := api.ToolKind(f.kind)
 	tool := f.tool
@@ -352,6 +352,21 @@ func polBuildInput(cmd *cobra.Command, f polTestFlags) (policy.Input, []string, 
 func polToolKind(tool string) api.ToolKind { return policy.GuessToolKind(tool) }
 
 func polDefaultTool(agent api.AgentKind, kind api.ToolKind) string {
+	if agent == api.AgentGrok {
+		switch kind {
+		case api.ToolShell:
+			return "run_terminal_cmd"
+		case api.ToolEdit:
+			return "search_replace"
+		case api.ToolRead:
+			return "read_file"
+		case api.ToolWeb:
+			return "web_search"
+		case api.ToolMCP:
+			return "server__tool"
+		}
+		return "tool"
+	}
 	if agent == api.AgentOpenCode {
 		switch kind {
 		case api.ToolShell:

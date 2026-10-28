@@ -96,7 +96,7 @@ type rule struct {
 
 var (
 	knownKinds  = []string{string(api.ToolShell), string(api.ToolEdit), string(api.ToolRead), string(api.ToolWeb), string(api.ToolMCP), string(api.ToolOther)}
-	knownAgents = []string{string(api.AgentClaude), string(api.AgentCodex), string(api.AgentOpenCode), string(api.AgentGeneric)}
+	knownAgents = []string{string(api.AgentClaude), string(api.AgentCodex), string(api.AgentOpenCode), string(api.AgentGrok), string(api.AgentGeneric)}
 	topKeys     = []string{"version", "rules"}
 	ruleKeys    = []string{"name", "description", "match", "when", "action", "message", "agents"}
 	matchKeys   = []string{"agent", "tool", "kind", "command", "path", "cwd", "repo", "branch"}

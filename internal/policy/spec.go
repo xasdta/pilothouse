@@ -55,16 +55,16 @@ func (m *SpecMatcher) Match(in Input) bool {
 // adapters do, for hypothetical calls (`policy test`, the rule tester).
 func GuessToolKind(tool string) api.ToolKind {
 	switch tool {
-	case "Bash", "PowerShell", "shell", "exec_command", "local_shell", "unified_exec", "bash":
+	case "Bash", "PowerShell", "shell", "exec_command", "local_shell", "unified_exec", "bash", "run_terminal_cmd", "run_terminal_command", "terminal":
 		return api.ToolShell
-	case "Write", "Edit", "MultiEdit", "NotebookEdit", "apply_patch", "edit", "write", "multiedit", "patch":
+	case "Write", "Edit", "MultiEdit", "NotebookEdit", "apply_patch", "edit", "write", "multiedit", "patch", "search_replace", "write_file", "edit_file", "str_replace_editor", "str_replace":
 		return api.ToolEdit
-	case "Read", "Glob", "Grep", "LS", "NotebookRead", "view_image", "read", "glob", "grep", "list":
+	case "Read", "Glob", "Grep", "LS", "NotebookRead", "view_image", "read", "glob", "grep", "list", "read_file", "grep_search", "list_dir", "list_files":
 		return api.ToolRead
 	case "WebFetch", "WebSearch", "web_search", "webfetch", "websearch", "codesearch":
 		return api.ToolWeb
 	}
-	if strings.HasPrefix(tool, "mcp__") {
+	if strings.HasPrefix(tool, "mcp__") || strings.Contains(tool, "__") {
 		return api.ToolMCP
 	}
 	return api.ToolOther

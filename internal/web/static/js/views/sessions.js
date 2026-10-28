@@ -47,9 +47,9 @@ export function sessionsView() {
       parts.push(emptyState({
         icon: 'sessions',
         title: 'No sessions yet',
-        text: 'Every Claude Code, Codex and OpenCode session on your computer shows up here, with what it’s doing right now.',
+        text: 'Every Claude Code, Codex, OpenCode and Grok Build session on your computer shows up here, with what it’s doing right now.',
         teach: [
-          ['terminal', 'Start an agent as usual — claude, codex or opencode — and it appears within a second.'],
+          ['terminal', 'Start an agent as usual — claude, codex, opencode or grok — and it appears within a second.'],
           ['reply', 'Start it with pilothouse run to reply and watch its terminal from this device.'],
         ],
         actions: [h('button', { class: 'btn primary small', type: 'button', onclick: () => go('/new') }, 'Start a task')],

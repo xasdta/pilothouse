@@ -414,12 +414,14 @@ func (m *Manager) Launch(ctx context.Context, p *Prepared, t api.Task) (api.Task
 // AgentArgv is the command line that starts an agent on a prompt in the
 // current directory. Claude and Codex take the prompt as their argument
 // (after "--" when it starts with "-", so it is never read as an option);
-// OpenCode reads a bare argument as a project path and takes the prompt
-// with --prompt; any other command gets the prompt as its argument.
+// OpenCode and Grok read a bare argument differently, so their prompt goes
+// through --prompt; any other command gets the prompt as its argument.
 func AgentArgv(kind api.AgentKind, path, prompt string) []string {
 	switch kind {
 	case api.AgentOpenCode:
 		return []string{path, "--prompt=" + prompt}
+	case api.AgentGrok:
+		return []string{path, "--prompt", prompt}
 	case api.AgentClaude, api.AgentCodex:
 		if strings.HasPrefix(prompt, "-") {
 			return []string{path, "--", prompt}

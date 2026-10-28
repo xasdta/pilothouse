@@ -298,6 +298,8 @@ main:has(> .term-view) { max-width: 1100px; }
 .agent-dot { display: inline-block; flex: none; width: 8px; height: 8px; margin-right: 5px; border-radius: 2px; vertical-align: 0; background: var(--agent, var(--generic)); }
 .agent-dot.claude { --agent: var(--claude); }
 .agent-dot.codex { --agent: var(--codex); }
+.agent-dot.opencode { --agent: var(--opencode); }
+.agent-dot.grok { --agent: var(--grok); }
 .agent-dot.generic { --agent: var(--generic); }
 .task-empty-btn { margin-top: 18px; }
 

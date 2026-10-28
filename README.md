@@ -4,8 +4,8 @@
 
 <h1 align="center">Pilothouse</h1>
 
-<p align="center"><b>Steer every coding agent from one place.</b><br>
-One inbox for Claude Code, Codex and OpenCode. Your rules run before every tool call,<br>and anything that needs a person reaches you at your desk or on your phone.</p>
+<p align="center"><b>Steer your coding agents from one place.</b><br>
+One inbox for Claude Code, Codex, OpenCode and Grok Build. Your rules run before every tool call,<br>and anything that needs a person reaches you at your desk or on your phone.</p>
 
 <p align="center">
   <a href="https://pilothouse.dev">Website</a> ·
@@ -32,9 +32,9 @@ You start three agents, walk away, and come back to find two of them stuck on
 a permission prompt since minute four. Or you approve everything to avoid that,
 and one of them force-pushes. Pilothouse fixes both:
 
-- **One inbox.** Every Claude Code, Codex and OpenCode session on the machine,
-  in any terminal, sorted by what needs you. It uses the agents' official hooks
-  (for OpenCode, a small plugin), not screen-scraping.
+- **One inbox.** Every Claude Code, Codex, OpenCode and Grok Build session on
+  the machine, in any terminal, sorted by what needs you. It uses the agents'
+  official hooks (for OpenCode, a small plugin), not screen-scraping.
 - **Rules before every tool call.** Policies in YAML, with optional CEL
   expressions, run at the agent's pre-tool hook: block force-push, ask before
   `git push` to main, keep agents out of `.env`. Any `deny` wins.
@@ -65,9 +65,10 @@ and one of them force-pushes. Pilothouse fixes both:
                                      └─ away ────▶ phone (Web Push / ntfy / Telegram) ─▶ Allow / Deny
 ```
 
-1. `pilothouse setup` installs hooks into Claude Code (`~/.claude/settings.json`)
-   and Codex (`~/.codex/hooks.json`). It shows the exact diff, merges with your
-   existing hooks and writes a backup first. For OpenCode it installs a plugin
+1. `pilothouse setup` installs hooks into Claude Code (`~/.claude/settings.json`),
+   Codex (`~/.codex/hooks.json`) and Grok Build (`~/.grok/hooks/pilothouse.json`).
+   It shows the exact diff, merges with your existing hooks and writes a backup
+   first. For OpenCode it installs a plugin
    (`~/.config/opencode/plugins/pilothouse.js`) and offers to make OpenCode
    ask before shell commands and edits, which it otherwise allows. It then
    starts a small per-user daemon (launchd or systemd) and helps your phone
@@ -285,26 +286,30 @@ steps. See [docs/TASKS.md](docs/TASKS.md).
 
 ## Status
 
-| | Claude Code | Codex | OpenCode |
-|---|---|---|---|
-| Integration | hooks | hooks | plugin |
-| Session state, inbox | ✓ | ✓ | ✓ |
-| Deny rules | ✓ | ✓ | ✓ |
-| Ask rules | ✓ (its prompt) | denied with a note (no prompt from a hook) | held for you in Pilothouse, at the desk too |
-| Remote approvals | ✓ | ✓ | ✓ |
-| Questions from anywhere | ✓ (and plans) | shown, answered in the terminal | ✓ |
+| | Claude Code | Codex | OpenCode | Grok Build |
+|---|---|---|---|---|
+| Integration | hooks | hooks | plugin | hooks (personal) |
+| Session state, inbox | ✓ | ✓ | ✓ | ✓ |
+| Deny rules | ✓ | ✓ | ✓ | ✓ |
+| Ask rules | ✓ (its prompt) | denied with a note (no prompt from a hook) | held for you in Pilothouse, at the desk too | forces Grok's own prompt (at the desk only) |
+| Remote approvals | ✓ | ✓ | ✓ | — (no permission hook) |
+| Questions from anywhere | ✓ (and plans) | shown, answered in the terminal | ✓ | answered in its terminal |
+| Activity and usage | ✓ | ✓ | activity only | activity only |
 
-v0.1 supported **Claude Code** and **Codex**; 0.2 adds Claude Code questions
-and plan approval from anywhere, and **OpenCode** (1.x) through a plugin:
-rules before every tool call, its permission prompts and questions held while
-you're away, and replies from your phone that it takes as your next prompt.
-Codex's `request_user_input` questions show in the inbox but are answered in
-its terminal (no hook can answer them). See [docs/AGENTS.md](docs/AGENTS.md)
-for what each agent supports and why. It runs on **macOS and Linux** (amd64
-and arm64).
+v0.1 supported **Claude Code** and **Codex**; 0.2 added Claude Code questions
+and plan approval from anywhere, and **OpenCode** (1.x) through a plugin.
+0.2.3 adds **Grok Build** through its personal hooks (trust each project once
+with `/hooks-trust`): session state, deny rules, and ask rules that force
+Grok's own prompt at the desk. Grok has no permission-request hook, so its
+approvals, questions and plans stay in its terminal; wrapped Grok sessions
+still take replies, and activity is read from its session updates. Codex's
+`request_user_input` questions show in the inbox but are answered in its
+terminal (no hook can answer them). See [docs/AGENTS.md](docs/AGENTS.md) for
+what each agent supports and why. It runs on **macOS and Linux** (amd64 and
+arm64).
 
-Roadmap: an end-to-end-encrypted relay for people without Tailscale, more agents
-(Copilot, Gemini), team policies, and Windows.
+Roadmap: an end-to-end-encrypted relay for people without Tailscale, more
+agents (Copilot), team policies, and Windows.
 
 ## Build from source
 

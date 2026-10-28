@@ -79,6 +79,8 @@ func KindFromCommand(cmd string) api.AgentKind {
 		return api.AgentCodex
 	case "opencode":
 		return api.AgentOpenCode
+	case "grok", "grok-build":
+		return api.AgentGrok
 	}
 	return api.AgentGeneric
 }

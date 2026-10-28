@@ -39,6 +39,7 @@ var taskAgents = map[api.AgentKind]string{
 	api.AgentClaude:   "claude",
 	api.AgentCodex:    "codex",
 	api.AgentOpenCode: "opencode",
+	api.AgentGrok:     "grok",
 }
 
 // taskAgent resolves the agent a device asked for to the program to run.
@@ -50,7 +51,7 @@ var taskAgents = map[api.AgentKind]string{
 func (d *Daemon) taskAgent(kind api.AgentKind) (string, error) {
 	name, ok := taskAgents[kind]
 	if !ok {
-		return "", core.Invalid("%q can't be started as a task (supported: claude, codex, opencode)", kind)
+		return "", core.Invalid("%q can't be started as a task (supported: claude, codex, opencode, grok)", kind)
 	}
 	ad := d.adapters[kind]
 	path, err := exec.LookPath(name)

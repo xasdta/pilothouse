@@ -137,7 +137,7 @@ func (d *Daemon) Activity(ctx context.Context, sessionID string, q api.ActivityQ
 // source says where a session's transcript is, or why there is none.
 func (st *activityState) source(s api.Session, now time.Time) (transcript.Source, string, bool) {
 	switch s.Agent {
-	case api.AgentClaude, api.AgentCodex:
+	case api.AgentClaude, api.AgentCodex, api.AgentGrok:
 	default:
 		return transcript.Source{}, "Pilothouse can't read this agent's transcript.", false
 	}
@@ -170,6 +170,8 @@ func (st *activityState) find(s api.Session, now time.Time) string {
 		path, _ = transcript.FindCodexRollout(st.roots.Codex, s.AgentSessionID, s.StartedAt, now)
 	case api.AgentClaude:
 		path, _ = transcript.FindClaude(st.roots.Claude, s.AgentSessionID)
+	case api.AgentGrok:
+		path, _ = transcript.FindGrokUpdates(st.roots.Grok, s.AgentSessionID)
 	}
 	st.mu.Lock()
 	st.found[s.ID] = foundPath{path: path, at: now}
