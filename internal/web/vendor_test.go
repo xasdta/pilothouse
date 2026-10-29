@@ -16,6 +16,9 @@ func TestVendoredXtermServed(t *testing.T) {
 		"/vendor/xterm/xterm.css":         "text/css",
 		"/vendor/xterm/LICENSE":           "text/plain",
 		"/vendor/xterm/LICENSE-addon-fit": "text/plain",
+		"/vendor/jsqr/jsQR.js":            "text/javascript",
+		"/vendor/jsqr/LICENSE":            "text/plain",
+		"/js/scan.js":                     "text/javascript",
 		"/js/views/terminal.js":           "text/javascript",
 		"/js/views/session.js":            "text/javascript",
 		"/js/views/tasks.js":              "text/javascript",
@@ -41,7 +44,7 @@ func TestVendoredXtermServed(t *testing.T) {
 
 // Every script the app loads comes from this origin: no CDN URLs.
 func TestViewsLoadNothingCrossOrigin(t *testing.T) {
-	for _, p := range []string{"static/js/views/terminal.js", "static/js/views/session.js", "static/js/views/tasks.js", "static/js/views/insights.js"} {
+	for _, p := range []string{"static/js/scan.js", "static/js/views/pair.js", "static/js/views/terminal.js", "static/js/views/session.js", "static/js/views/tasks.js", "static/js/views/insights.js"} {
 		b, err := staticFS.ReadFile(p)
 		if err != nil {
 			t.Fatal(err)

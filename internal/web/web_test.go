@@ -1334,3 +1334,13 @@ func TestStaticJSUsesNullSafeDOMHelpers(t *testing.T) {
 		t.Fatalf("use fill()/add() from dom.js instead of native DOM insertion:\n%s", strings.Join(bad, "\n"))
 	}
 }
+
+// The pair screen scans QR codes in the app, so the page may use the
+// camera; nothing else may.
+func TestPermissionsPolicyAllowsOnlyCamera(t *testing.T) {
+	e := newEnv(t)
+	pp := e.do("GET", "/pair", nil, reqOpt{}).Header().Get("Permissions-Policy")
+	if !strings.Contains(pp, "camera=(self)") || !strings.Contains(pp, "microphone=()") || !strings.Contains(pp, "geolocation=()") {
+		t.Fatalf("Permissions-Policy = %q", pp)
+	}
+}

@@ -932,6 +932,17 @@ a.setting:hover, button.setting:hover { background: color-mix(in srgb, var(--sur
 .pair-note b { display: block; margin-bottom: 4px; font-size: var(--fs-md); }
 .pair-note p { margin: 0; color: var(--text-2); font-size: var(--fs-base); line-height: 1.45; }
 .pair-ok { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 0 0 18px; color: var(--allow-text); font-weight: 650; font-size: var(--fs-md); }
+.scan-part { display: flex; flex-direction: column; gap: 10px; }
+.scan-part .fineprint { margin: 0; justify-content: center; text-align: center; }
+.scan-btn svg.ic { width: 22px; height: 22px; }
+.or { display: flex; align-items: center; gap: 12px; margin: 8px 0 2px; color: var(--text-3); font-size: var(--fs-sm); }
+.or::before, .or::after { content: ""; flex: 1; height: 1px; background: var(--border-strong); }
+.scan-frame { position: relative; overflow: hidden; border-radius: var(--r); background: #000; aspect-ratio: 1; max-height: 60vh; margin: 0 auto; width: 100%; }
+.scan-frame.off { display: none; }
+.scan-video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.scan-target { position: absolute; inset: 18%; border: 3px solid rgba(255, 255, 255, 0.9); border-radius: 18px; box-shadow: 0 0 0 999px rgba(0, 0, 0, 0.35); }
+.scan-status { display: flex; gap: 8px; align-items: flex-start; margin: 14px 0 4px; font-size: var(--fs-md); color: var(--text-2); text-align: center; justify-content: center; }
+.scan-status.bad { color: var(--deny-text); text-align: left; justify-content: flex-start; }
 .pair .terminal-hint { margin: 0 0 18px; text-align: left; }
 .pair-note .btn { margin-top: 12px; }
 .pair-note svg.ic { flex: none; margin-top: 2px; }

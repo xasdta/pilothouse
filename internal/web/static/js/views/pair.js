@@ -2,6 +2,7 @@ import { h, icon, fill, add } from '../dom.js';
 import { api } from '../api.js';
 import { pushStatus, isIOS, isStandalone } from '../push.js';
 import { passkeySupported, persistStorage, addPasskeyButton } from '../passkey.js';
+import { canScan, scanPairCode } from '../scan.js';
 
 /** A friendly default name: "iPhone", "Pixel", "Chrome on Mac"… */
 export function guessName() {
@@ -69,8 +70,33 @@ export function pairView({ code, mode, name, onDone }) {
       ? h('div', { class: 'code-chip' }, icon('check', 'sm'), h('span', { class: 'sr-only' }, 'Pairing code '), code)
       : codeField('Pairing code'));
   const nameInput = h('input', { class: 'input', id: 'pair-name', value: name || guessName(), maxlength: 60, autocomplete: 'off', required: true });
-  const submit = h('button', { class: 'btn primary block', type: 'submit' }, 'Pair this device');
+  // On a phone, scanning the QR code from inside the app is the easy way
+  // (the iPhone Camera app would open it in Safari instead of here).
+  const scanFirst = !code && canScan() && navigator.maxTouchPoints > 0;
+  const submit = h('button', { class: scanFirst ? 'btn secondary block' : 'btn primary block', type: 'submit' }, 'Pair this device');
+  const scanBtn = scanFirst
+    ? h('button', { class: 'btn primary block big scan-btn', type: 'button' }, icon('scan'), 'Scan QR code')
+    : null;
+  const scanPart = scanFirst
+    ? h('div', { class: 'scan-part' },
+      scanBtn,
+      isIOS() ? h('p', { class: 'fineprint' }, 'Scan here, not with the Camera app — it would open Safari instead of this app.') : null,
+      h('div', { class: 'or', role: 'separator' }, h('span', null, 'or type the code')))
+    : null;
+  if (scanBtn) {
+    scanBtn.addEventListener('click', async () => {
+      const c = await scanPairCode();
+      if (!c) return;
+      codeInput.value = c;
+      form.requestSubmit();
+    });
+    // Typing a code makes Pair the main button.
+    codeInput.addEventListener('input', () => {
+      submit.className = codeInput.value.trim() ? 'btn primary block' : 'btn secondary block';
+    });
+  }
   const form = h('form', { novalidate: true },
+    scanPart,
     codeSlot,
     h('div', null, h('label', { class: 'field-label', for: 'pair-name' }, 'Name this device'), nameInput),
     err,
@@ -113,22 +139,18 @@ export function pairView({ code, mode, name, onDone }) {
         h('b', null, 'Pair inside the Home Screen app'),
         h('p', null, 'iPhone keeps Safari and the Home Screen app separate. Add Pilothouse to your Home Screen first, then pair from the installed app. A key made in Safari cannot sign decisions in the app.')))
     : null;
-  // In the installed iPhone app the camera can't help: a scanned QR code
-  // opens Safari, which has its own storage. Typing the code keeps the key here.
-  const typeNote = repair && isIOS()
-    ? h('div', { class: 'notice pair-note' }, icon('phone', 'sm'),
-      h('div', null,
-        h('b', null, 'Type the code — don’t scan it'),
-        h('p', null, 'On iPhone, scanning the QR code opens Safari instead of this app.')))
-    : null;
   add(root,
     repair
-      ? hero('Pair this device again', 'On your computer, run pilothouse pair. Then type the code it shows below.')
+      ? hero('Pair this device again', scanFirst
+        ? 'On your computer, run pilothouse pair. Then scan the QR code it shows.'
+        : 'On your computer, run pilothouse pair. Then type the code it shows below.')
       : hero('Pair with Pilothouse', code
         ? 'Answer your coding agents from this device when you’re away from your desk.'
-        : 'Run pilothouse pair on your computer and scan the QR code, or type the code here.'),
+        : scanFirst
+          ? 'Run pilothouse pair on your computer, then scan the QR code it shows.'
+          : 'Run pilothouse pair on your computer and type the code it shows.'),
     repair ? h('div', { class: 'terminal-hint' }, h('span', { class: 'prompt' }, '$'), 'pilothouse pair') : null,
-    repair ? typeNote : iosNote,
+    repair ? null : iosNote,
     form,
     h('p', { class: 'fineprint' }, icon('key', 'sm'),
       'A private key is created on this device and never leaves it. Every answer you send is signed with it.'));
@@ -170,6 +192,7 @@ export function pairView({ code, mode, name, onDone }) {
     open.focus();
   }
 
-  if (repair) setTimeout(() => codeInput.focus(), 0);
-  return { el: root, focus: () => (code ? nameInput : codeInput).focus() };
+  // Focusing the field would open the keyboard over the Scan button.
+  if (repair && !scanFirst) setTimeout(() => codeInput.focus(), 0);
+  return { el: root, focus: () => (code ? nameInput : scanBtn || codeInput).focus() };
 }

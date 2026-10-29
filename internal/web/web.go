@@ -274,7 +274,7 @@ func (s *Server) secure(next http.Handler) http.Handler {
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("Cross-Origin-Opener-Policy", "same-origin")
 		h.Set("Cross-Origin-Resource-Policy", "same-origin")
-		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=(), bluetooth=(), interest-cohort=()")
+		h.Set("Permissions-Policy", "camera=(self), microphone=(), geolocation=(), payment=(), usb=(), bluetooth=(), interest-cohort=()")
 		o, ok := s.checkHost(r)
 		if !ok {
 			writeErr(w, http.StatusMisdirectedRequest, "bad_host", "unknown host "+r.Host+" (allowed: localhost or web.public_url)")

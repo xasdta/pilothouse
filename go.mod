@@ -17,6 +17,7 @@ require (
 	golang.org/x/term v0.47.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.61.0
+	rsc.io/qr v0.2.0
 )
 
 require (
@@ -57,7 +58,6 @@ require (
 	modernc.org/libc v1.79.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
-	rsc.io/qr v0.2.0 // indirect
 )
 
 // Bubble Tea v1 queries the terminal from init() in every binary that
