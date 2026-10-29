@@ -92,6 +92,7 @@ async function startApp(me, path) {
   main = main || mountShell(root);
   setNavigator(navigate);
   initKeys();
+  watchKey();
   subscribe((kind) => {
     refreshChrome();
     renderPanes(current);
@@ -109,6 +110,39 @@ async function startApp(me, path) {
   connect();
   syncPush().catch(() => {});
 }
+
+function watchKey() {
+  if (!self.PilothouseKeys || !self.PilothouseKeys.load) return;
+  self.PilothouseKeys.load().then((rec) => {
+    store.keyMissing = !rec;
+    refreshChrome();
+  }).catch(() => {
+    store.keyMissing = true;
+    refreshChrome();
+  });
+}
+
+addEventListener('pilothouse:nokey', () => {
+  store.keyMissing = true;
+  refreshChrome();
+});
+
+// The daemon upgrades behind an app that stays open for days. On resume,
+// compare the version we loaded with the one the server now reports.
+let promptedVersion = '';
+addEventListener('visibilitychange', async () => {
+  if (document.hidden || !store.me || !store.me.version) return;
+  try {
+    const me = await api('GET', '/api/me');
+    if (me.version && me.version !== store.me.version && me.version !== promptedVersion) {
+      promptedVersion = me.version;
+      toast('Pilothouse was updated on your computer.', '', {
+        action: { label: 'Reload', run: () => location.reload() },
+        ms: 60000,
+      });
+    }
+  } catch { /* offline: the reconnect path handles it */ }
+});
 
 async function boot() {
   registerSW();

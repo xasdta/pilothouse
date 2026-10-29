@@ -199,9 +199,10 @@ export function settingsView() {
     });
     fill(device,
       h('div', { class: 'group-pad' }, h('label', { class: 'field-label', for: 'device-name' }, 'Name'), form),
-      h('div', { class: 'setting' }, tile('green', 'key'),
-        h('div', { class: 'label' }, h('b', null, 'Signing key'), h('span', null, 'Kept on this device; signs every answer, reply and rule')),
-        h('div', { class: 'value' }, 'P-256')),
+      h('div', { class: 'setting' }, tile(store.keyMissing ? 'amber' : 'green', 'key'),
+        h('div', { class: 'label' }, h('b', null, 'Signing key'),
+          h('span', null, store.keyMissing ? 'Missing — approvals and replies cannot be signed' : 'Kept on this device; signs every answer, reply and rule')),
+        store.keyMissing ? link('/pair', { class: 'value' }, 'Pair again') : h('div', { class: 'value' }, 'P-256')),
       h('div', { class: 'setting' }, tile('gray', 'phone'),
         h('div', { class: 'label' }, h('b', null, 'Paired'), h('span', null, new Date(d.created_at).toLocaleDateString())),
         h('div', { class: 'value' }, agoLong(d.created_at))));
@@ -215,7 +216,10 @@ export function settingsView() {
         h('div', { class: 'value' }, /^\d/.test(me.version) ? 'v' + me.version : me.version)),
       h('div', { class: 'setting' }, tile('gray', 'link'),
         h('div', { class: 'label' }, h('b', null, 'Address'), h('span', { class: 'mono' }, location.origin)),
-        h('div', { class: 'value' }, me.public_url ? 'Tailnet' : 'Local only')));
+        h('div', { class: 'value' }, me.public_url ? 'Tailnet' : 'Local only')),
+      h('div', { class: 'setting' }, tile('blue', 'auto'),
+        h('div', { class: 'label' }, h('b', null, 'Reload the app'), h('span', null, 'Pick up an update after Pilothouse is upgraded on your computer')),
+        h('button', { class: 'btn small', type: 'button', onclick: () => location.reload() }, 'Reload')));
   }
 
   function about() {

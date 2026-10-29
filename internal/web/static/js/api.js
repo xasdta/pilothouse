@@ -67,6 +67,7 @@ export const store = {
   presence: null,
   rulesRev: 0,
   conn: 'connecting', // live | connecting | offline
+  keyMissing: false, // signed in, but this browser lost the device key
   loaded: false,
 };
 

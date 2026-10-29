@@ -56,6 +56,10 @@
     return tx('readonly', function (st) { return st.get(KEY); });
   }
 
+  function noKey() {
+    try { g.dispatchEvent(new g.Event('pilothouse:nokey')); } catch (e) { /* older browser */ }
+  }
+
   /** Creates a fresh key pair (replacing any old one); resolves to the SPKI. */
   function create() {
     var subtle = g.crypto && g.crypto.subtle;
@@ -81,6 +85,7 @@
     scope = scope || 'once';
     return load().then(function (rec) {
       if (!rec || !rec.privateKey) {
+        noKey();
         return { ok: false, status: 0, data: { code: 'no_key', error: 'This device has no signing key. Pair it again.' } };
       }
       var ts = Date.now();
@@ -123,6 +128,7 @@
     var text = JSON.stringify(payload === undefined ? {} : payload);
     return load().then(function (rec) {
       if (!rec || !rec.privateKey) {
+        noKey();
         var e = new Error('This device has no signing key. Pair it again.');
         e.code = 'no_key';
         throw e;

@@ -208,11 +208,22 @@ export function refreshChrome() {
     c.title = connLabel;
   }
   el.machine.textContent = store.machine || '';
-  const showBanner = store.loaded && store.conn !== 'live';
-  el.banner.classList.toggle('show', showBanner);
-  fill(el.banner,
-    icon(store.conn === 'offline' ? 'wifiOff' : 'hourglass', 'sm'),
-    store.conn === 'offline' ? `Can’t reach ${store.machine || 'your computer'} — retrying` : 'Reconnecting…');
+  // A missing signing key is more urgent than a reconnect: decisions cannot
+  // be sent at all until this device is paired again.
+  el.banner.classList.toggle('key', !!store.keyMissing);
+  if (store.keyMissing) {
+    el.banner.classList.add('show');
+    fill(el.banner,
+      icon('key', 'sm'),
+      h('span', null, h('b', null, 'Pair this device again'), ' — its signing key is missing.'),
+      link('/pair', { class: 'btn small' }, 'Pair'));
+  } else {
+    const showBanner = store.loaded && store.conn !== 'live';
+    el.banner.classList.toggle('show', showBanner);
+    fill(el.banner,
+      icon(store.conn === 'offline' ? 'wifiOff' : 'hourglass', 'sm'),
+      store.conn === 'offline' ? `Can’t reach ${store.machine || 'your computer'} — retrying` : 'Reconnecting…');
+  }
   let n = 0;
   for (const r of store.requests.values()) if (r.status === 'open') n++;
   for (const b of [el.badge, el.navBadge]) {

@@ -1,6 +1,6 @@
 import { h, icon, fill, add } from '../dom.js';
 import { api } from '../api.js';
-import { pushStatus } from '../push.js';
+import { pushStatus, isIOS, isStandalone } from '../push.js';
 
 /** A friendly default name: "iPhone", "Pixel", "Chrome on Mac"… */
 export function guessName() {
@@ -103,10 +103,17 @@ export function pairView({ code, mode, onDone }) {
     }
   });
 
+  const iosNote = isIOS() && !isStandalone()
+    ? h('div', { class: 'notice pair-note' }, icon('phone', 'sm'),
+      h('div', null,
+        h('b', null, 'Pair inside the Home Screen app'),
+        h('p', null, 'iPhone keeps Safari and the Home Screen app separate. Add Pilothouse to your Home Screen first, then pair from the installed app. A key made in Safari cannot sign decisions in the app.')))
+    : null;
   add(root,
     hero('Pair with Pilothouse', code
       ? 'Answer your coding agents from this device when you’re away from your desk.'
       : 'Run pilothouse pair on your computer and scan the QR code, or type the code here.'),
+    iosNote,
     form,
     h('p', { class: 'fineprint' }, icon('key', 'sm'),
       'A private key is created on this device and never leaves it. Every answer you send is signed with it.'));
