@@ -86,6 +86,8 @@ type Server struct {
 	lastSeen map[string]time.Time
 	pruned   time.Time
 
+	challenges map[string]passkeyChallenge // passkey.go; guarded by mu
+
 	pubMu      sync.Mutex
 	pubURL     string
 	pubMtime   time.Time
@@ -336,6 +338,9 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /api/push/test", a(csrf(s.handlePushTest)))
 	mux.HandleFunc("PATCH /api/device", a(csrf(s.handleRename)))
 	mux.HandleFunc("POST /api/logout", a(csrf(s.handleLogout)))
+	mux.HandleFunc("POST /api/passkeys/challenge", a(csrf(s.handlePasskeyChallenge)))
+	mux.HandleFunc("POST /api/passkeys", a(csrf(s.handlePasskeyAdd)))
+	mux.HandleFunc("POST /api/device/restore", a(csrf(s.handleRestore)))
 	s.routesV02(mux, a)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "not_found", "no such endpoint")

@@ -4,6 +4,7 @@ import { toast, refreshChrome, link, setTheme, theme, isWide } from '../ui.js';
 import { pushStatus, enablePush, disablePush } from '../push.js';
 import { openHelp } from '../palette.js';
 import { section } from './rows.js';
+import { passkeySupported, addPasskeyButton, restoreKeyButton } from '../passkey.js';
 
 export function settingsView() {
   const root = h('div', { class: 'view settings' });
@@ -202,7 +203,19 @@ export function settingsView() {
       h('div', { class: 'setting' }, tile(store.keyMissing ? 'amber' : 'green', 'key'),
         h('div', { class: 'label' }, h('b', null, 'Signing key'),
           h('span', null, store.keyMissing ? 'Missing — approvals and replies cannot be signed' : 'Kept on this device; signs every answer, reply and rule')),
-        store.keyMissing ? link('/pair', { class: 'value' }, 'Pair again') : h('div', { class: 'value' }, 'P-256')),
+        !store.keyMissing ? h('div', { class: 'value' }, 'P-256')
+          : d.passkey && passkeySupported() ? restoreKeyButton('btn small secondary', renderDevice)
+            : link('/pair', { class: 'value' }, 'Pair again')),
+      passkeySupported()
+        ? h('div', { class: 'setting' }, tile(d.passkey ? 'green' : 'gray', 'shield'),
+          h('div', { class: 'label' }, h('b', null, 'Passkey'),
+            h('span', null, d.passkey
+              ? 'On — restores the signing key with Face ID or Touch ID if this device clears it'
+              : 'Lets Face ID or Touch ID restore the signing key if this device clears it')),
+          d.passkey ? h('div', { class: 'value' }, 'On')
+            : store.keyMissing ? h('div', { class: 'value' }, 'Pair again first')
+              : addPasskeyButton('btn small secondary', renderDevice))
+        : null,
       h('div', { class: 'setting' }, tile('gray', 'phone'),
         h('div', { class: 'label' }, h('b', null, 'Paired'), h('span', null, new Date(d.created_at).toLocaleDateString())),
         h('div', { class: 'value' }, agoLong(d.created_at))));

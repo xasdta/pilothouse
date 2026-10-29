@@ -33,6 +33,7 @@ const SHELL = [
   '/js/markdown.js',
   '/js/palette.js',
   '/js/panes.js',
+  '/js/passkey.js',
   '/js/push.js',
   '/js/ui.js',
   '/js/views/inbox.js',

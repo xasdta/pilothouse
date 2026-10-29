@@ -82,7 +82,8 @@ and one of them force-pushes. Pilothouse fixes both:
    back with feedback is revised).
 4. Your phone runs a small web app served by your own machine. Pair it with a
    QR code. Each device keeps a non-extractable signing key, and every remote
-   approval is signed.
+   approval is signed. Add a passkey after pairing and, if iOS clears the app's
+   storage, Face ID or Touch ID can restore the key without pairing again.
 
 ## Everyday use
 

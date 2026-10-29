@@ -322,7 +322,7 @@ button.chip:active { transform: scale(0.97); }
   opacity: 0; pointer-events: none; transition: opacity var(--dur-2), transform var(--dur-2) var(--ease);
 }
 .banner.show { opacity: 1; transform: translate(-50%, 0); }
-.banner.key { max-width: calc(100vw - 28px); border-radius: 14px; padding: 8px 8px 8px 13px; }
+.banner.key { width: max-content; max-width: calc(100vw - 28px); border-radius: 14px; padding: 8px 8px 8px 13px; }
 .banner.key.show { pointer-events: auto; }
 .banner.key .btn { flex: none; height: 32px; padding: 0 11px; font-size: 13px; }
 .banner.key > span:first-of-type { min-width: 0; }
@@ -923,6 +923,7 @@ a.setting:hover, button.setting:hover { background: color-mix(in srgb, var(--sur
 .pair-note { margin: 0 0 18px; padding: 12px 14px; border: 1px solid var(--accent-line); border-radius: 12px; background: var(--accent-soft); color: var(--accent-text); }
 .pair-note b { display: block; margin-bottom: 2px; }
 .pair-note p { margin: 0; color: var(--text-2); font-size: 0.85rem; }
+.pair-note .btn { margin-top: 10px; }
 .pair-note svg.ic { flex: none; margin-top: 2px; }
 .pair-actions { display: grid; gap: 10px; }
 .code-chip {

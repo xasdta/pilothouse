@@ -1,6 +1,7 @@
 import { h, icon, fill, add } from '../dom.js';
 import { api } from '../api.js';
 import { pushStatus, isIOS, isStandalone } from '../push.js';
+import { passkeySupported, persistStorage, addPasskeyButton } from '../passkey.js';
 
 /** A friendly default name: "iPhone", "Pixel", "Chrome on Mac"… */
 export function guessName() {
@@ -37,6 +38,7 @@ export function pairView({ code, mode, onDone }) {
   async function redeem(c, name) {
     if (!self.PilothouseKeys) throw new Error('Keys unavailable');
     const publicKey = await self.PilothouseKeys.create();
+    persistStorage();
     return api('POST', '/api/pair', { code: c, name, public_key: publicKey });
   }
 
@@ -128,11 +130,20 @@ export function pairView({ code, mode, onDone }) {
       offerNotifications
         ? h('button', { class: 'btn secondary block', type: 'button', onclick: () => onDone(me, true) }, 'Set up notifications')
         : null);
+    // A passkey lets Face ID restore the signing key if iOS clears it.
+    const passkey = passkeySupported()
+      ? h('div', { class: 'notice pair-note' }, icon('key', 'sm'),
+        h('div', null,
+          h('b', null, 'Keep this pairing if iOS clears the app'),
+          h('p', null, 'Add a passkey and Face ID or Touch ID can restore this device’s signing key — no need to pair again.'),
+          addPasskeyButton('btn small secondary', (m) => { me = m; passkey.replaceWith(h('p', { class: 'fineprint' }, icon('check', 'sm'), 'Passkey added.')); })))
+      : null;
     fill(root,
       h('div', { class: 'pair-hero' },
         h('div', { class: 'done-mark' }, icon('check')),
         h('h1', null, 'You’re paired'),
         h('p', null, `${me.device.name} can now answer for ${me.machine}.`)),
+      passkey,
       actions,
       offerNotifications
         ? h('p', { class: 'fineprint' }, icon('bell', 'sm'), 'You can turn on notifications later in Settings.')

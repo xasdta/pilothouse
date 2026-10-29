@@ -7,6 +7,7 @@ import { h, fill } from './dom.js';
 import { api, store, subscribe, resync, connect } from './api.js';
 import { mountShell, chrome, refreshChrome, setNavigator, toast, onLayout } from './ui.js';
 import { syncPush } from './push.js';
+import { persistStorage } from './passkey.js';
 import { renderPanes } from './panes.js';
 import { initKeys, refreshSelection } from './palette.js';
 import { inboxView } from './views/inbox.js';
@@ -93,6 +94,7 @@ async function startApp(me, path) {
   setNavigator(navigate);
   initKeys();
   watchKey();
+  persistStorage();
   subscribe((kind) => {
     refreshChrome();
     renderPanes(current);

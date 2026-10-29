@@ -60,17 +60,29 @@
     try { g.dispatchEvent(new g.Event('pilothouse:nokey')); } catch (e) { /* older browser */ }
   }
 
-  /** Creates a fresh key pair (replacing any old one); resolves to the SPKI. */
-  function create() {
+  /**
+   * Makes a fresh key pair without storing it; resolves to the record
+   * {privateKey, publicKey, spki, created}. save() stores it.
+   */
+  function generate() {
     var subtle = g.crypto && g.crypto.subtle;
     if (!subtle) return Promise.reject(new Error('This browser cannot create keys here (a secure https connection is required).'));
     return subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign', 'verify'])
       .then(function (pair) {
         return subtle.exportKey('spki', pair.publicKey).then(function (spki) {
-          var rec = { privateKey: pair.privateKey, publicKey: pair.publicKey, spki: b64url(spki), created: Date.now() };
-          return tx('readwrite', function (st) { return st.put(rec, KEY); }).then(function () { return rec.spki; });
+          return { privateKey: pair.privateKey, publicKey: pair.publicKey, spki: b64url(spki), created: Date.now() };
         });
       });
+  }
+
+  /** Stores rec as this device's key (replacing any old one); resolves to the SPKI. */
+  function save(rec) {
+    return tx('readwrite', function (st) { return st.put(rec, KEY); }).then(function () { return rec.spki; });
+  }
+
+  /** Creates and stores a fresh key pair; resolves to the SPKI. */
+  function create() {
+    return generate().then(save);
   }
 
   function clear() {
@@ -175,7 +187,7 @@
   }
 
   g.PilothouseKeys = {
-    load: load, create: create, clear: clear, canonical: canonical, decide: decide,
+    load: load, generate: generate, save: save, create: create, clear: clear, canonical: canonical, decide: decide,
     canonicalAction: canonicalAction, signAction: signAction, postSigned: postSigned, respond: respond
   };
 })(self);

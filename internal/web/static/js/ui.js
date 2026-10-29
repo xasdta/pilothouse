@@ -19,6 +19,7 @@
 
 import { h, icon, appIcon, fill, add } from './dom.js';
 import { store } from './api.js';
+import { passkeySupported, restoreKeyButton } from './passkey.js';
 
 let navigateFn = () => {};
 export function setNavigator(fn) { navigateFn = fn; }
@@ -213,11 +214,19 @@ export function refreshChrome() {
   el.banner.classList.toggle('key', !!store.keyMissing);
   if (store.keyMissing) {
     el.banner.classList.add('show');
-    fill(el.banner,
-      icon('key', 'sm'),
-      h('span', null, h('b', null, 'Pair this device again'), ' — its signing key is missing.'),
-      link('/pair', { class: 'btn small' }, 'Pair'));
+    // A passkey can vouch for a new key right here; otherwise pair again.
+    const canRestore = !!(store.me && store.me.device.passkey) && passkeySupported();
+    if (el.banner.dataset.key !== String(canRestore)) {
+      el.banner.dataset.key = String(canRestore);
+      fill(el.banner,
+        icon('key', 'sm'),
+        canRestore
+          ? h('span', null, h('b', null, 'Signing key missing'), ' — restore it with your passkey.')
+          : h('span', null, h('b', null, 'Pair this device again'), ' — its signing key is missing.'),
+        canRestore ? restoreKeyButton('btn small') : link('/pair', { class: 'btn small' }, 'Pair'));
+    }
   } else {
+    delete el.banner.dataset.key;
     const showBanner = store.loaded && store.conn !== 'live';
     el.banner.classList.toggle('show', showBanner);
     fill(el.banner,

@@ -273,6 +273,7 @@ type Device struct {
 	Name       string     `json:"name"`
 	PublicKey  string     `json:"public_key"` // base64url SPKI, ECDSA P-256
 	PushOK     bool       `json:"push_ok"`    // has a Web Push subscription
+	Passkey    bool       `json:"passkey"`    // has a passkey that can restore its signing key
 	CreatedAt  time.Time  `json:"created_at"`
 	LastSeenAt *time.Time `json:"last_seen_at,omitempty"`
 	RevokedAt  *time.Time `json:"revoked_at,omitempty"`

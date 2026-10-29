@@ -283,6 +283,9 @@ func (s *Server) revoke(ctx context.Context, id string) error {
 	if _, err := s.d.DB.ExecContext(ctx, `DELETE FROM web_push_subs WHERE device_id = ?`, id); err != nil {
 		return err
 	}
+	if _, err := s.d.DB.ExecContext(ctx, `DELETE FROM web_passkeys WHERE device_id = ?`, id); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	for _, cancel := range s.streams[id] {
 		cancel()

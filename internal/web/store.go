@@ -60,6 +60,18 @@ CREATE TABLE IF NOT EXISTS web_action_tokens (
 );
 CREATE INDEX IF NOT EXISTS web_action_tokens_request ON web_action_tokens(request_id);
 `,
+	2: `
+CREATE TABLE IF NOT EXISTS web_passkeys (
+	cred_id      TEXT PRIMARY KEY,
+	device_id    TEXT NOT NULL REFERENCES web_devices(id) ON DELETE CASCADE,
+	rp_id        TEXT NOT NULL,
+	public_key   TEXT NOT NULL,
+	sign_count   INTEGER NOT NULL DEFAULT 0,
+	created_at   INTEGER NOT NULL,
+	last_used_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS web_passkeys_device ON web_passkeys(device_id);
+`,
 }
 
 func migrate(ctx context.Context, db *sql.DB) error {
@@ -163,13 +175,14 @@ type deviceRow struct {
 }
 
 const deviceCols = `d.id, d.name, d.public_key, d.token_hash, d.created_at, d.last_seen_at, d.revoked_at,
-	EXISTS (SELECT 1 FROM web_push_subs p WHERE p.device_id = d.id)`
+	EXISTS (SELECT 1 FROM web_push_subs p WHERE p.device_id = d.id),
+	EXISTS (SELECT 1 FROM web_passkeys k WHERE k.device_id = d.id)`
 
 func scanDevice(sc interface{ Scan(...any) error }) (*deviceRow, error) {
 	var d deviceRow
 	var created int64
 	var seen, revoked sql.NullInt64
-	if err := sc.Scan(&d.ID, &d.Name, &d.PublicKey, &d.tokenHash, &created, &seen, &revoked, &d.PushOK); err != nil {
+	if err := sc.Scan(&d.ID, &d.Name, &d.PublicKey, &d.tokenHash, &created, &seen, &revoked, &d.PushOK, &d.Passkey); err != nil {
 		return nil, err
 	}
 	d.CreatedAt = time.UnixMilli(created).UTC()
