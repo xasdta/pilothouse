@@ -53,14 +53,14 @@ const before = (await me()).device.public_key;
 await page.evaluate(() => self.PilothouseKeys.clear());
 await page.reload({ waitUntil: 'domcontentloaded' });
 await page.waitForSelector('main .page-title', { timeout: 15000 });
-check('banner offers Restore', await waitText(page, 'restore it with your passkey', 8000, '.banner'));
+check('key card offers Restore', await waitText(page, 'Restore with passkey', 8000, '.attention'));
 await sleep(500); // the restore challenge is fetched before the tap
 await shot(page, '14-passkey-banner');
-const restoreBtn = await page.waitForSelector('.banner.key button:not([disabled])', { timeout: 5000 });
+const restoreBtn = await page.waitForSelector('.attention button:not([disabled])', { timeout: 5000 });
 await restoreBtn.click();
 check('toast: key restored', await waitText(page, 'Signing key restored', 8000));
 await sleep(300);
-check('banner gone', await page.$eval('.banner', (b) => !b.classList.contains('key')));
+check('key card gone', await page.$eval('.attention', (b) => b.hidden));
 const after = await me();
 const local = await page.evaluate(() => self.PilothouseKeys.load().then((r) => r && r.spki));
 check('daemon holds a new key', after.device.public_key && after.device.public_key !== before);
@@ -79,8 +79,28 @@ await page3.setViewport(PHONE);
 await page3.goto(`${base}/pair#${code}`, { waitUntil: 'networkidle0' });
 await page3.waitForSelector('#pair-name');
 await page3.click('button[type=submit]');
-check('pair done screen offers a passkey', await waitText(page3, 'Keep this pairing if iOS clears the app', 8000));
+check('pair done screen offers a passkey', await waitText(page3, 'One more step: add a passkey', 8000));
 await shot(page3, '14-passkey-pair-done');
+
+// ---- Without a passkey, "Pair again" opens a pair form inside the app ----
+await page3.evaluate(() => [...document.querySelectorAll('button')].find((b) => b.innerText.includes('Open inbox')).click());
+await page3.waitForSelector('main .page-title', { timeout: 10000 });
+await page3.evaluate(() => self.PilothouseKeys.clear());
+await page3.reload({ waitUntil: 'domcontentloaded' });
+check('key card offers Pair again', await waitText(page3, 'Pair again', 8000, '.attention'));
+await shot(page3, '14-key-card-pair');
+await page3.click('.attention a.btn');
+check('Pair again shows the code field', !!(await page3.waitForSelector('#pair-code', { timeout: 5000 }).catch(() => null)));
+const oldMe = await page3.evaluate(() => fetch('/api/me').then((r) => r.json()));
+await page3.type('#pair-code', (await (await fetch(demo.admin + '/v1/pair', { method: 'POST' })).json()).code);
+await page3.click('button[type=submit]');
+check('pair again → paired', await waitText(page3, 'You’re paired', 8000));
+await page3.evaluate(() => [...document.querySelectorAll('button')].find((b) => b.innerText.includes('Open inbox')).click());
+await sleep(800);
+const newMe = await page3.evaluate(() => fetch('/api/me').then((r) => r.json()));
+check('pair again replaced the device', newMe.device && newMe.device.id !== oldMe.device.id);
+check('key card gone after pairing again', await page3.$eval('.attention', (b) => b.hidden));
+check('this browser has a key again', await page3.evaluate(() => self.PilothouseKeys.load().then((r) => !!r)));
 
 // ---- IP-address URLs can't use passkeys ----
 const link2 = await (await fetch(demo.admin + '/v1/login-link', { method: 'POST' })).json();

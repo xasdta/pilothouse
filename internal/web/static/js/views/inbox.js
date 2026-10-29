@@ -109,11 +109,10 @@ export function inboxView() {
       const d = in1.days && in1.days[in1.days.length - 1];
       if (!d) return;
       const chip = (value, label, cls = '') => link('/insights', { class: 'stat-chip ' + cls }, h('b', null, value), label);
+      // Two numbers only; the rest is one tap away on Insights.
       fill(today,
         chip(money(d.usage.cost_usd), 'spent today'),
-        chip(String(d.auto_allowed), 'auto-allowed', 'good'),
-        chip(String(d.asked), 'asked you'),
-        d.blocked ? chip(String(d.blocked), 'blocked') : null);
+        chip(String(d.auto_allowed), 'auto-allowed', 'good'));
       today.hidden = false;
     } catch {
       today.hidden = true; // no insights on this daemon

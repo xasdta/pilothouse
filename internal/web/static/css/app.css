@@ -25,7 +25,7 @@
   --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI Variable Display", "Segoe UI", system-ui, Roboto, "Helvetica Neue", Arial, sans-serif;
   --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, "Cascadia Mono", "JetBrains Mono", "Roboto Mono", Consolas, monospace;
 
-  --fs-xs: 12px; --fs-sm: 13px; --fs-base: 14px; --fs-md: 15px; --fs-lg: 17px; --fs-xl: 20px; --fs-2xl: 24px; --fs-3xl: 30px;
+  --fs-xs: 13px; --fs-sm: 14px; --fs-base: 15px; --fs-md: 16px; --fs-lg: 17px; --fs-xl: 20px; --fs-2xl: 24px; --fs-3xl: 30px;
   --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 20px; --s6: 24px; --s8: 32px;
   --r-sm: 10px; --r: 14px; --r-lg: 18px; --r-pill: 999px;
   --radius: var(--r-lg); --radius-sm: 12px; /* 0.1 names */
@@ -322,10 +322,18 @@ button.chip:active { transform: scale(0.97); }
   opacity: 0; pointer-events: none; transition: opacity var(--dur-2), transform var(--dur-2) var(--ease);
 }
 .banner.show { opacity: 1; transform: translate(-50%, 0); }
-.banner.key { width: max-content; max-width: calc(100vw - 28px); border-radius: 14px; padding: 8px 8px 8px 13px; }
-.banner.key.show { pointer-events: auto; }
-.banner.key .btn { flex: none; height: 32px; padding: 0 11px; font-size: 13px; }
-.banner.key > span:first-of-type { min-width: 0; }
+/* Something blocks answering from this device (a lost signing key): a card
+   at the top of every page, with large type and one large button. */
+.attention {
+  margin: 4px 0 20px; padding: 18px; border-radius: var(--r-lg);
+  background: var(--surface); border: 1.5px solid var(--warn); box-shadow: var(--shadow);
+}
+.attention[hidden] { display: none; }
+.attention-head { display: flex; gap: 14px; align-items: flex-start; margin-bottom: 16px; }
+.attention-head .icon-tile { flex: none; }
+.attention h2 { margin: 0 0 4px; font-size: var(--fs-lg); line-height: 1.3; color: var(--text); }
+.attention p { margin: 0; font-size: var(--fs-md); line-height: 1.45; color: var(--text-2); }
+.btn.big { min-height: 52px; font-size: var(--fs-lg); }
 
 main {
   max-width: 720px; margin: 0 auto;
@@ -920,10 +928,12 @@ a.setting:hover, button.setting:hover { background: color-mix(in srgb, var(--sur
 .pair-hero h1 { margin: 0; font-size: var(--fs-3xl); letter-spacing: -0.025em; line-height: 1.15; }
 .pair-hero p { margin: 8px auto 0; max-width: 330px; color: var(--text-2); font-size: 16px; }
 .pair form { display: flex; flex-direction: column; gap: 14px; }
-.pair-note { margin: 0 0 18px; padding: 12px 14px; border: 1px solid var(--accent-line); border-radius: 12px; background: var(--accent-soft); color: var(--accent-text); }
-.pair-note b { display: block; margin-bottom: 2px; }
-.pair-note p { margin: 0; color: var(--text-2); font-size: 0.85rem; }
-.pair-note .btn { margin-top: 10px; }
+.pair-note { margin: 0 0 18px; padding: 14px 16px; border: 1px solid var(--border-strong); border-radius: var(--r); background: var(--surface); color: var(--text); }
+.pair-note b { display: block; margin-bottom: 4px; font-size: var(--fs-md); }
+.pair-note p { margin: 0; color: var(--text-2); font-size: var(--fs-base); line-height: 1.45; }
+.pair-ok { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 0 0 18px; color: var(--allow-text); font-weight: 650; font-size: var(--fs-md); }
+.pair .terminal-hint { margin: 0 0 18px; text-align: left; }
+.pair-note .btn { margin-top: 12px; }
 .pair-note svg.ic { flex: none; margin-top: 2px; }
 .pair-actions { display: grid; gap: 10px; }
 .code-chip {
@@ -945,7 +955,7 @@ input.code-input { font-family: var(--mono); letter-spacing: 0.12em; text-transf
 .terminal-hint .prompt { color: var(--code-dim); margin-right: 8px; }
 
 /* ---------- Inbox extras ---------- */
-.today { display: flex; gap: 8px; margin: 0 -16px 4px; padding: 2px 16px 10px; overflow-x: auto; scrollbar-width: none; }
+.today { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 4px; padding: 2px 0 10px; }
 .today::-webkit-scrollbar { display: none; }
 .hint-card { display: flex; align-items: center; gap: 12px; margin: 8px 0 0; padding: 14px 16px; border-radius: var(--r-lg); border: 1px dashed var(--border-strong); color: var(--text-2); font-size: var(--fs-base); }
 .hint-card svg.ic { color: var(--warn-text); flex: none; }

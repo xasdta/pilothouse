@@ -213,6 +213,19 @@ func (s *Server) handlePair(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteStrictMode,
 	})
 	writeJSON(w, http.StatusOK, s.me(d))
+	// Pairing again from a signed-in browser (its key was lost) replaces
+	// the old device. Revoke it only after the new cookie has gone out, so
+	// the app's live stream reconnects as the new device.
+	if old := s.authenticate(r); old != nil {
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		if err := s.revoke(context.WithoutCancel(r.Context()), old.ID); err != nil {
+			s.log.Warn("revoke replaced device", "device", old.ID, "err", err)
+		} else {
+			s.log.Info("device replaced", "old", old.ID, "new", id)
+		}
+	}
 }
 
 func (s *Server) me(d *deviceRow) meResponse {

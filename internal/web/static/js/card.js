@@ -26,7 +26,7 @@
 //   highlightShell(cmd) → nodes
 //   openRuleSheet(req)              the "Make it a rule" sheet
 
-import { h, icon, agentBadge, agentClass, agentName, repoName, ago, left, toMs, requestVerb, grantPrefix, vibrate, relPath, fill, add, richText, uid } from './dom.js';
+import { h, icon, agentBadge, agentClass, agentName, repoName, ago, toMs, requestVerb, grantPrefix, vibrate, relPath, fill, add, richText, uid } from './dom.js';
 import { store, api, changed, signed } from './api.js';
 import { toast, openSheet, go, link, skeleton } from './ui.js';
 import { diffView } from './diff.js';
@@ -167,9 +167,9 @@ function pathsBlock(req) {
   return pre;
 }
 
-function details(req) {
+function details(req, maxLines = 24) {
   if (req.tool_kind === 'shell' && req.command) return commandView(req.command);
-  if (req.preview && req.preview.files && req.preview.files.length) return diffView(req.preview, { cwd: req.cwd, maxLines: 24 });
+  if (req.preview && req.preview.files && req.preview.files.length) return diffView(req.preview, { cwd: req.cwd, maxLines });
   if (req.paths && req.paths.length) return pathsBlock(req);
   if (req.tool_kind === 'web') return h('pre', { class: 'code', tabindex: '0' }, inputField(req, 'url', 'query') || req.summary || req.tool);
   let text = req.summary || req.tool;
@@ -570,7 +570,10 @@ function build(req, opts) {
     els.timer.classList.toggle('low', low);
     els.left.classList.toggle('low', low);
     els.left.hidden = false;
-    fill(els.left, icon('clock', 'sm'), rem > 0 ? 'Hands back in ' + left(current.expires_at, now) : 'Handing back…');
+    // Minutes, not a ticking clock: the text changes once a minute.
+    const mins = Math.ceil(rem / 60000);
+    fill(els.left, icon('clock', 'sm'), rem <= 0 ? 'Time’s up — handing back…'
+      : low ? 'Less than a minute left' : `${mins} min left to answer`);
   }
 
   let renderedBodyFor = '';
@@ -594,7 +597,7 @@ function build(req, opts) {
       // The details only change if the request itself does (a new id never reuses a card).
       const sig = r.id + (r.preview ? r.preview.files.length : '') + (r.command || '');
       if (sig !== renderedBodyFor) {
-        fill(els.body, details(r));
+        fill(els.body, details(r, opts.keep ? 24 : 10)); // the inbox shows a short diff
         renderedBodyFor = sig;
       }
       sessionBtn.title = `Also allow ${grantPrefix(r)} for the rest of this session`;
@@ -603,10 +606,12 @@ function build(req, opts) {
     }
     const rr = riskRow(r);
     fill(els.risks, rr);
+    // The inbox card keeps to what you need to decide; the rule that asked
+    // is shown on the request page.
     const metas = [];
-    if (r.policy_rule) {
+    if (opts.keep && r.policy_rule) {
       metas.push(link('/rules#rule-' + r.policy_rule, { class: 'item', title: 'The rule that asked you' }, icon('shield', 'sm'), 'Rule ', h('b', null, r.policy_rule)));
-    } else if (kind === 'permission') {
+    } else if (opts.keep && kind === 'permission') {
       metas.push(h('span', { class: 'item' }, icon('info', 'sm'), `${agentName(r.agent)} asked on its own`));
     }
     metas.push(els.left);

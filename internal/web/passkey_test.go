@@ -268,3 +268,29 @@ func mustB64(t *testing.T, s string) []byte {
 	}
 	return b
 }
+
+// Pairing again from a browser that is still signed in (its key was lost)
+// replaces that device instead of leaving a stale one behind.
+func TestPairAgainReplacesSignedInDevice(t *testing.T) {
+	e := newEnv(t)
+	_, pub := genKey(t)
+	ck, oldID := e.pair(pub)
+	_, pub2 := genKey(t)
+	w := e.do("POST", "/api/pair", pairBody{Code: e.pairCode(), Name: "Test phone", PublicKey: pub2}, reqOpt{cookie: ck})
+	if w.Code != 200 {
+		t.Fatalf("pair again: %d %s", w.Code, w.Body)
+	}
+	var me meResponse
+	mustJSON(t, w, &me)
+	if me.Device.ID == oldID {
+		t.Fatal("pair again reused the old device")
+	}
+	if w := e.do("GET", "/api/me", nil, reqOpt{cookie: ck}); w.Code != 401 {
+		t.Fatalf("old cookie after pair again: %d", w.Code)
+	}
+	var ds []api.Device
+	mustJSON(t, e.localDo("GET", "/v1/devices"), &ds)
+	if len(ds) != 1 || ds[0].ID != me.Device.ID {
+		t.Fatalf("devices = %+v", ds)
+	}
+}

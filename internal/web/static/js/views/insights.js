@@ -68,9 +68,9 @@ export function insightsView() {
   });
   const body = h('div', { class: 'ins-body' });
   add(root,
-    h('div', { class: 'page-head' },
+    h('div', { class: 'page-head' }, h('div', null,
       h('h1', { class: 'page-title' }, 'Insights'),
-      h('p', { class: 'page-sub' }, 'Usage, estimated cost and what your rules did')),
+      h('p', { class: 'page-sub' }, 'Usage, estimated cost and what your rules did'))),
     h('div', { class: 'ins-filters' }, rangeSeg.el, metricSeg.el),
     body);
 

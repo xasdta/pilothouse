@@ -5,7 +5,7 @@
 
 import { h, fill } from './dom.js';
 import { api, store, subscribe, resync, connect } from './api.js';
-import { mountShell, chrome, refreshChrome, setNavigator, toast, onLayout } from './ui.js';
+import { mountShell, chrome, refreshChrome, setNavigator, toast, onLayout, attention } from './ui.js';
 import { syncPush } from './push.js';
 import { persistStorage } from './passkey.js';
 import { renderPanes } from './panes.js';
@@ -40,7 +40,18 @@ const routes = [
   [/^\/new$/, () => newTaskView(), { back: 'Back', tab: null, route: '/tasks' }],
   [/^\/t\/([\w-]+)$/, (m) => taskView(m[1]), { back: 'Back', tab: null, route: '/tasks' }],
   [/^\/insights$/, () => insightsView(), { tab: '/insights' }],
+  // Pair again from inside the app (the signing key was lost). The cookie
+  // still works, so this can't be the signed-out pair screen.
+  [/^\/pair$/, () => pairView({ mode: 'repair', name: store.me && store.me.device.name, onDone: repaired }), { back: 'Back', tab: null, route: '/settings' }],
 ];
+
+function repaired(me, wantsNotifications) {
+  store.me = me;
+  store.keyMissing = false;
+  refreshChrome();
+  navigate(wantsNotifications ? '/settings' : '/', true);
+  connect();
+}
 
 function render(path) {
   if (view && view.destroy) view.destroy();
@@ -55,7 +66,7 @@ function render(path) {
   current = match[0];
   chrome(entry[2]);
   view = entry[1](match);
-  fill(main, view.el);
+  fill(main, current === '/pair' ? null : attention(), view.el);
   renderPanes(current);
   if (!location.hash) scrollTo(0, 0);
   main.focus({ preventScroll: true });
@@ -176,7 +187,7 @@ async function boot() {
     fill(main, errorScreen(e));
     return;
   }
-  startApp(me, path === '/pair' || path === '/login' ? '/' : path + location.hash);
+  startApp(me, path === '/login' ? '/' : path + location.hash);
 }
 
 function errorScreen(e) {

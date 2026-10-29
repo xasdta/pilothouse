@@ -137,17 +137,17 @@ const restorePrep = prepared(async () => {
 });
 
 /** "Add passkey": registers one, signed by this device's key. */
-export function addPasskeyButton(cls, onDone = () => {}) {
+export function addPasskeyButton(cls, onDone = () => {}, label = 'Add passkey') {
   return ceremonyButton({
-    label: 'Add passkey', busy: 'Adding…', cls, prep: addPrep, run: add,
+    label, busy: 'Adding…', cls, prep: addPrep, run: add,
     onDone: (me) => { toast('Passkey added — it can restore this device’s key', 'ok'); onDone(me); },
   });
 }
 
 /** "Restore": replaces a lost signing key, vouched for by the passkey. */
-export function restoreKeyButton(cls, onDone = () => {}) {
+export function restoreKeyButton(cls, onDone = () => {}, label = 'Restore') {
   return ceremonyButton({
-    label: 'Restore', busy: 'Restoring…', cls, prep: restorePrep, run: restore,
+    label, busy: 'Restoring…', cls, prep: restorePrep, run: restore,
     onDone: (me) => {
       store.keyMissing = false;
       refreshChrome();

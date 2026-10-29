@@ -26,10 +26,12 @@ function messageFor(err) {
 }
 
 /**
- * Pair screen. mode 'login' (from `pilothouse open`) signs in automatically.
- * onDone(me) is called after the cookie is set.
+ * Pair screen. mode 'login' (from `pilothouse open`) signs in automatically;
+ * mode 'repair' pairs a signed-in browser again after its key was lost (the
+ * daemon replaces the old device). onDone(me) is called after the cookie is set.
  */
-export function pairView({ code, mode, onDone }) {
+export function pairView({ code, mode, name, onDone }) {
+  const repair = mode === 'repair';
   const root = h('div', { class: 'view pair' });
   const hero = (title, text) => h('div', { class: 'pair-hero' },
     h('img', { class: 'appicon', src: '/icons/icon-192.png', alt: '', width: 84, height: 84 }),
@@ -66,7 +68,7 @@ export function pairView({ code, mode, onDone }) {
     code
       ? h('div', { class: 'code-chip' }, icon('check', 'sm'), h('span', { class: 'sr-only' }, 'Pairing code '), code)
       : codeField('Pairing code'));
-  const nameInput = h('input', { class: 'input', id: 'pair-name', value: guessName(), maxlength: 60, autocomplete: 'off', required: true });
+  const nameInput = h('input', { class: 'input', id: 'pair-name', value: name || guessName(), maxlength: 60, autocomplete: 'off', required: true });
   const submit = h('button', { class: 'btn primary block', type: 'submit' }, 'Pair this device');
   const form = h('form', { novalidate: true },
     codeSlot,
@@ -111,11 +113,22 @@ export function pairView({ code, mode, onDone }) {
         h('b', null, 'Pair inside the Home Screen app'),
         h('p', null, 'iPhone keeps Safari and the Home Screen app separate. Add Pilothouse to your Home Screen first, then pair from the installed app. A key made in Safari cannot sign decisions in the app.')))
     : null;
+  // In the installed iPhone app the camera can't help: a scanned QR code
+  // opens Safari, which has its own storage. Typing the code keeps the key here.
+  const typeNote = repair && isIOS()
+    ? h('div', { class: 'notice pair-note' }, icon('phone', 'sm'),
+      h('div', null,
+        h('b', null, 'Type the code — don’t scan it'),
+        h('p', null, 'On iPhone, scanning the QR code opens Safari instead of this app.')))
+    : null;
   add(root,
-    hero('Pair with Pilothouse', code
-      ? 'Answer your coding agents from this device when you’re away from your desk.'
-      : 'Run pilothouse pair on your computer and scan the QR code, or type the code here.'),
-    iosNote,
+    repair
+      ? hero('Pair this device again', 'On your computer, run pilothouse pair. Then type the code it shows below.')
+      : hero('Pair with Pilothouse', code
+        ? 'Answer your coding agents from this device when you’re away from your desk.'
+        : 'Run pilothouse pair on your computer and scan the QR code, or type the code here.'),
+    repair ? h('div', { class: 'terminal-hint' }, h('span', { class: 'prompt' }, '$'), 'pilothouse pair') : null,
+    repair ? typeNote : iosNote,
     form,
     h('p', { class: 'fineprint' }, icon('key', 'sm'),
       'A private key is created on this device and never leaves it. Every answer you send is signed with it.'));
@@ -124,19 +137,25 @@ export function pairView({ code, mode, onDone }) {
     const st = await pushStatus().catch(() => 'unsupported');
     // Pairing is complete either way: notifications are an option, not a gate.
     const offerNotifications = st === 'off' || st === 'ios-install';
-    const open = h('button', { class: 'btn primary block', type: 'button', onclick: () => onDone(me, false) }, 'Open inbox');
+    // With a passkey to add, that is the one big action; the inbox can wait.
+    const canPasskey = passkeySupported();
+    const open = h('button', { class: canPasskey ? 'btn secondary block big' : 'btn primary block big', type: 'button', onclick: () => onDone(me, false) }, 'Open inbox');
     const actions = h('div', { class: 'pair-actions' },
       open,
       offerNotifications
         ? h('button', { class: 'btn secondary block', type: 'button', onclick: () => onDone(me, true) }, 'Set up notifications')
         : null);
     // A passkey lets Face ID restore the signing key if iOS clears it.
-    const passkey = passkeySupported()
-      ? h('div', { class: 'notice pair-note' }, icon('key', 'sm'),
-        h('div', null,
-          h('b', null, 'Keep this pairing if iOS clears the app'),
-          h('p', null, 'Add a passkey and Face ID or Touch ID can restore this device’s signing key — no need to pair again.'),
-          addPasskeyButton('btn small secondary', (m) => { me = m; passkey.replaceWith(h('p', { class: 'fineprint' }, icon('check', 'sm'), 'Passkey added.')); })))
+    const passkey = canPasskey
+      ? h('div', { class: 'pair-note pair-step' },
+        h('b', null, 'One more step: add a passkey'),
+        h('p', null, 'If iPhone ever clears this app, Face ID or Touch ID brings it back — no need to pair again.'),
+        addPasskeyButton('btn primary block big', (m) => {
+          me = m;
+          passkey.replaceWith(h('p', { class: 'pair-ok' }, icon('check', 'sm'), 'Passkey added'));
+          open.className = 'btn primary block big';
+          open.focus();
+        }))
       : null;
     fill(root,
       h('div', { class: 'pair-hero' },
@@ -151,5 +170,6 @@ export function pairView({ code, mode, onDone }) {
     open.focus();
   }
 
+  if (repair) setTimeout(() => codeInput.focus(), 0);
   return { el: root, focus: () => (code ? nameInput : codeInput).focus() };
 }

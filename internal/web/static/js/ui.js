@@ -96,6 +96,7 @@ export function mountShell(root) {
   el.topbar = h('header', { class: 'topbar' },
     h('div', { class: 'topbar-in' }, el.left, h('div', { class: 'spacer' }), el.search, el.presence, el.conn));
   el.banner = h('div', { class: 'banner', role: 'status', 'aria-live': 'polite' });
+  el.attention = h('section', { class: 'attention', 'aria-labelledby': 'attention-title', hidden: true });
   el.main = h('main', { id: 'main', tabindex: '-1' });
 
   // Desktop sidebar.
@@ -138,6 +139,34 @@ export function mountShell(root) {
   fill(root, el.shell, el.tabbar, el.toasts);
   addEventListener('scroll', () => el.topbar.classList.toggle('scrolled', scrollY > 4), { passive: true });
   return el.main;
+}
+
+/**
+ * The card app.js puts above every page while something blocks answering
+ * (today: a lost signing key). Big text and one big button.
+ */
+export function attention() { return el.attention; }
+
+function renderAttention() {
+  const missing = !!store.keyMissing;
+  el.attention.hidden = !missing;
+  if (!missing) { delete el.attention.dataset.state; return; }
+  // A passkey can vouch for a new key right here; otherwise pair again.
+  const canRestore = !!(store.me && store.me.device.passkey) && passkeySupported();
+  const state = canRestore ? 'restore' : 'pair';
+  if (el.attention.dataset.state === state) return; // keep the button (and its prepared challenge)
+  el.attention.dataset.state = state;
+  fill(el.attention,
+    h('div', { class: 'attention-head' },
+      h('span', { class: 'icon-tile amber', 'aria-hidden': 'true' }, icon('key')),
+      h('div', null,
+        h('h2', { id: 'attention-title' }, 'This device can’t answer yet'),
+        h('p', null, canRestore
+          ? 'Its signing key was cleared. Restore it with your passkey — Face ID or Touch ID.'
+          : 'Its signing key is missing, so approvals from here can’t be signed. Pair it again to fix this.'))),
+    canRestore
+      ? restoreKeyButton('btn primary block big', () => {}, 'Restore with passkey')
+      : link('/pair', { class: 'btn primary block big' }, 'Pair again'));
 }
 
 /** Containers the desktop panes render into (panes.js). */
@@ -209,30 +238,14 @@ export function refreshChrome() {
     c.title = connLabel;
   }
   el.machine.textContent = store.machine || '';
-  // A missing signing key is more urgent than a reconnect: decisions cannot
-  // be sent at all until this device is paired again.
-  el.banner.classList.toggle('key', !!store.keyMissing);
-  if (store.keyMissing) {
-    el.banner.classList.add('show');
-    // A passkey can vouch for a new key right here; otherwise pair again.
-    const canRestore = !!(store.me && store.me.device.passkey) && passkeySupported();
-    if (el.banner.dataset.key !== String(canRestore)) {
-      el.banner.dataset.key = String(canRestore);
-      fill(el.banner,
-        icon('key', 'sm'),
-        canRestore
-          ? h('span', null, h('b', null, 'Signing key missing'), ' — restore it with your passkey.')
-          : h('span', null, h('b', null, 'Pair this device again'), ' — its signing key is missing.'),
-        canRestore ? restoreKeyButton('btn small') : link('/pair', { class: 'btn small' }, 'Pair'));
-    }
-  } else {
-    delete el.banner.dataset.key;
-    const showBanner = store.loaded && store.conn !== 'live';
-    el.banner.classList.toggle('show', showBanner);
-    fill(el.banner,
-      icon(store.conn === 'offline' ? 'wifiOff' : 'hourglass', 'sm'),
-      store.conn === 'offline' ? `Can’t reach ${store.machine || 'your computer'} — retrying` : 'Reconnecting…');
-  }
+  // A missing signing key gets a full card at the top of every page (see
+  // attention()); the floating banner is only for the connection.
+  renderAttention();
+  const showBanner = store.loaded && store.conn !== 'live';
+  el.banner.classList.toggle('show', showBanner);
+  fill(el.banner,
+    icon(store.conn === 'offline' ? 'wifiOff' : 'hourglass', 'sm'),
+    store.conn === 'offline' ? `Can’t reach ${store.machine || 'your computer'} — retrying` : 'Reconnecting…');
   let n = 0;
   for (const r of store.requests.values()) if (r.status === 'open') n++;
   for (const b of [el.badge, el.navBadge]) {

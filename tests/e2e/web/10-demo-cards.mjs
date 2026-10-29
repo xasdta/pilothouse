@@ -114,14 +114,17 @@ if (revised) {
 const tf = await card(A, 'r_tfedit04');
 await tf.evaluate((el) => el.scrollIntoView());
 check('diff: one file with +3 −3', (await tf.$$('.dfile')).length === 1 && (await tf.$eval('.dfile-head .stat', (e) => e.innerText)).replace(/\s+/g, ' ').includes('+3 −3'));
-check('diff: added and removed lines are marked', (await tf.$$('.dl.add')).length === 3 && (await tf.$$('.dl.del')).length === 3);
+// The inbox card shows a short diff; the rest is one tap away.
+check('diff: added and removed lines are marked', (await tf.$$('.dl.add')).length >= 1 && (await tf.$$('.dl.del')).length >= 1);
+check('diff: the inbox card offers the rest of the diff', (await text(A, 'main article[data-request="r_tfedit04"]')).includes('more lines'));
 check('diff: line numbers follow the hunk header', (await tf.$eval('.dl.ctx .n', (e) => e.textContent)) === '14');
 const head = await tf.$('.dfile-head');
 await tap(head);
 check('diff: a file collapses', (await head.evaluate((b) => b.getAttribute('aria-expanded'))) === 'false' && (await tf.$eval('.dbody', (b) => getComputedStyle(b).display)) === 'none');
 await tap(head);
 check('diff: and opens again', (await head.evaluate((b) => b.getAttribute('aria-expanded'))) === 'true');
-check('diff: risk label and the rule that fired', (await text(A, 'main article[data-request="r_tfedit04"]')).includes('Changes production infrastructure') && (await text(A, 'main article[data-request="r_tfedit04"]')).includes('protect-prod'));
+// The rule that fired is on the request page, not the inbox card.
+check('diff: risk label on the card, rule left to the request page', (await text(A, 'main article[data-request="r_tfedit04"]')).includes('Changes production infrastructure') && !(await text(A, 'main article[data-request="r_tfedit04"]')).includes('protect-prod'));
 
 // ---------- Components: diff "show more", hostile Markdown ----------
 const comp = await A.evaluate(async () => {
