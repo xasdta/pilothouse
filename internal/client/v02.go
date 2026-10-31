@@ -29,6 +29,9 @@ func (c *Client) Activity(ctx context.Context, sessionID string, q api.ActivityQ
 	if !q.Since.IsZero() {
 		v.Set("since", q.Since.UTC().Format(time.RFC3339))
 	}
+	if q.Peek {
+		v.Set("peek", "1")
+	}
 	path := "/v1/sessions/" + url.PathEscape(sessionID) + "/activity"
 	if len(v) > 0 {
 		path += "?" + v.Encode()

@@ -187,15 +187,19 @@ func (d *Daemon) markExited(ctx context.Context, id, detail string, code *int) e
 
 // sweepStale re-resolves sessions that have looked "working" for longer
 // than state.StaleWorking, so silence turns into "unknown" without waiting
-// for the next hook.
+// for the next hook, and sessions still "starting" after state.StartGrace,
+// so a session opened and left alone shows as waiting for a prompt.
 func (d *Daemon) sweepStale(ctx context.Context) {
 	sessions, err := d.db.LiveSessions(ctx)
 	if err != nil {
 		return
 	}
-	cutoff := d.now().Add(-state.StaleWorking)
+	now := d.now()
 	for _, s := range sessions {
-		if s.State != api.StateWorking || s.UpdatedAt.After(cutoff) {
+		switch {
+		case s.State == api.StateWorking && !s.UpdatedAt.After(now.Add(-state.StaleWorking)):
+		case s.State == api.StateStarting && !s.UpdatedAt.After(now.Add(-state.StartGrace)):
+		default:
 			continue
 		}
 		if err := d.db.Write(ctx, func(tx *store.Tx) error { return d.touchSession(ctx, tx, s.ID) }); err != nil && ctx.Err() == nil {

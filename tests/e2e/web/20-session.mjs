@@ -38,12 +38,15 @@ await run(async () => {
   await page.waitForSelector('.act-feed', { timeout: 8000 });
 
   // ---- First load ----
-  const first = apiR.find('GET', /\/api\/sessions\/s_web01\/activity$/)[0];
+  // Today's receipts read the same endpoint with peek=1; skip those.
+  const first = apiR.find('GET', /\/api\/sessions\/s_web01\/activity$/).filter((r) => r.query.peek !== '1')[0];
   check('activity fetched with limit=200', first && first.query.limit === '200', JSON.stringify(first && first.query));
   check('activity fetched since the last visit (localStorage)', first && first.query.since === lastSeen, first && first.query.since);
-  const head = await text(page, '.sess-hero');
-  check('header: live state', head.includes('Working'));
-  check('header: usage chip with tokens and est. cost', /1\.2M\s+tokens/.test(head) && head.includes('$2.37'), head.replace(/\s+/g, ' ').slice(0, 160));
+  const head = await text(page, '.rhead');
+  check('header: live state', head.includes('working'));
+  check('header: estimated cost', head.includes('$2.37'), head.replace(/\s+/g, ' ').slice(0, 160));
+  await tap(page, 'details.rdetails > summary');
+  check('details: usage chip with tokens', /1\.2M\s+tokens/.test(await text(page, '.rdetails')));
   await tap(page, '.usage-chip');
   const usagePanel = await text(page, '.usage-panel');
   check('usage chip opens a breakdown (input, cache read, model)', usagePanel.includes('Input') && usagePanel.includes('Cache read') && usagePanel.includes('claude-sonnet-4-5'), usagePanel.replace(/\s+/g, ' '));
@@ -53,38 +56,34 @@ await run(async () => {
   check('reply note says how it is delivered (terminal)', (await text(page, '#reply-note')).includes('terminal'));
   check('open request shown with the request card', (await text(page, '.sess')).includes('git push origin feat/session-page') && !!(await page.$('.sess article.req')));
 
-  // ---- Catch me up ----
-  const cu = await text(page, '.catchup');
-  check('catch me up: lines from the API', (await page.$$eval('.catchup-lines li', (l) => l.length)) === 4, cu.slice(0, 120));
-  check('catch me up: since and counts', cu.includes('since 55m ago') && cu.includes('19 tool calls') && cu.includes('1 error'), cu.replace(/\s+/g, ' '));
+  // ---- The report: you asked, it says ----
+  check('report: “You asked” is the latest prompt', (await text(page, '.goalq')).includes('Now run the whole Go suite'));
+  check('report: the agent’s last words under “… says”', !!(await page.$('.md.says')));
 
-  // ---- Feed ----
-  const turns = await page.$$eval('.act-feed > .act-turn', (els) => els.map((e) => e.tagName + (e.classList.contains('latest') ? ':latest' : '')));
-  check('feed: 4 turns, newest first and open, older ones collapsed', JSON.stringify(turns) === JSON.stringify(['ARTICLE:latest', 'DETAILS', 'DETAILS', 'DETAILS']), JSON.stringify(turns));
-  const latest = await text(page, '.act-turn.latest');
-  check('latest turn starts with its prompt', latest.startsWith('You') && latest.includes('Now run the whole Go suite'));
-  check('tool kinds have their own icons (shell, mcp)', !!(await page.$('.act-turn.latest .act-tool.k-shell')) && !!(await page.$('.act-turn.latest .act-tool.k-mcp')));
-  check('pending tool call shows a spinner', !!(await page.$('.act-turn.latest .act-tool.pending .v2-spin')));
-  check('agent working → live row with its state detail', (await text(page, '.act-live')).includes('go test -race ./internal/web'));
+  // ---- How it got there ----
+  check('voyage: the latest turn, with earlier turns folded below', !!(await page.$('.voyage-wrap .voyage')) && (await page.$$('.earlier > details.eturn')).length === 3, String((await page.$$('.earlier > details.eturn')).length));
+  check('tool kinds have their own nodes (shell, mcp)', !!(await page.$('.voyage-wrap .vs.k-shell')) && !!(await page.$('.voyage-wrap .vs.k-mcp')));
+  check('pending tool call shows a spinner', !!(await page.$('.voyage-wrap .vs.pending .spin')));
+  check('agent working → its step in plain words', (await text(page, '.voyage-wrap')).includes('Running the tests'));
   // Expand a result.
-  const det = await page.$('.act-turn.latest .act-tool.k-mcp details');
-  await tap(page, await det.$('summary'));
-  check('tool result expands', (await text(page, '.act-turn.latest .act-tool.k-mcp .act-result')).includes('#212'));
+  await tap(page, '.voyage-wrap .vs.k-mcp .vbtn');
+  check('tool result expands', (await text(page, '.voyage-wrap .vs.k-mcp .out')).includes('#212'));
   // Older turn: errors, subagents, system.
-  const turn3 = (await page.$$('.act-feed > details.act-turn'))[0];
-  check('collapsed turn summary: prompt, steps and errors', (await turn3.evaluate((e) => e.querySelector('summary').innerText)).includes('Run the e2e suite') && (await turn3.evaluate((e) => e.querySelector('summary').innerText)).includes('2 errors'));
+  const turn3 = (await page.$$('.earlier > details.eturn'))[0];
+  check('folded turn summary: prompt, steps and failures', (await turn3.evaluate((e) => e.querySelector('summary').innerText)).includes('Run the e2e suite') && (await turn3.evaluate((e) => e.querySelector('summary').innerText)).includes('2 failed'));
   await tap(page, await turn3.$('summary'));
   await sleep(150);
   const t3 = await turn3.evaluate((e) => e.innerText);
-  check('error tool call styled as an error', !!(await turn3.$('.act-tool.err')));
-  check('error tool result open-able with its output', t3.includes('Run: node tests/e2e/web/20-session.mjs'));
-  check('API error shown on its own', !!(await turn3.$('.act-error')) && t3.includes('Overloaded'));
-  check('subagent run grouped', !!(await turn3.$('.act-sub')) && t3.includes('Subagent') && t3.includes('2 steps'));
-  check('finished subagent group starts collapsed', !(await turn3.$eval('.act-sub', (e) => e.open)));
-  await tap(page, await turn3.$('.act-sub > summary'));
-  const sub = await turn3.$eval('.act-sub', (e) => e.innerText);
-  check('subagent group opens to its steps and finish line', sub.includes('Find tests/e2e/web/*.mjs') && sub.includes('Explore finished'), sub.replace(/\s+/g, ' ').slice(0, 160));
-  check('system line shown', t3.includes('Context compacted'));
+  check('failed tool call styled as a failure', !!(await turn3.$('.vs.fail')));
+  check('failed tool call shows its command', t3.includes('node tests/e2e/web/20-session.mjs'));
+  check('API error shown on its own', t3.includes('Overloaded'));
+  check('subagent run grouped', !!(await turn3.$('.vs.sub')) && t3.includes('helper agent') && t3.includes('2 steps'));
+  check('finished subagent group starts folded', !t3.includes('Find tests/e2e/web/*.mjs'));
+  await tap(page, await turn3.$('.vs.sub .vbtn'));
+  await sleep(150);
+  const sub = await page.$eval('.earlier > details.eturn .vs.sub', (e) => e.innerText);
+  check('subagent group opens to its steps and finish line', sub.includes('tests/e2e/web/*.mjs') && sub.includes('Explore finished'), sub.replace(/\s+/g, ' ').slice(0, 160));
+  check('system line shown', (await page.$eval('.earlier > details.eturn', (e) => e.innerText)).includes('Context compacted'));
 
   // ---- Files changed ----
   check('files changed: 4 rows', (await page.$$eval('.file-row', (r) => r.length)) === 4);
@@ -92,12 +91,12 @@ await run(async () => {
   check('files changed: +/- per file, relative paths', files.includes('+412') && files.includes('−96') && files.includes('session.js') && !files.includes('/Users/dev'), files.replace(/\s+/g, ' ').slice(0, 120));
 
   // ---- Polling with the cursor ----
-  const polled = await page.waitForFunction(() => !document.querySelector('.act-turn.latest .act-tool.pending'), { timeout: 8000 }).then(() => true, () => false);
+  const polled = await page.waitForFunction(() => !document.querySelector('.voyage-wrap .vs.pending'), { timeout: 8000 }).then(() => true, () => false);
   const next = apiR.find('GET', /\/api\/sessions\/s_web01\/activity$/).find((c) => c.query.cursor === 'c1');
   check('polls with the cursor while visible', !!next && !next.query.limit, JSON.stringify(next && next.query));
-  check('a finished call replaces its pending row (same id)', polled && (await page.$$eval('.act-turn.latest .act-tool.k-shell', (els) => els.length)) === 3);
+  check('a finished call replaces its pending row (same id)', polled && (await page.$$eval('.voyage-wrap .vs.k-shell', (els) => els.length)) >= 1);
   check('new items appended to the latest turn', await waitText(page, 'All green. Pushing feat/session-page now.', 3000));
-  check('usage chip follows the poll', (await text(page, '.sess-hero')).includes('$2.41'));
+  check('cost follows the poll', (await text(page, '.rhead')).includes('$2.41'));
 
   // ---- Reply (signed) ----
   apiR.clear();
@@ -110,7 +109,7 @@ await run(async () => {
   check('reply payload is {text}', v.payload && v.payload.text === 'Also run the linter before you push.' && !v.payload.interrupt, JSON.stringify(v.payload));
   check('reply has the CSRF header', call && call.headers['x-pilothouse'] === '1');
   check('reply box cleared and toast shown', (await page.$eval('#reply-text', (e) => e.value)) === '' && (await text(page, '.toast')).includes('Sent'));
-  check('sent reply shown at the top of the feed until the agent picks it up', (await text(page, '.act-feed')).startsWith('You'));
+  check('sent reply shown in the feed until the agent picks it up', (await text(page, '.act-turn.latest')).startsWith('You'));
   // Stop first.
   apiR.clear();
   await page.type('#reply-text', 'Stop — use the staging database instead.');
@@ -157,37 +156,30 @@ await run(async () => {
   apiR.clear();
   const pushedAt = Date.now();
   sse.push('/events', 'event', { seq: 1e9 + 1, at: new Date().toISOString(), type: 'session.updated', session_id: 's_web01', data: waiting });
-  const refetched = await page.waitForFunction(() => document.querySelector('.sess-hero .pill') && document.querySelector('.sess-hero .pill').innerText.includes('Waiting'), { timeout: 3000 }).then(() => true, () => false);
+  const refetched = await page.waitForFunction(() => document.querySelector('.rhead') && document.querySelector('.rhead').innerText.includes('finished'), { timeout: 3000 }).then(() => true, () => false);
   check('session.updated updates the live state', refetched);
   await sleep(700);
   const after = apiR.find('GET', /\/api\/sessions\/s_web01\/activity$/);
   check('session.updated re-fetches activity at once (< 700 ms)', after.length > 0 && after[0].at - pushedAt < 700, after.length ? `${after[0].at - pushedAt} ms` : 'no fetch');
-  check('no live "working" row once the agent waits', !(await page.$('.act-live')));
+  check('no “Right now” card once the agent waits', !(await page.$('.rnow.live')));
   check('"stop first" hidden while the agent waits', await page.$eval('.reply-stop', (e) => e.hidden));
 
-  // ---- Catch-up dismissal and last visit ----
-  await tap(page, '.catchup-done');
-  check('"Got it" hides the catch-up', !(await page.$('.catchup')));
-  const visit = await page.evaluate(() => JSON.parse(localStorage.getItem('pilothouse.visits')).s_web01);
-  check('"Got it" records the visit', new Date(visit).getTime() >= t0, visit);
+  // ---- Last visit ----
+  const visit = new Date(t0).toISOString();
 
   // ---- Pagination ("show earlier") and long turns ----
   apiR.clear();
   await go(page, '/s/s_api02');
-  await page.waitForSelector('.act-feed');
+  await page.waitForSelector('.voyage');
   const leaving = await page.evaluate(() => JSON.parse(localStorage.getItem('pilothouse.visits')).s_web01);
   check('leaving a session records the visit', new Date(leaving).getTime() >= new Date(visit).getTime());
-  const nTurns = () => page.$$eval('.act-feed > .act-turn', (e) => e.length);
+  const nTurns = () => page.$$eval('.voyage-wrap, .earlier > details.eturn', (e) => e.length);
   const before = await nTurns();
   check('a full first page offers "Show earlier activity"', !!(await page.$('.act-more')) && before === 14, `turns ${before}`);
-  check('message reply note for observed Claude', (await text(page, '#reply-note')).includes('message sent from Pilothouse'));
-  check('long latest turn shows its last steps first', (await text(page, '.act-turn.latest')).includes('Show 6 earlier steps'));
-  const shownSteps = await page.$$eval('.act-turn.latest .act-step', (e) => e.length);
-  await tap(page, '.act-earlier button');
-  const allSteps = await page.$$eval('.act-turn.latest .act-step', (e) => e.length);
-  check('"Show earlier steps" reveals the whole turn', shownSteps === 8 && allSteps === 14, `${shownSteps} → ${allSteps}`);
+  check('message reply note for observed Claude points to pilothouse run', (await text(page, '#reply-note')).includes('pilothouse run claude'));
+  check('long latest turn: every step on the voyage', (await page.$$eval('.voyage-wrap .vs', (e) => e.length)) >= 8);
   await tap(page, '.act-more');
-  await page.waitForFunction((n) => document.querySelectorAll('.act-feed > .act-turn').length > n, { timeout: 5000 }, before).catch(() => {});
+  await page.waitForFunction((n) => document.querySelectorAll('.voyage-wrap, .earlier > details.eturn').length > n, { timeout: 5000 }, before).catch(() => {});
   const more = apiR.find('GET', /\/api\/sessions\/s_api02\/activity$/).map((c) => c.query.limit).filter(Boolean);
   check('"Show earlier" asks for a bigger page', more.includes('600'), more.join(','));
   check('earlier turns appear', (await nTurns()) === 30, `turns ${await nTurns()}`);

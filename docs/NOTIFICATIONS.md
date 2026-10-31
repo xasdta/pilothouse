@@ -162,7 +162,7 @@ single-use action tokens; questions and plans open the web app. An access token 
 ## Web app (Web Push)
 
 Pair your phone with `pilothouse pair` (after `pilothouse remote tailscale`),
-add the web app to the home screen, and turn on notifications in its
-Settings tab. Permission requests offer Allow / Deny right on the
+add the web app to the home screen, and turn on notifications in
+Settings → Notifications. Permission requests offer Allow / Deny right on the
 notification on Android and desktop, signed with the device's key like every
 answer from the app; questions and plans open the app.

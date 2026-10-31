@@ -20,9 +20,14 @@ One inbox for Claude Code, Codex, OpenCode and Grok Build. Your rules run before
 curl -fsSL https://pilothouse.dev/install.sh | sh     # or: brew install xasdta/tap/pilothouse
 pilothouse demo      # optional: try the phone app with pretend agents (touches nothing)
 pilothouse setup     # hooks (shows the diff first), daemon, phone, test notification
+pilothouse run claude   # start agents through Pilothouse (or: codex, opencode)
 ```
 
-See [Getting started](docs/GETTING-STARTED.md) for what setup and the demo do.
+Plain `claude` works too, but starting it with `pilothouse run` means replies
+from your phone are typed straight into its terminal (recent Claude Code
+versions hold messages that arrive any other way until you allow them at the
+desk). See [Getting started](docs/GETTING-STARTED.md) for what setup and the
+demo do.
 
 <p align="center"><img src="docs/assets/demo.gif" width="900" alt="Pilothouse demo: a rule blocks a force-push, then the inbox holds a git push to main while you're away and you approve it with y"></p>
 
@@ -42,7 +47,8 @@ and one of them force-pushes. Pilothouse fixes both:
   - **At your desk:** the agent's own prompt appears as usual, so nothing
     freezes.
   - **Away** (keyboard idle): the request is held and pushed to your paired
-    phone. Tap Allow, Allow for session or Deny. Claude Code also keeps its
+    phone. Hold to allow, or Deny; Allow for session and Make it a rule
+    are one tap further. Claude Code also keeps its
     own prompt open in the terminal; whichever you answer first wins, and the
     other one closes.
   - **When you come back:** any request still held is handed back to your
@@ -141,10 +147,12 @@ lingering with stale buttons. In Telegram, requests arrive with buttons
 changes), and replying to a "finished" message sends that agent a follow-up.
 See [docs/NOTIFICATIONS.md](docs/NOTIFICATIONS.md).
 
-Open a session in the app to see what the agent is doing: its activity turn by
-turn (prompts, tool calls with their output, subagents, errors), the files it
-changed, its tokens and estimated cost, and a *Catch me up* summary of what
-happened since you last looked. Where the agent supports it you can reply,
+The app opens on **Today**: a log of every session grouped by what needs you,
+what's at the computer, what's working and what finished, with the open
+decision right in the list. Open a session to get its **report**: what you
+asked, what the agent says, the **proof** (tests, lint and build it ran, and
+whether they ran after its last edit; files changed; the commit), how it got
+there step by step, and every changed file with its diff. Where the agent supports it you can reply,
 interrupt, or open its live terminal (sessions started with `pilothouse run`),
 with a key row for Esc, Ctrl-C, arrows, Enter, y and n. *Tasks* starts an agent
 on a prompt in its own worktree; you review the diff and ship it as a pull
@@ -153,13 +161,15 @@ what your rules allowed, asked and blocked, and today's budget. Replies,
 terminal typing (one signature unlocks it for 10 minutes), and starting or
 finishing tasks are signed by the device like approvals.
 
-The inbox shows each request with what the agent last said, the command
-highlighted, a diff for file edits, risk labels and the rule that asked. You
-can answer agents' questions and approve or send back their plans. **Make it
-a rule** turns an answer into a rule with one tap. On a computer, the web app
-has three panes (sessions · current view · needs you) and keyboard shortcuts:
-`j`/`k` to move, `a` to allow, `d` to deny, `⌘K` to search, `?` to list them all.
-Light and dark mode follow your device unless you pick one in Settings.
+Each request shows the command highlighted, a diff for file edits, risk
+labels and the rule that asked. Allowing takes a one-second press and hold, so
+a stray tap never approves anything. You can answer agents' questions and
+approve or send back their plans. **Make it a rule** turns an answer into a
+rule with one tap. The app has three tabs: Today, Rules and Settings. On a
+computer it has three panes (Today · current view · needs you) and keyboard
+shortcuts: `j`/`k` to move, `a` twice to allow, `d` to deny, `⌘K` to search, `?` to
+list them all. Light and dark follow your device; the sun/moon button in the
+top bar switches them.
 
 ### Rules
 
@@ -231,8 +241,10 @@ pilothouse reply s_3fq9 --interrupt "stop, use the staging database"
 ```
 
 Sessions started with `pilothouse run` get replies typed into their terminal
-(and can be interrupted); Claude Code sessions you started yourself get them
-through Claude's own messaging socket. On the phone, wrapped sessions also have
+(and can be interrupted). Claude Code sessions you started yourself get them
+through Claude's own messaging socket, which recent Claude Code versions may
+hold until you allow it in the terminal, so start Claude with `pilothouse run
+claude` if you reply from your phone. On the phone, wrapped sessions also have
 a live terminal you can watch and type into, without disturbing the terminal
 at your desk. While agents work, Pilothouse keeps the computer from idle
 sleep (`keep_awake: off` to turn that off). See [docs/REPLIES.md](docs/REPLIES.md).

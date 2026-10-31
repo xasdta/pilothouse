@@ -121,6 +121,8 @@ export async function goto(page, demo, path) {
   await page.evaluate((p) => { history.pushState({ inApp: true }, '', p); dispatchEvent(new PopStateEvent('popstate')); }, path);
   await page.waitForSelector('main .view', { timeout: 10000 });
   await sleep(150);
+  // Let the view's slide-in finish, as a finger would.
+  await page.waitForFunction(() => !document.getAnimations().some((a) => a.playState === 'running' && a.effect && a.effect.target && a.effect.target.classList && a.effect.target.classList.contains('view')), { timeout: 2000 }).catch(() => {});
 }
 
 export function watch(page, tag) {

@@ -129,6 +129,7 @@ type Result struct {
 	Usage   api.Usage
 	Files   []api.FileChange
 	CatchUp *api.CatchUp
+	Receipt *api.Receipt
 	// Partial: the transcript was too big to read whole, so the feed and
 	// usage start part way through it.
 	Partial bool
@@ -175,6 +176,7 @@ func (r *Reader) Read(key string, src Source, q Query) (Result, error) {
 	if q.CatchUp {
 		res.CatchUp = f.catchUp(q.Since, q.Now, q.Extra)
 	}
+	res.Receipt = f.receipt()
 	return res, nil
 }
 

@@ -1495,8 +1495,9 @@ func runSetup(cmd *cobra.Command, yes, noPhone bool) error {
 	if paired == 0 {
 		fmt.Fprintln(tw, "  pilothouse pair\tpair your phone to approve when you're away")
 	}
+	fmt.Fprintln(tw, "  pilothouse run claude\tstart an agent so replies from your phone go straight in (or codex, opencode)")
 	fmt.Fprintln(tw, "  pilothouse demo\ttry the phone app with pretend agents")
-	fmt.Fprintln(tw, "  pilothouse\topen the inbox")
+	fmt.Fprintln(tw, "  pilothouse\topen the inbox in the terminal")
 	fmt.Fprintln(tw, "  pilothouse doctor\tcheck everything is wired up")
 	tw.Flush()
 	if !daemonOK {

@@ -1171,3 +1171,83 @@ dialog::backdrop { background: var(--scrim); }
 /* One file's lines inside the caller's own file card (diffView(file)). */
 .diff.bare { margin-top: 0; }
 .dfile.bare { border-radius: 0 0 var(--r-lg) var(--r-lg); box-shadow: inset 0 0.5px 0 var(--border-strong); background: var(--diff-bg); }
+
+/* ---------- Logbook paper (0.3) ----------
+   Warm paper and ink for light, a warm night for dark. Later blocks with
+   the same selectors win, so these override the tokens above. */
+:root {
+  --serif: ui-serif, "New York", Charter, "Iowan Old Style", Georgia, serif;
+  --bg: #f4f0e8;
+  --bg-glass: rgba(244, 240, 232, 0.86);
+  --surface: #fffdf8;
+  --surface-2: #f5f0e6;
+  --surface-3: #e9e2d4;
+  --raised: #fffdf8;
+  --border: rgba(60, 45, 20, 0.1);
+  --border-strong: rgba(60, 45, 20, 0.17);
+  --text: #1d1b16;
+  --text-2: #4a453b;
+  --text-3: #6a6355;
+  --shadow: 0 1px 0 rgba(60, 45, 15, 0.05), 0 12px 26px -20px rgba(60, 40, 10, 0.45);
+  --shadow-lift: 0 2px 6px rgba(60, 45, 15, 0.07), 0 22px 48px -18px rgba(60, 40, 10, 0.35);
+  --muted-soft: rgba(60, 45, 20, 0.07);
+  --sky: #efe5cf;
+  --beam: #f0b443;
+  --margin: #e6bcb0;
+  --open-bg: #fbf6ea;
+  --art-ink: #1d1b16;
+  --art-paper: #fbf8f1;
+  --art-stripe: #c44a3a;
+  --diff-add-strong: #146b2e; /* ≥ 4.5:1 on paper and on the green proof box */
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12110e;
+    --bg-glass: rgba(18, 17, 14, 0.82);
+    --surface: #1b1915;
+    --surface-2: #232019;
+    --surface-3: #2e2a22;
+    --raised: #211e19;
+    --border: rgba(255, 240, 210, 0.07);
+    --border-strong: rgba(255, 240, 210, 0.13);
+    --text: #f2ede2;
+    --text-2: #c9c1b0;
+    --text-3: #a39a84;
+    --muted-soft: rgba(255, 240, 210, 0.07);
+    --sky: #1f1b13;
+    --beam: #f0b443;
+    --margin: rgba(230, 140, 118, 0.32);
+    --open-bg: #221f18;
+    --art-ink: #d9d0bd;
+    --art-paper: #2a261e;
+    --art-stripe: #d0604f;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #12110e;
+  --bg-glass: rgba(18, 17, 14, 0.82);
+  --surface: #1b1915;
+  --surface-2: #232019;
+  --surface-3: #2e2a22;
+  --raised: #211e19;
+  --border: rgba(255, 240, 210, 0.07);
+  --border-strong: rgba(255, 240, 210, 0.13);
+  --text: #f2ede2;
+  --text-2: #c9c1b0;
+  --text-3: #a39a84;
+  --muted-soft: rgba(255, 240, 210, 0.07);
+  --sky: #1f1b13;
+  --beam: #f0b443;
+  --margin: rgba(230, 140, 118, 0.32);
+  --open-bg: #221f18;
+  --art-ink: #d9d0bd;
+  --art-paper: #2a261e;
+  --art-stripe: #d0604f;
+}
+
+/* Today's title in the top bar: "Thursday's log". */
+.brand.log-title { font: 600 17px var(--serif); letter-spacing: -0.01em; gap: 8px; }
+.brand.log-title svg.ic { width: 22px; height: 22px; stroke-width: 1.7; }
+.tabbar-in { grid-template-columns: repeat(3, 1fr); max-width: 420px; }
+/* The connection dot only speaks up when something's wrong. */
+.topbar .conn:not(.connecting):not(.offline) { display: none; }

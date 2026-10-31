@@ -10,8 +10,7 @@ import { syncPush } from './push.js';
 import { persistStorage } from './passkey.js';
 import { renderPanes } from './panes.js';
 import { initKeys, refreshSelection } from './palette.js';
-import { inboxView } from './views/inbox.js';
-import { sessionsView } from './views/sessions.js';
+import { todayView } from './views/today.js';
 import { sessionView } from './views/session.js';
 import { requestView } from './views/request.js';
 import { terminalView } from './views/terminal.js';
@@ -25,21 +24,25 @@ const root = document.getElementById('app');
 let main = null;
 let view = null;
 let current = '/';
+let navBack = false; // the next render came from Back: slide the other way
+let lastTab = '/'; // the tab a sub-page was opened from: its Back says so
+const TAB_NAMES = { '/': 'Today', '/rules': 'Rules', '/settings': 'Settings' };
 
 // [pattern, view, chrome options]. tab: the phone tab that lights up (null
 // hides the tab bar); route: the desktop nav item.
 const routes = [
-  [/^\/$/, () => inboxView(), { tab: '/' }],
-  [/^\/sessions$/, () => sessionsView(), { tab: '/sessions' }],
+  [/^\/$/, () => todayView(), { tab: '/', title: 'today' }],
+  // Sessions merged into Today (0.3): old links land there.
+  [/^\/sessions$/, () => todayView(), { tab: '/', title: 'today' }],
   [/^\/settings$/, () => settingsView(), { tab: '/settings' }],
-  [/^\/rules$/, () => rulesView(), { tab: '/settings', route: '/rules', back: 'Settings', backTo: '/settings', backOnPhone: true }],
-  [/^\/s\/([\w-]+)$/, (m) => sessionView(m[1]), { back: 'Back', tab: null, route: '/sessions' }],
-  [/^\/r\/([\w-]+)$/, (m) => requestView(m[1]), { back: 'Back', tab: null, route: '/' }],
-  [/^\/s\/([\w-]+)\/terminal$/, (m) => terminalView(m[1]), { back: 'Back', tab: null, route: '/sessions' }],
-  [/^\/tasks$/, () => tasksView(), { tab: '/tasks' }],
+  [/^\/rules$/, () => rulesView(), { tab: '/rules' }],
+  [/^\/s\/([\w-]+)$/, (m) => sessionView(m[1]), { back: 'Back', tab: null, route: '/', center: 'Report' }],
+  [/^\/r\/([\w-]+)$/, (m) => requestView(m[1]), { back: 'Back', tab: null, route: '/', center: 'Decision' }],
+  [/^\/s\/([\w-]+)\/terminal$/, (m) => terminalView(m[1]), { back: 'Back', tab: null, route: '/' }],
+  [/^\/tasks$/, () => tasksView(), { tab: '/settings', route: '/tasks', back: 'Settings', backTo: '/settings', backOnPhone: true }],
   [/^\/new$/, () => newTaskView(), { back: 'Back', tab: null, route: '/tasks' }],
   [/^\/t\/([\w-]+)$/, (m) => taskView(m[1]), { back: 'Back', tab: null, route: '/tasks' }],
-  [/^\/insights$/, () => insightsView(), { tab: '/insights' }],
+  [/^\/insights$/, () => insightsView(), { tab: '/settings', route: '/insights', back: 'Settings', backTo: '/settings', backOnPhone: true }],
   // Pair again from inside the app (the signing key was lost). The cookie
   // still works, so this can't be the signed-out pair screen.
   [/^\/pair$/, () => pairView({ mode: 'repair', name: store.me && store.me.device.name, onDone: repaired }), { back: 'Back', tab: null, route: '/settings' }],
@@ -64,8 +67,12 @@ function render(path) {
   }
   if (!match) { history.replaceState(null, '', '/'); match = ['/']; }
   current = match[0];
-  chrome(entry[2]);
+  if (entry[2].tab && TAB_NAMES[entry[2].tab] && !entry[2].back) lastTab = entry[2].tab;
+  chrome(entry[2].back === 'Back' ? { ...entry[2], back: TAB_NAMES[lastTab] || 'Back' } : entry[2]);
   view = entry[1](match);
+  // Sub-pages push in from the right and pop back from the left, like the mockup.
+  if (view.el && view.el.classList) view.el.classList.add(navBack ? 'nav-back' : entry[2].tab ? 'nav-tab' : 'nav-push');
+  navBack = false;
   fill(main, current === '/pair' ? null : attention(), view.el);
   renderPanes(current);
   if (!location.hash) scrollTo(0, 0);
@@ -159,7 +166,7 @@ addEventListener('visibilitychange', async () => {
 
 async function boot() {
   registerSW();
-  addEventListener('popstate', () => { if (store.me) render(location.pathname + location.hash); });
+  addEventListener('popstate', () => { if (store.me) { navBack = true; render(location.pathname + location.hash); } });
   // A pairing link opened in a tab that already shows /pair changes only the
   // fragment (no reload): pick the code up anyway.
   addEventListener('hashchange', () => {

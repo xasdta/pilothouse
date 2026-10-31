@@ -32,9 +32,14 @@ if (fresh) {
   const r = await page.evaluate((id) => fetch('/api/requests/' + id).then((x) => x.json()), fresh);
   const c = await page.$(`.queue article[data-request="${fresh}"]`);
   await c.evaluate((el) => el.scrollIntoView({ block: 'center' }));
-  const primary = await c.$('.actions .btn.primary');
   if (r.checkpoint === 'permission') {
-    await primary.click();
+    // Permission cards allow on press-and-hold.
+    const hold = await c.$('.btn.hold');
+    const b = await hold.boundingBox();
+    await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+    await page.mouse.down();
+    await sleep(1300);
+    await page.mouse.up();
     await sleep(3500);
     const s = await page.evaluate((sid) => fetch('/api/sessions/' + sid).then((x) => x.json()), r.session_id);
     const act = await page.evaluate((sid) => fetch('/api/sessions/' + sid + '/activity?limit=3').then((x) => x.json()), r.session_id);

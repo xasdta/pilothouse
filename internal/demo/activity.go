@@ -10,6 +10,7 @@ import (
 
 	"github.com/xasdta/pilothouse/internal/api"
 	"github.com/xasdta/pilothouse/internal/core"
+	"github.com/xasdta/pilothouse/internal/transcript"
 )
 
 // feed is one session's activity: append-only items plus what they add up to.
@@ -221,6 +222,7 @@ func (c *Core) Activity(ctx context.Context, sessionID string, q api.ActivityQue
 		Usage:     &usage,
 		Files:     append([]api.FileChange{}, f.files...),
 		CatchUp:   catchUp(s, f.items, since, c.now()),
+		Receipt:   transcript.ReceiptOf(f.items, f.files),
 	}, nil
 }
 

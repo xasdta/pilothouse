@@ -1,8 +1,9 @@
 # Getting started
 
 ```sh
-pilothouse demo     # optional: try the phone app first, with pretend agents
-pilothouse setup    # set it up for real
+pilothouse demo         # optional: try the phone app first, with pretend agents
+pilothouse setup        # set it up for real
+pilothouse run claude   # start your agents through Pilothouse
 ```
 
 ## Try it: `pilothouse demo`
@@ -59,3 +60,27 @@ pilothouse doctor          # checks hooks, daemon, service, presence, notificati
 pilothouse pair            # pair another device
 pilothouse notify test     # send a test notification
 ```
+
+## Start your agents: `pilothouse run`
+
+Hooks see every agent however you start it, so approvals, rules and the
+Today log work with plain `claude`, `codex` or `opencode`. Starting them
+through Pilothouse adds what hooks can't give:
+
+```sh
+pilothouse run claude                                # in the project folder
+pilothouse run -- claude --continue                  # the agent's own flags go after --
+pilothouse run -n fix-login -d -- codex "fix the login bug"   # named, started detached
+```
+
+- **Replies from your phone are typed into the agent's terminal**, as if you
+  typed them. Recent Claude Code versions hold messages that arrive any other
+  way until you allow them at the desk, so this is the way to reply to Claude
+  from your phone. Codex can only take replies this way.
+- **Interrupt** and a **live terminal** on the phone.
+- The agent keeps running after you close the terminal: <kbd>ctrl+\</kbd>
+  detaches, `pilothouse attach <id>` brings it back, and it survives daemon
+  restarts and upgrades.
+
+To move a session you started with plain `claude`, quit it and start it again
+with `pilothouse run -- claude --continue`.

@@ -285,7 +285,14 @@ export async function setSize(page, vp) {
  * Clicks an element after centring it: a plain click can land on the fixed
  * top or tab bar when the element is scrolled just under it.
  */
+/** Waits until the screen has stopped moving (view slide-ins), as a finger would. */
+export async function settled(page) {
+  await page.waitForFunction(() => !document.getAnimations().some((a) => a.playState === 'running' && a.effect && a.effect.target && a.effect.target.classList && a.effect.target.classList.contains('view')), { timeout: 2000 }).catch(() => {});
+}
+
 export async function tap(page, sel) {
+  await settled(page);
+  await new Promise((r) => setTimeout(r, 120));
   for (let i = 0; ; i++) {
     const el = typeof sel === 'string' ? await page.waitForSelector(sel, { timeout: 5000 }) : sel;
     try {

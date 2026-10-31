@@ -1,12 +1,13 @@
 # Activity, usage and cost
 
 Pilothouse reads the transcripts Claude Code and Codex already write, so the
-inbox, the phone and the CLI can show what a session is doing, how many tokens
+web app, the phone and the CLI can show what a session is doing, how many tokens
 it used and roughly what that cost. Nothing is sent anywhere: transcripts are
 read on this machine, by the daemon, and only what you open is shown.
 
 - [What is read](#what-is-read)
 - [The activity feed](#the-activity-feed)
+- [The session report](#the-session-report)
 - [Catch me up](#catch-me-up)
 - [Usage and cost](#usage-and-cost)
 - [Daily budget](#daily-budget)
@@ -65,9 +66,33 @@ by default, up to 1,000), later reads return only items added or changed since
 — a tool call shows up again when its result arrives. After the daemon restarts
 or a transcript is rewritten, an old cursor gets the whole feed again.
 
+## The session report
+
+Opening a session in the web app shows a report of its latest turn, read off
+the same feed. Nothing in it is written by a model; it is counts, commands
+and numbers the transcript already holds.
+
+- **You asked**: the turn's prompt, marked when it came from Pilothouse or
+  from another agent.
+- **\<Agent\> says**: what the agent last wrote, folded when it is long.
+- **Proof**: the last run of each check in the turn (tests, lint, build) with
+  its result, and how many tests passed when the output says. A check that ran
+  *before* the turn's last edit is marked stale: it doesn't cover the final
+  code. Also the files changed (+N/−M), the commit the turn made, and calls
+  that were blocked or failed. Commands are matched on what actually runs, so
+  `echo "npm test"` or a heredoc mentioning a test runner is not a test run.
+  A turn that only searched and read says so.
+- **How it got there**: the turn step by step in plain words, with reads
+  folded together and subagents grouped; earlier turns below it.
+- **Changes**: every file changed with its diff.
+
+The API returns this as `receipt` on `GET /api/sessions/{id}/activity`
+(fields in `internal/api/v02.go`). Reading it with `peek=1` (the Today list
+does) doesn't count as you having looked at the session.
+
 ## Catch me up
 
-"Catch me up" summarises a session since you last opened it, in short
+"Catch me up" (`pilothouse activity <id> --catch-up`) summarises a session since you last opened it, in short
 sentences, most important first, for example:
 
 ```

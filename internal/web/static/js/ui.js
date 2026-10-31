@@ -61,22 +61,41 @@ export const isMac = () => /Mac|iPhone|iPad/.test(navigator.platform || navigato
 // ---------- Theme ----------
 
 export function theme() { return self.PilothouseTheme ? self.PilothouseTheme.get() : 'system'; }
-export function setTheme(mode) { if (self.PilothouseTheme) self.PilothouseTheme.set(mode); }
+export function setTheme(mode) { if (self.PilothouseTheme) self.PilothouseTheme.set(mode); syncThemeBtn(); }
+
+/** Is the app showing dark right now (an explicit choice, or the system's)? */
+export function isDark() {
+  const t = theme();
+  return t === 'dark' || (t !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches);
+}
+
+/** One tap: light ↔ dark. (Settings → Appearance can go back to System.) */
+function flipTheme() {
+  setTheme(isDark() ? 'light' : 'dark');
+}
+
+function syncThemeBtn() {
+  const dark = isDark();
+  for (const b of [el.themeBtn, el.sideTheme]) {
+    if (!b) continue;
+    fill(b, icon(dark ? 'sun' : 'moon'));
+    b.setAttribute('aria-label', dark ? 'Switch to light mode' : 'Switch to dark mode');
+    b.title = dark ? 'Light mode' : 'Dark mode';
+  }
+}
 
 // ---------- Shell ----------
 
 const el = {};
 
+// Phone tabs: Today lists every session; Tasks and Insights are one tap away in Settings.
 const TABS = [
-  ['/', 'inbox', 'Inbox'],
-  ['/sessions', 'sessions', 'Sessions'],
-  ['/tasks', 'tasks', 'Tasks'],
-  ['/insights', 'chart', 'Insights'],
-  ['/settings', 'more', 'More'],
+  ['/', 'book', 'Today'],
+  ['/rules', 'shield', 'Rules'],
+  ['/settings', 'settings', 'Settings'],
 ];
 const NAV = [
-  ['/', 'inbox', 'Inbox'],
-  ['/sessions', 'sessions', 'Sessions'],
+  ['/', 'book', 'Today'],
   ['/tasks', 'tasks', 'Tasks'],
   ['/insights', 'chart', 'Insights'],
   ['/rules', 'rules', 'Rules'],
@@ -92,9 +111,15 @@ export function mountShell(root) {
   el.left = h('div', { class: 'brand' });
   el.presence = presenceChip('');
   el.conn = h('span', { class: 'conn', role: 'img' });
+  el.themeBtn = h('button', { class: 'icon-btn theme-btn', type: 'button', onclick: flipTheme });
+  el.sideTheme = h('button', { class: 'icon-btn theme-btn', type: 'button', onclick: flipTheme });
+  syncThemeBtn();
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', syncThemeBtn);
   el.search = h('button', { class: 'icon-btn search-btn-top', type: 'button', 'aria-label': 'Search and commands', onclick: () => openPalette() }, icon('search'));
   el.topbar = h('header', { class: 'topbar' },
-    h('div', { class: 'topbar-in' }, el.left, h('div', { class: 'spacer' }), el.search, el.presence, el.conn));
+    h('div', { class: 'topbar-in' }, el.left, h('div', { class: 'spacer' }), el.themeBtn, el.search, el.presence, el.conn));
+  el.topTitle = h('span', { class: 'top-title', 'aria-hidden': 'true' });
+  add(el.topbar.firstChild, el.topTitle);
   el.banner = h('div', { class: 'banner', role: 'status', 'aria-live': 'polite' });
   el.attention = h('section', { class: 'attention', 'aria-labelledby': 'attention-title', hidden: true });
   el.main = h('main', { id: 'main', tabindex: '-1' });
@@ -116,7 +141,7 @@ export function mountShell(root) {
     h('nav', { 'aria-label': 'Main' }, Object.values(el.nav)),
     h('div', { class: 'side-head', id: 'side-sessions-head' }, 'Sessions'),
     h('nav', { 'aria-labelledby': 'side-sessions-head' }, el.sideSessions),
-    h('div', { class: 'side-foot' }, el.sidePresence, el.sideConn));
+    h('div', { class: 'side-foot' }, el.sidePresence, el.sideTheme, el.sideConn));
 
   // Desktop needs-you pane.
   el.queueCount = h('span', { class: 'count', hidden: true });
@@ -182,13 +207,22 @@ export function panes() {
  * opts.backOnPhone: the back button is for phones only (desktop has the nav);
  * opts.chrome=false: a bare screen (pairing) without bars or panes.
  */
+/** The small centred title of a sub-page's top bar ("Report", "Decision"). */
+export function setTopTitle(text) { if (el.topTitle) el.topTitle.textContent = text || ''; }
+
 export function chrome(opts = {}) {
+  setTopTitle(opts.center || '');
   if (opts.back) {
     el.left.className = '';
     fill(el.left, h('button', {
       class: 'back', type: 'button',
       onclick: () => (history.state && history.state.inApp ? history.back() : go(opts.backTo || '/', true)),
     }, icon('back', 'lg'), opts.back));
+  } else if (opts.title === 'today') {
+    // Today's screen is the day's log: "Thursday’s log".
+    el.left.className = 'brand log-title';
+    const day = new Date().toLocaleDateString([], { weekday: 'long' });
+    fill(el.left, icon('wheel'), h('span', null, `${day}’s log`));
   } else {
     el.left.className = 'brand';
     fill(el.left, appIcon(), h('span', null, 'Pilothouse'));
@@ -213,6 +247,7 @@ export function chrome(opts = {}) {
   el.presence.hidden = bare;
   el.conn.hidden = bare;
   el.search.hidden = bare;
+  el.themeBtn.hidden = bare;
   refreshChrome();
 }
 

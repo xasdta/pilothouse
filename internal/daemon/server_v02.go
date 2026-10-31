@@ -61,7 +61,7 @@ func (d *Daemon) handleActivity(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	q := api.ActivityQuery{Cursor: r.URL.Query().Get("cursor"), Limit: limit}
+	q := api.ActivityQuery{Cursor: r.URL.Query().Get("cursor"), Limit: limit, Peek: r.URL.Query().Get("peek") == "1"}
 	if v := r.URL.Query().Get("since"); v != "" {
 		t, err := time.Parse(time.RFC3339, v)
 		if err != nil {

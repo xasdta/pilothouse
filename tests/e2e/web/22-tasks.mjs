@@ -63,7 +63,7 @@ await run(async () => {
   check('agents: Claude and Codex; no OpenCode before Pilothouse has seen it', !!(await page.$('#agent-claude')) && !!(await page.$('#agent-codex')) && !(await page.$('#agent-opencode')));
   apiR.clear();
   await tap(page, '.task-form button[type=submit]');
-  check('empty prompt → asks for one, nothing sent', (await text(page, '#task-err')).includes('Tell the agent what to do') && apiR.find('POST', /\/api\/tasks$/).length === 0);
+  check('empty prompt → asks for one, nothing sent', (await text(page, '#task-err')).includes('Tell the agent what to do') && apiR.find('POST', /\/api\/tasks$/).length === 0, JSON.stringify([await text(page, '#task-err'), apiR.find('POST', /\/api\/tasks$/).length, await page.evaluate(() => document.activeElement && document.activeElement.outerHTML.slice(0, 80))]));
   await tap(page, 'label[for="repo-2"]');
   await tap(page, 'label[for="agent-codex"]');
   await page.type('#task-prompt', 'The webhook retry test is flaky on CI. Make it deterministic.');

@@ -47,8 +47,21 @@ async function tap(el) {
 }
 const getJSON = (page, path) => page.evaluate((p) => fetch(p, { credentials: 'same-origin' }).then((r) => r.json()), path);
 const card = (page, id) => page.$(`main article[data-request="${id}"]`);
+/** Press and hold an element for 1.3 s (Today's Hold to allow). */
+async function hold(page, el) {
+  await el.evaluate((e) => e.scrollIntoView({ block: 'center' }));
+  const b = await el.boundingBox();
+  await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+  await page.mouse.down();
+  await sleep(1300);
+  await page.mouse.up();
+}
 
-check('inbox shows four cards that need you', (await A.$$('main article.req')).length === 4, String((await A.$$('main article.req')).length));
+check('today lists the four requests that need you', (await A.$$('main .g-need .nrow')).length === 4, String((await A.$$('main .g-need .nrow')).length));
+check('today opens the oldest permission request in place', !!(await A.$('main article.req.ledger-dec[data-request="r_gitpush03"]')));
+
+// Questions, plans and diffs are answered on their request pages.
+await goto(A, demo, '/r/r_question05');
 
 // ---------- Question ----------
 const q = await card(A, 'r_question05');
@@ -59,16 +72,16 @@ const opts = await q.$$('.opt');
 check('question: options for both questions (+ Other…)', opts.length === 8, String(opts.length));
 check('question: single-select options are radios, multi-select are checkboxes',
   (await opts[0].evaluate((b) => b.getAttribute('role'))) === 'radio' && (await opts[4].evaluate((b) => b.getAttribute('role'))) === 'checkbox');
-await opts[3].click(); // Other…
+await tap(opts[3]); // Other…
 await sleep(100);
 const other = await q.$('.other-input');
 check('question: Other… reveals a text field', other && !(await other.evaluate((i) => i.hidden)));
 await other.type('Postgres tsvector');
 check('question: still disabled until every question is answered', await disabled(), await text(A, 'main article[data-request="r_question05"] .answer-hint'));
-await opts[4].click(); // Title
-await opts[6].click(); // Tags
-await opts[6].click(); // untick Tags
-await opts[5].click(); // Body
+await tap(opts[4]); // Title
+await tap(opts[6]); // Tags
+await tap(opts[6]); // untick Tags
+await tap(opts[5]); // Body
 check('question: enabled once answered', !(await disabled()));
 await shot(A, 'h-flow-question-filled');
 await (await sendBtn()).click();
@@ -81,9 +94,10 @@ const rq = await getJSON(A, '/api/requests/r_question05');
 check('question: the daemon recorded the answers', rq.status === 'decided' && rq.decision.answers.q2 === 'Title, Body', JSON.stringify(rq.decision));
 
 // ---------- Plan: request changes, then approve the revision ----------
+await goto(A, demo, '/r/r_plan0006');
 const p = await card(A, 'r_plan0006');
 await p.evaluate((el) => el.scrollIntoView());
-const [revise] = await p.$$('.actions .btn.secondary');
+const revise = await p.$('.actions .btn.outline');
 await tap(revise);
 const fb = await p.$('.revise-form textarea');
 check('plan: Request changes opens a feedback box', fb && (await fb.evaluate((t) => document.activeElement === t)));
@@ -95,11 +109,14 @@ await tap(fbSend);
 check('plan: shows “Changes requested”', await waitText(A, 'Changes requested', 3000, 'main article[data-request="r_plan0006"]'));
 s = await waitSent('r_plan0006');
 check('plan: feedback is a signed deny with the message', s && s.signed && s.payload.behavior === 'deny' && s.payload.message.includes('two releases'), JSON.stringify(s && s.payload));
+// The revised plan arrives in Today as a new row.
+await goto(A, demo, '/');
 const revised = await A.waitForFunction(() => {
-  const c = [...document.querySelectorAll('main article.req.k-plan')].find((el) => el.dataset.request !== 'r_plan0006');
-  return c && c.innerText.includes('What changed') && c.dataset.request;
+  const r = [...document.querySelectorAll('main .g-need a.lrow[data-request]')].find((el) => el.dataset.request !== 'r_plan0006' && el.innerText.includes('Review plan'));
+  return r && r.dataset.request;
 }, { timeout: 12000 }).then((h) => h.jsonValue(), () => '');
-check('plan: the agent comes back with a revised plan that includes the feedback', !!revised);
+if (revised) await goto(A, demo, '/r/' + revised);
+check('plan: the agent comes back with a revised plan that includes the feedback', !!revised && (await text(A, 'main')).toLowerCase().includes('what changed'));
 if (revised) {
   const rc = await card(A, revised);
   await rc.evaluate((el) => el.scrollIntoView());
@@ -111,20 +128,25 @@ if (revised) {
 }
 
 // ---------- Diff card ----------
+// Today's open decision shows a short diff; the request page has the rest.
+await goto(A, demo, '/');
+await tap(await A.$('main button.lrow[data-request="r_tfedit04"]'));
+await A.waitForSelector('main article.ledger-dec[data-request="r_tfedit04"]', { timeout: 3000 }).catch(() => {});
+check('diff: Today’s card offers the rest of the diff', (await text(A, 'main article[data-request="r_tfedit04"]')).includes('more lines'));
+await goto(A, demo, '/r/r_tfedit04');
 const tf = await card(A, 'r_tfedit04');
 await tf.evaluate((el) => el.scrollIntoView());
 check('diff: one file with +3 −3', (await tf.$$('.dfile')).length === 1 && (await tf.$eval('.dfile-head .stat', (e) => e.innerText)).replace(/\s+/g, ' ').includes('+3 −3'));
 // The inbox card shows a short diff; the rest is one tap away.
 check('diff: added and removed lines are marked', (await tf.$$('.dl.add')).length >= 1 && (await tf.$$('.dl.del')).length >= 1);
-check('diff: the inbox card offers the rest of the diff', (await text(A, 'main article[data-request="r_tfedit04"]')).includes('more lines'));
 check('diff: line numbers follow the hunk header', (await tf.$eval('.dl.ctx .n', (e) => e.textContent)) === '14');
 const head = await tf.$('.dfile-head');
 await tap(head);
 check('diff: a file collapses', (await head.evaluate((b) => b.getAttribute('aria-expanded'))) === 'false' && (await tf.$eval('.dbody', (b) => getComputedStyle(b).display)) === 'none');
 await tap(head);
 check('diff: and opens again', (await head.evaluate((b) => b.getAttribute('aria-expanded'))) === 'true');
-// The rule that fired is on the request page, not the inbox card.
-check('diff: risk label on the card, rule left to the request page', (await text(A, 'main article[data-request="r_tfedit04"]')).includes('Changes production infrastructure') && !(await text(A, 'main article[data-request="r_tfedit04"]')).includes('protect-prod'));
+// The request page names the risk and the rule that asked.
+check('diff: the request page shows the risk and the rule that asked', (await text(A, 'main article[data-request="r_tfedit04"]')).toLowerCase().includes('changes production infrastructure') && (await text(A, 'main article[data-request="r_tfedit04"]')).includes('protect-prod'));
 
 // ---------- Components: diff "show more", hostile Markdown ----------
 const comp = await A.evaluate(async () => {
@@ -153,7 +175,7 @@ check('markdown: formatting, code, tasks and tables render', comp.md.strong === 
 check('markdown: links show as text with their URL', comp.md.text.includes('click') && comp.md.text.includes('(javascript:window.__pwned=2)'));
 
 // ---------- Make it a rule (+ also answer) ----------
-await tap(await tf.$('.card-foot .link-btn'));
+await tap(await tf.$('.dec-links .dec-rule'));
 await A.waitForSelector('dialog.sheet[open] .sug', { timeout: 5000 });
 await shot(A, 'h-flow-rule-sheet');
 await axeCheck(A, 'rule sheet');
@@ -181,19 +203,19 @@ const any = await card(A, 'r_gitpush03');
 let rolled = false;
 if (any) {
   const id = await any.evaluate((el) => el.dataset.request);
-  const primary = await any.$('.actions .btn.primary');
+  const primary = await any.$('.btn.hold');
   const isPerm = await any.evaluate((el) => el.classList.contains('k-permission'));
   if (isPerm && primary) {
     await any.evaluate((el) => {
       window.__sawResolved = false;
       new MutationObserver(() => { if (el.classList.contains('resolved')) window.__sawResolved = true; }).observe(el, { attributes: true, attributeFilter: ['class'] });
     });
-    await tap(primary);
+    await hold(A, primary);
     await sleep(300);
     const optimistic = await A.evaluate(() => window.__sawResolved);
     rolled = await A.waitForFunction((rid) => {
       const c = document.querySelector(`main article[data-request="${rid}"]`);
-      return c && !c.classList.contains('resolved') && !c.querySelector('.actions .btn.primary').disabled;
+      return c && !c.classList.contains('resolved') && !c.querySelector('.btn.hold').disabled;
     }, { timeout: 4000 }, id).then(() => true, () => false);
     check('rollback: the card answered at once (optimistic)', optimistic);
     check('rollback: and came back when sending failed', rolled);
@@ -207,15 +229,16 @@ await A.setRequestInterception(false);
 // ---------- Stale protection: answered on another device ----------
 await goto(A, demo, '/');
 const push = await card(A, 'r_gitpush03');
-check('stale: git push card is open on A', push && !(await push.$eval('.actions .btn.primary', (b) => b.disabled)));
+check('stale: git push card is open on A', push && !(await push.$eval('.btn.hold', (b) => b.disabled)));
 await B.bringToFront();
+await goto(B, demo, '/r/r_gitpush03');
 const bCard = await card(B, 'r_gitpush03');
-await (await bCard.$('.actions .btn.primary')).click();
+await hold(B, await bCard.$('.btn.hold'));
 await waitText(B, 'Allowed', 3000, 'main article[data-request="r_gitpush03"]');
 await A.bringToFront();
 const disabledOnA = await A.waitForFunction(() => {
   const c = document.querySelector('main article[data-request="r_gitpush03"]');
-  return !c || (c.classList.contains('resolved') && [...c.querySelectorAll('.actions button')].every((b) => b.disabled));
+  return !c || (c.classList.contains('resolved') && [...c.querySelectorAll('.acts3 button')].every((b) => b.disabled));
 }, { timeout: 4000 }).then(() => true, () => false);
 check('stale: A’s card disables the moment B answers', disabledOnA);
 check('stale: A says who answered', await waitText(A, 'on another device', 2000) || !(await card(A, 'r_gitpush03')));

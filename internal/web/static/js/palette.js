@@ -6,7 +6,7 @@
 //                     questions: send / decline) on the selected or first request
 //   1–9               pick an option on a question card
 //   r                 reply to the selected session (or the one on screen)
-//   n                 new task       g i/s/t/n/r/,  go to inbox/sessions/tasks/insights/rules/settings
+//   n                 new task       g i/s/t/n/r/,  go to today (i or s)/tasks/insights/rules/settings
 //   Enter             open the selected item      ?  this help      Esc  close / clear
 //
 // Views opt in by marking elements: [data-nav] (j/k stops; with
@@ -133,7 +133,7 @@ function isTyping(t) {
 }
 
 let gPending = 0;
-const G = { i: '/', s: '/sessions', t: '/tasks', n: '/insights', r: '/rules', ',': '/settings' };
+const G = { i: '/', s: '/', t: '/tasks', n: '/insights', r: '/rules', ',': '/settings' };
 
 function onKey(e) {
   if (e.defaultPrevented) return;
@@ -234,7 +234,7 @@ function commands() {
   for (const t of [...store.tasks.values()].sort((a, b) => toMs(b.updated_at) - toMs(a.updated_at)).slice(0, 8)) {
     out.push({ group: 'Tasks', title: t.title, sub: `${t.status === 'review' ? 'Ready for review' : t.status} · ${t.branch}`, ico: 'tasks', run: () => go('/t/' + t.id) });
   }
-  const pages = [['Inbox', '/', 'inbox'], ['Sessions', '/sessions', 'sessions'], ['Tasks', '/tasks', 'tasks'], ['New task', '/new', 'plus'],
+  const pages = [['Today', '/', 'book'], ['Tasks', '/tasks', 'tasks'], ['New task', '/new', 'plus'],
     ['Insights', '/insights', 'chart'], ['Rules', '/rules', 'rules'], ['Settings', '/settings', 'settings']];
   for (const [title, path, ico] of pages) out.push({ group: 'Go to', title, sub: path === '/new' ? 'Start an agent in a fresh worktree' : '', ico, run: () => go(path) });
   const t = theme();
@@ -366,7 +366,7 @@ export function openHelp() {
         row(['j'], 'Next item'), row(['k'], 'Previous item'),
         row(['↵'], 'Open the selected item'), row(['esc'], 'Clear the selection'),
         row([mod, 'K'], 'Search and commands'), row(['/'], 'Search'),
-        row(['g', 'i'], 'Inbox'), row(['g', 's'], 'Sessions'),
+        row(['g', 'i'], 'Today'),
         row(['g', 't'], 'Tasks'), row(['g', 'r'], 'Rules')),
       h('h3', { class: 'keys-group' }, 'Agents'),
       h('dl', { class: 'keys' },

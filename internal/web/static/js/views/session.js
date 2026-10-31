@@ -7,9 +7,11 @@
 // Also exports the small helpers the other 0.2 views share (signed
 // actions, number formatting, extra icons), so they need no new modules.
 
-import { h, icon, agentName, repoName, stateLabel, agoLong, clock, relPath, fill, add, toMs } from '../dom.js';
+import { h, icon, inkStamp, agentName, repoName, stateLabel, agoLong, clock, relPath, fill, add, toMs } from '../dom.js';
 import { store, api, onEvent } from '../api.js';
 import { requestCard } from '../card.js';
+import { renderMarkdown } from '../markdown.js';
+import { askTitle, plainStep, commandLabel, fillProof } from './today.js';
 import { link, toast } from '../ui.js';
 import { avatar, section, sessionLine } from './rows.js';
 
@@ -196,7 +198,7 @@ export function usageChip(u, opts = {}) {
 
 const TOOL_ICONS = { shell: 'terminal', edit: 'pencil', read: 'file', web: 'globe', mcp: 'plug', other: 'spark' };
 const VIA_NOTE = {
-  message: 'Claude sees this as a message sent from Pilothouse, not typed by you.',
+  message: 'Claude Code may hold this until you allow it in its terminal. Start Claude with “pilothouse run claude” to avoid that.',
   terminal: 'Typed into the agent’s terminal, followed by Enter.',
   plugin: 'Sent through the agent’s Pilothouse plugin.',
 };
@@ -208,14 +210,16 @@ const STEPS_SHOWN = 8; // a long turn shows its last steps first
 /** Session detail: header, open requests, catch-up, reply, activity, files. */
 export function sessionView(id) {
   const enc = encodeURIComponent(id);
-  const root = h('div', { class: 'view sess' });
-  const headEl = h('div');
+  const root = h('div', { class: 'view sess rep' });
+  const headEl = h('div', { class: 'rhead' });
   const needsEl = h('div');
-  const catchEl = h('div');
-  const replyEl = h('div');
-  const feedEl = h('section', { class: 'section', 'aria-labelledby': 'act-h' });
+  const catchEl = h('div', { class: 'rbody' });
+  const replyEl = h('div', { class: 'rcompose' });
+  const feedEl = h('section', { class: 'rsec', 'aria-labelledby': 'act-h' });
   const filesEl = h('div');
-  add(root, headEl, needsEl, catchEl, replyEl, feedEl, filesEl);
+  const detailsEl = h('div');
+  add(root, headEl, needsEl, catchEl, feedEl, filesEl, detailsEl, replyEl);
+  let receipt = null;
 
   const since = lastVisit(id);
   let loadErr = null;
@@ -255,67 +259,45 @@ export function sessionView(id) {
   let moreOpen = false;
   function renderHead() {
     const s = store.sessions.get(id);
-    const key = JSON.stringify([s || null, usage, interruptArmed > Date.now(), !!loadErr]);
+    const key = JSON.stringify([s || null, usage, receipt && receipt.since, interruptArmed > Date.now(), !!loadErr]);
     if (key === headKey) return;
     headKey = key;
     if (!s) {
       fill(headEl, loadErr
-        ? h('div', { class: 'empty' }, h('h2', null, 'Session not found'), h('p', null, 'It may have ended more than a day ago.'))
-        : h('div', { class: 'card hero sess-hero skel-block', 'aria-busy': 'true' }, h('span', { class: 'sr-only' }, 'Loading…')));
+        ? h('div', { class: 'empty' }, h('h1', { class: 'page-title' }, 'Session not found'), h('p', null, 'It may have ended more than a day ago.'))
+        : h('div', { class: 'skel-block rk-skel', 'aria-busy': 'true' }, h('span', { class: 'sr-only' }, 'Loading…')));
       return;
     }
-    const caps = s.caps || {};
-    const live = s.state !== 'exited';
     const u = usage || s.usage;
-    const actions = [];
-    if (caps.watch && live) {
-      actions.push(link(`/s/${s.id}/terminal`, { class: 'btn secondary sess-act' }, icon('terminal', 'sm'), 'Open terminal'));
-    }
-    if (caps.interrupt && live) {
-      const armed = interruptArmed > Date.now();
-      actions.push(h('button', {
-        class: 'btn sess-act ' + (armed ? 'danger armed' : 'secondary'), type: 'button', id: 'interrupt-btn',
-        'aria-live': 'polite', onclick: onInterrupt,
-      }, icon('stop', 'sm'), armed ? 'Tap again to stop' : 'Interrupt'));
-    }
-    if (s.task_id) actions.push(link(`/t/${s.task_id}`, { class: 'btn secondary sess-act' }, ico('branch', 'sm'), 'Task'));
-    const meta = [agentName(s.agent), s.branch, s.mode === 'wrapped' ? 'pilothouse run' : null].filter(Boolean);
-    const line = sessionLine(s);
+    const took = receipt && receipt.since && toMs(receipt.since) ? Math.max(0, (toMs(s.updated_at) - toMs(receipt.since)) / 1000) : 0;
+    const meta = [agentName(s.agent), statusWords(s), took >= 60 ? fmtDuration(took) : null, u && u.cost_usd >= 0.01 ? '≈ ' + fmtUSD(u.cost_usd) : null].filter(Boolean);
     fill(headEl,
-      h('div', { class: 'card hero sess-hero' },
-        h('div', { class: 'hero-top' },
-          avatar(s),
-          h('div', { class: 'sess-title' },
-            h('h1', null, repoName(s)),
-            h('div', { class: 'sub' }, meta.join(' · ')))),
-        h('div', { class: 'sess-state' },
-          h('span', { class: 'pill ' + s.state, role: 'status' }, ACTIVE.has(s.state) ? h('span', { class: 'pulse-dot' }) : null, stateLabel(s)),
-          h('span', { class: 'sess-upd' }, 'updated ', h('time', { datetime: s.updated_at }, agoLong(s.updated_at))),
-          usageChip(u, { open: usageOpen, onToggle: (o) => { usageOpen = o; } })),
-        line && line !== stateLabel(s) ? h('p', { class: 'detail' }, line) : null,
-        s.last_message && line !== s.last_message && s.state !== 'waiting' ? h('div', { class: 'quote' }, s.last_message) : null,
-        actions.length ? h('div', { class: 'sess-actions' }, actions) : null,
-        h('details', { class: 'sess-more', open: moreOpen, ontoggle: (e) => { moreOpen = e.currentTarget.open; } },
-          h('summary', null, 'Details', ico('down', 'sm')),
-          h('dl', { class: 'kv' },
-            h('dt', null, 'Folder'), h('dd', { class: 'mono' }, s.cwd),
-            s.branch ? [h('dt', null, 'Branch'), h('dd', null, s.branch)] : null,
-            h('dt', null, 'Mode'), h('dd', null, s.mode === 'wrapped' ? 'Started with pilothouse run' : 'Observed through hooks'),
-            h('dt', null, 'Started'), h('dd', null, `${clock(s.started_at)} · ${agoLong(s.started_at)}`)))),
-    );
+      h('h1', { class: 'page-title rk' }, h('span', { class: 'ag ' + s.agent, 'aria-hidden': 'true' }), h('b', null, repoName(s)),
+        s.branch ? h('span', { class: 'br' }, ' · ' + s.branch) : null),
+      h('p', { class: 'rmeta' }, meta.join(' · ')));
+    fill(detailsEl, h('details', { class: 'rdetails', open: moreOpen, ontoggle: (e) => { moreOpen = e.currentTarget.open; } },
+      h('summary', null, 'Session details', ico('down', 'sm')),
+      h('dl', { class: 'kv' },
+        h('dt', null, 'Folder'), h('dd', { class: 'mono' }, s.cwd),
+        s.branch ? [h('dt', null, 'Branch'), h('dd', null, s.branch)] : null,
+        h('dt', null, 'Mode'), h('dd', null, s.mode === 'wrapped' ? 'Started with pilothouse run' : 'Observed through hooks'),
+        h('dt', null, 'Started'), h('dd', null, `${clock(s.started_at)} · ${agoLong(s.started_at)}`)),
+      u ? h('div', { class: 'rusage' }, usageChip(u, { open: usageOpen, onToggle: (o) => { usageOpen = o; } })) : null,
+      s.task_id ? link(`/t/${s.task_id}`, { class: 'btn secondary sess-act' }, ico('branch', 'sm'), 'Open its task') : null));
+    renderNeeds(true);
   }
 
   async function onInterrupt() {
     if (interruptArmed <= Date.now()) {
       interruptArmed = Date.now() + 3500;
-      renderHead();
+      renderNeeds(true);
       const b = document.getElementById('interrupt-btn');
       if (b) b.focus({ preventScroll: true });
-      setTimeout(() => { if (!destroyed) renderHead(); }, 3600);
+      setTimeout(() => { if (!destroyed) renderNeeds(true); }, 3600);
       return;
     }
     interruptArmed = 0;
-    renderHead();
+    renderNeeds(true);
     const res = await postAction(`/api/sessions/${enc}/reply`, 'reply', id, { interrupt: true });
     if (res.ok) {
       toast('Interrupted', 'ok');
@@ -325,49 +307,141 @@ export function sessionView(id) {
     }
   }
 
-  // ---- Open requests ----
+  // ---- What it needs or is doing now: a decision, the terminal, or the live step ----
   let needsKey = '';
-  function renderNeeds() {
+  const proofEl = h('div', { class: 'thisturn' });
+  function renderNeeds(force = false) {
+    const s = store.sessions.get(id);
     const open = [...store.requests.values()]
       .filter((r) => r.session_id === id && r.status === 'open')
       .sort((a, b) => toMs(a.expires_at) - toMs(b.expires_at));
-    const cards = open.map((r) => requestCard(r)); // refreshes cached cards in place
-    const key = open.map((r) => r.id).join(',');
-    if (key === needsKey) return; // re-filling would blur a half-typed deny reason
+    const perm = open.find((r) => r.checkpoint !== 'question' && r.checkpoint !== 'plan');
+    if (perm) requestCard(perm, { slot: 'session', variant: 'ledger', proof: proofEl, animate: false }); // refresh in place
+    if (receipt) fillProof(proofEl, receipt); else proofEl.hidden = true;
+    if (receipt) proofEl.hidden = false;
+    const key = [open.map((r) => r.id).join(','), s && s.state, s && s.state_detail, s && s.block_kind, interruptArmed > Date.now()].join('|');
+    if (key === needsKey && !force) return; // re-filling would blur a half-typed deny reason
+    if (key === needsKey && perm) return;
     needsKey = key;
-    fill(needsEl, open.length ? section('Needs you', open.length, h('div', { class: 'stack' }, cards), 'urgent') : null);
-  }
-
-  // ---- Catch me up ----
-  function renderCatchUp() {
-    const c = catchUp;
-    if (!c || catchDismissed || !c.lines || !c.lines.length) {
-      fill(catchEl);
+    if (!s) { fill(needsEl); return; }
+    const caps = s.caps || {};
+    const live = s.state !== 'exited';
+    const termBtn = caps.watch && live ? link(`/s/${s.id}/terminal`, { class: 'btn secondary' }, icon('terminal', 'sm'), 'Terminal') : null;
+    const armedN = interruptArmed > Date.now();
+    const intrBtn = caps.interrupt && live ? h('button', {
+      class: 'btn ' + (armedN ? 'danger armed' : 'ghost deny'), type: 'button', id: 'interrupt-btn', 'aria-live': 'polite', onclick: onInterrupt,
+    }, icon('stop', 'sm'), armedN ? 'Tap again to stop' : 'Interrupt') : null;
+    if (open.length) {
+      fill(needsEl, h('section', { class: 'rnow need', 'aria-labelledby': 'now-h' },
+        h('h2', { class: 'lbl need', id: 'now-h' }, 'Needs you', h('b', null, String(open.length))),
+        open.map((r) => (r === perm
+          ? h('div', { class: 'rdec' }, h('p', { class: 'rask' }, askTitle(r)), requestCard(r, { slot: 'session', variant: 'ledger', proof: proofEl, animate: false }))
+          : link('/r/' + r.id, { class: 'rgo' }, h('span', null, askTitle(r)), icon('chev', 'sm')))),
+        termBtn || intrBtn ? h('div', { class: 'racts pad' }, termBtn, intrBtn) : null));
       return;
     }
-    const counts = [
-      c.tool_calls ? `${c.tool_calls} tool ${c.tool_calls === 1 ? 'call' : 'calls'}` : null,
-      c.files ? `${c.files} ${c.files === 1 ? 'file' : 'files'}` : null,
-      c.errors ? `${c.errors} ${c.errors === 1 ? 'error' : 'errors'}` : null,
-    ].filter(Boolean);
-    fill(catchEl, h('section', { class: 'card catchup', 'aria-labelledby': 'catchup-h' },
-      h('div', { class: 'catchup-head' },
-        h('span', { class: 'catchup-ic' }, ico('sparkles', 'sm')),
-        h('h2', { id: 'catchup-h' }, 'Catch me up'),
-        c.since ? h('span', { class: 'catchup-since' }, 'since ', h('time', { datetime: c.since }, agoLong(c.since))) : null),
-      h('ul', { class: 'catchup-lines' }, c.lines.slice(0, 8).map((l) => h('li', null, l))),
-      h('div', { class: 'catchup-foot' },
-        counts.length ? h('span', { class: 'catchup-counts' + (c.errors ? ' has-err' : '') }, counts.join(' · ')) : h('span'),
-        h('button', {
-          class: 'btn ghost catchup-done', type: 'button',
-          onclick: () => { catchDismissed = true; markVisited(id); renderCatchUp(); },
-        }, 'Got it'))));
+    if (s.state === 'blocked') {
+      const words = s.block_kind === 'auth' ? `${agentName(s.agent)} needs you to sign in, in its terminal` : `${agentName(s.agent)} is asking something in its terminal`;
+      fill(needsEl, h('section', { class: 'rnow desk', 'aria-labelledby': 'now-h' },
+        h('span', { class: 'deskic', 'aria-hidden': 'true' }, icon('monitor')),
+        h('h2', { id: 'now-h' }, words),
+        s.state_detail ? h('div', { class: 'said' }, h('small', null, agentName(s.agent) + ' says'), s.state_detail) : null,
+        h('p', null, 'Pilothouse can see this prompt but can’t answer it. Answer it on your computer and this session carries on.'),
+        termBtn ? h('div', { class: 'racts' }, termBtn) : null));
+      return;
+    }
+    if (ACTIVE.has(s.state) || s.state === 'unknown') {
+      const st = s.state === 'unknown' ? { label: 'Quiet for ' + agoLong(s.updated_at).replace(/ ago$/, ''), raw: s.state_detail || '' } : plainStep(s.state_detail);
+      const intr = intrBtn;
+      fill(needsEl, h('section', { class: 'rnow live', 'aria-labelledby': 'now-h' },
+        h('h2', { class: 'lbl work', id: 'now-h' }, 'Right now'),
+        h('p', { class: 'livestep' }, h('span', { class: 'spin', 'aria-hidden': 'true' }), st.label),
+        st.raw ? h('p', { class: 'raw' }, st.raw) : null,
+        h('p', { class: 'elapsed' }, 'on this step for ', h('time', { 'data-since': s.updated_at }, elapsedText(s.updated_at))),
+        termBtn || intr ? h('div', { class: 'racts' }, termBtn, intr) : null));
+      return;
+    }
+    fill(needsEl);
+  }
+
+  // ---- The report: what you asked, what it says, proof, changes ----
+  let reportKey = '';
+  const openChecks = new Set();
+  let saysOpen = false;
+  function renderCatchUp() { renderReport(); }
+  function renderReport() {
+    const s = store.sessions.get(id);
+    if (actState !== 'ok') { fill(catchEl); return; }
+    const all = [...items.values()];
+    const turns = groupTurns(all);
+    const t = turns[turns.length - 1];
+    if (!t) { fill(catchEl); reportKey = ''; return; }
+    // Rebuild only when what the report shows changes, not on every poll:
+    // re-filling replays the stamps and fade-ins (looks like flicker).
+    const askedNow = t.prompts.length ? t.prompts[t.prompts.length - 1].text : '';
+    const saidNow = ([...t.steps].reverse().find((it) => it.kind === 'text' && !it.sidechain && it.text) || {}).text || '';
+    // Only what the proof shows: check results, not counts that tick with every step.
+    const ck = (c) => c && [c.name, c.status, c.fresh, c.count, c.failed_before].join(':');
+    const rcSig = receipt ? [ck(receipt.tests), ck(receipt.lint), ck(receipt.build), receipt.edits > 0,
+      receipt.edits ? '' : receipt.searches + '/' + receipt.reads].join('|') : '';
+    const sig = [t.key, askedNow, saidNow, rcSig, saysOpen, [...openChecks].join(',')].join('|');
+    if (sig === reportKey) return;
+    if (reportKey) catchEl.classList.add('settled'); // later rebuilds don't animate
+    reportKey = sig;
+    const parts = [];
+    const asked = t.prompts.length ? t.prompts[t.prompts.length - 1] : null;
+    if (asked && asked.text) {
+      parts.push(h('h2', { class: 'lbl' }, asked.source === 'pilothouse' ? 'You asked · from Pilothouse' : asked.source === 'peer' ? 'Another agent asked' : 'You asked'),
+        h('blockquote', { class: 'goalq' }, asked.text));
+    }
+    const said = [...t.steps].reverse().find((it) => it.kind === 'text' && !it.sidechain && it.text);
+    if (said) {
+      const md = renderMarkdown(said.text, { baseLevel: 3 });
+      const long = said.text.length > 420 || said.text.split('\n').length > 8;
+      parts.push(h('h2', { class: 'lbl' }, `${agentName(s ? s.agent : '')} says`),
+        h('div', { class: 'md says' + (long && !saysOpen ? ' clamp' : '') }, md),
+        long ? h('button', { class: 'readall', type: 'button', 'aria-expanded': String(saysOpen), onclick: () => { saysOpen = !saysOpen; reportKey = ''; renderReport(); } }, saysOpen ? 'Show less' : 'Read all') : null);
+    }
+    const rc = receipt;
+    if (rc && (rc.tests || rc.lint || rc.build || rc.edits)) {
+      const checks = [['tests', 'Tests'], ['lint', 'Lint'], ['build', 'Build']].filter(([k]) => rc[k]);
+      parts.push(h('h2', { class: 'lbl' }, 'Proof'));
+      const stamps = checks.filter(([k]) => rc[k].status !== 'running').map(([k, name]) => stamp(k, name, rc[k]));
+      if (stamps.length) parts.push(h('div', { class: 'stamps' }, stamps, h('p', { class: 'stampnote' }, 'Checked by commands that ran in this turn, not by the agent’s word.')));
+      if (checks.length) parts.push(h('div', { class: 'checks' }, checks.map(([k, name]) => checkRow(k, name, rc[k], t))));
+      else parts.push(h('p', { class: 'rnone' }, icon('flask', 'sm'), 'No tests, lint or build ran this turn.'));
+    } else if (rc && (rc.searches || rc.reads) && !rc.edits) {
+      parts.push(h('h2', { class: 'lbl' }, 'Proof'), h('p', { class: 'rnone ro' }, icon('search', 'sm'), `Read only: ${rc.searches} ${rc.searches === 1 ? 'search' : 'searches'}, ${rc.reads} ${rc.reads === 1 ? 'read' : 'reads'}, nothing changed.`));
+    }
+    fill(catchEl, parts);
+    renderFiles();
+  }
+
+  function stamp(kind, name, c) {
+    const ok = c.status === 'passed' && c.fresh;
+    const mid = c.status === 'failed' ? '✗' : !c.fresh ? '!' : kind === 'tests' ? (c.count ? String(c.count) : 'OK') : 'OK';
+    const top = c.status === 'failed' ? `${name.toUpperCase()} FAILED` : !c.fresh ? 'STALE' : kind === 'tests' ? 'TESTS PASSED' : name.toUpperCase();
+    return inkStamp(top, mid, c.name.toUpperCase(), ok ? 'ok' : c.status === 'failed' ? 'bad' : 'stale', mid.length > 3 ? 22 : 27);
+  }
+
+  function checkRow(kind, name, c, t) {
+    const key = kind;
+    const open = openChecks.has(key);
+    const run = [...t.steps].reverse().find((it) => it.kind === 'tool' && (it.summary || '').includes(c.command.slice(0, 40)));
+    const title = c.status === 'failed' ? `${name} failed` : c.status === 'running' ? `${name} running` : !c.fresh ? `${name} ran before the last edit` : `${name} passed${kind === 'tests' && c.count ? ' · ' + c.count : ''}`;
+    const cls = c.status === 'failed' ? 'bad' : c.status === 'running' ? 'run' : !c.fresh ? 'warn' : 'ok';
+    return h('button', { class: 'rchk' + (open ? ' open' : ''), type: 'button', 'aria-expanded': String(open), onclick: () => { if (open) openChecks.delete(key); else openChecks.add(key); reportKey = ''; renderReport(); } },
+      h('span', { class: 'ch' }, h('span', { class: 'st ' + cls, 'aria-hidden': 'true' }, icon(cls === 'ok' ? 'check' : cls === 'bad' ? 'x' : cls === 'run' ? 'hourglass' : 'alert', 'sm')),
+        h('span', { class: 'ct' }, title), h('time', { datetime: c.at }, agoLong(c.at)), icon('chevDown', 'sm', 'cv')),
+      h('span', { class: 'raw' }, c.command),
+      c.failed_before ? h('span', { class: 'note' }, `Failed ${c.failed_before === 1 ? 'once' : c.failed_before + ' times'} first` + failReason(t, c)) : null,
+      open && run && run.result ? h('pre', { class: 'out' }, run.result) : null);
   }
 
   // ---- Reply ----
   const replyText = h('textarea', {
     // data-shortcut: the `r` key (palette.js) focuses this box.
-    class: 'input reply-input', id: 'reply-text', 'data-shortcut': 'reply', rows: 2, maxlength: 16384, autocomplete: 'off',
+    class: 'input reply-input', id: 'reply-text', 'data-shortcut': 'reply', rows: 1, maxlength: 16384, autocomplete: 'off',
     'aria-describedby': 'reply-note', enterkeyhint: 'send',
   });
   const replyLabel = h('label', { class: 'sr-only', for: 'reply-text' }, 'Reply');
@@ -445,6 +519,7 @@ export function sessionView(id) {
     if (a.cursor) cursor = a.cursor;
     if (a.usage) usage = a.usage;
     if (a.files) files = a.files;
+    if (a.receipt) receipt = a.receipt;
     if (full && a.catch_up && !catchUp) catchUp = a.catch_up;
     actState = a.available === false ? 'unavailable' : 'ok';
     actNote = a.note || '';
@@ -542,16 +617,16 @@ export function sessionView(id) {
     poll(true);
   }
 
-  // ---- Activity: rendering ----
+  // ---- How it got there: each turn as a short voyage in plain words ----
   function renderFeed() {
     const s0 = store.sessions.get(id);
-    const sig = [actState, more, sent.length, s0 && s0.state, s0 && s0.state_detail, events ? events.length : -1, !!eventsErr,
+    const sig = [actState, more, sent.length, s0 && s0.state, s0 && s0.state_detail, events ? events.length : -1, !!eventsErr, [...openTurns].join(','), [...openSteps].join(','),
       ...[...items.values()].map((it) => `${it.id}:${it.pending ? 1 : 0}:${it.is_error ? 1 : 0}:${(it.result || '').length}:${(it.text || '').length}`),
     ].join('|');
     if (sig === feedKey) return;
     feedKey = sig;
-    const head = h('h2', { class: 'section-head', id: 'act-h' }, 'Activity',
-      actState === 'ok' && items.size ? h('span', { class: 'count' }, String(countTurns())) : null);
+    renderReport();
+    const head = h('h2', { class: 'lbl', id: 'act-h' }, 'How it got there');
     if (actState === 'loading') {
       fill(feedEl, head, h('div', { class: 'act-skel', 'aria-busy': 'true' },
         h('span', { class: 'sr-only' }, 'Loading activity…'),
@@ -559,24 +634,139 @@ export function sessionView(id) {
       return;
     }
     if (actState !== 'ok') {
-      fill(feedEl, h('h2', { class: 'section-head', id: 'act-h' }, 'Timeline'), fallbackNotice(), fallbackTimeline());
+      fill(feedEl, h('h2', { class: 'lbl', id: 'act-h' }, 'Timeline'), fallbackNotice(), fallbackTimeline());
       return;
     }
     const turns = groupTurns([...items.values()]);
     const s = store.sessions.get(id);
-    const parts = [];
+    const parts = [head];
     if (sent.length) parts.push(sentTurn());
     if (!turns.length && !sent.length) {
       parts.push(h('div', { class: 'act-empty' }, ico('history', 'lg'),
         h('p', null, s && ACTIVE.has(s.state) ? 'The agent is starting — its first steps show up here.' : 'Nothing has happened in this session yet.')));
     }
-    turns.slice().reverse().forEach((t, i) => parts.push(turnEl(t, i === 0 && !sent.length, s)));
+    const latest = turns[turns.length - 1];
+    if (latest) parts.push(h('div', { class: 'act-feed voyage-wrap' }, voyage(latest, true, s)));
+    const earlier = turns.slice(0, -1).reverse();
+    if (earlier.length) {
+      parts.push(h('h2', { class: 'lbl' }, 'Earlier', h('b', null, String(earlier.length))));
+      parts.push(h('div', { class: 'earlier' }, earlier.map((t) => earlierTurn(t, s))));
+    }
     if (more) {
       parts.push(h('button', { class: 'btn ghost block act-more', type: 'button', onclick: loadEarlier }, ico('history', 'sm'), 'Show earlier activity'));
     } else if (limit >= MAX_LIMIT && items.size >= MAX_LIMIT) {
       parts.push(h('p', { class: 'quiet' }, 'Older activity isn’t shown here.'));
     }
-    fill(feedEl, head, h('div', { class: 'act-feed' }, parts));
+    if (feedEl.childNodes.length) feedEl.classList.add('settled');
+    fill(feedEl, parts);
+  }
+
+  function earlierTurn(t, s) {
+    const det = h('details', { class: 'eturn' });
+    if (openTurns.has(t.key)) det.open = true;
+    const p = t.prompts[0];
+    const stats = turnStats(t);
+    add(det, h('summary', null,
+      h('span', { class: 'ep' }, p ? (p.text || 'Prompt') : t.n ? `Turn ${t.n}` : 'Session start'),
+      h('span', { class: 'em' }, [stats.tools ? `${stats.tools} ${stats.tools === 1 ? 'step' : 'steps'}` : null, stats.errors ? `${stats.errors} failed` : null, t.at ? clock(t.at) : null].filter(Boolean).join(' · ')),
+      ico('down', 'sm', 'cv')));
+    const body = h('div', { class: 'ebody' });
+    add(det, body);
+    if (det.open) fill(body, voyage(t, false, s));
+    det.addEventListener('toggle', () => { if (det.open) { openTurns.add(t.key); fill(body, voyage(t, false, s)); } else openTurns.delete(t.key); });
+    return det;
+  }
+
+  /** A turn's steps as voyage nodes: reads and searches folded, checks named, bumps kept. */
+  function voyage(t, latest, s) {
+    const nodes = [];
+    const steps = groupSteps(t.steps);
+    const lastText = [...t.steps].reverse().find((it) => it.kind === 'text' && !it.sidechain);
+    let reads = [];
+    const flushReads = () => {
+      if (!reads.length) return;
+      const searches = reads.filter(isSearch).length;
+      const nread = reads.length - searches;
+      const label = searches && nread ? `Explored the code · ${searches} ${searches === 1 ? 'search' : 'searches'}, ${nread} ${nread === 1 ? 'read' : 'reads'}`
+        : searches ? `Searched the code${searches > 1 ? ' · ' + searches + ' times' : ''}` : `Read ${nread} ${nread === 1 ? 'file' : 'files'}`;
+      const group = reads;
+      const key = 'r:' + group[0].id;
+      nodes.push(node('read', searches ? 'search' : 'file', label, null, group.length > 1 ? key : null,
+        group.length > 1 ? group.map((it) => h('span', { class: 'raw' }, rawOf(it))) : [h('span', { class: 'raw' }, rawOf(group[0]))]));
+      reads = [];
+    };
+    for (const st of steps) {
+      if (st.group) {
+        flushReads();
+        const n = st.items.filter((x) => x.kind === 'tool').length;
+        const running = st.items.some((x) => x.pending);
+        const key = 'g:' + (st.head ? st.head.id : st.items[0].id);
+        const lines = st.items.filter((x) => x.kind === 'tool' || x.kind === 'text').map((x) => h('span', { class: 'raw' }, x.kind === 'text' ? oneLine(x.text, 140) : rawOf(x)));
+        if (st.tail) lines.push(h('span', { class: 'sub' }, st.tail.summary || st.tail.text || 'Finished'));
+        nodes.push(node('sub' + (running ? ' now' : ''), 'layers', 'Used a helper agent' + (st.head && (st.head.summary || st.head.text) ? ': ' + (st.head.summary || st.head.text) : ''),
+          `${n} ${n === 1 ? 'step' : 'steps'}` + (running ? ' · running' : ''), key, lines, false, null, true));
+        continue;
+      }
+      const it = st;
+      if (it.kind === 'tool' && (it.tool_kind === 'read' || readShell(it)) && !it.is_error) { reads.push(it); continue; }
+      flushReads();
+      if (it.kind === 'tool') nodes.push(toolNode(it));
+      else if (it.kind === 'text' && it !== lastText) nodes.push(node('say', 'message', null, null, null, [h('q', { class: 'vq' }, oneLine(it.text, 200))]));
+      else if (it.kind === 'error') nodes.push(node('fail', 'alert', it.summary || 'Error', it.text ? oneLine(it.text, 160) : null));
+      else if (it.kind === 'prompt' && !it.sidechain) nodes.push(node('say', 'user', 'You said', oneLine(it.text, 160)));
+      else if (it.kind === 'system') nodes.push(node('sys', 'spark', it.text || it.summary || ''));
+    }
+    flushReads();
+    const working = latest && s && ACTIVE.has(s.state);
+    const u = usage || (s && s.usage);
+    if (working) nodes.push(node('now', null, s.state_detail ? plainStep(s.state_detail).label : 'Working', 'now', null, null, true));
+    else if (latest && s && s.state !== 'blocked') {
+      const took = receipt && receipt.since && toMs(receipt.since) ? Math.max(0, (toMs(s.updated_at) - toMs(receipt.since)) / 1000) : 0;
+      nodes.push(node('end', 'anchor', s.state === 'exited' ? 'Session ended' : 'Finished', [took >= 60 ? fmtDuration(took) : null, u && u.cost_usd >= 0.01 ? '≈ ' + fmtUSD(u.cost_usd) : null].filter(Boolean).join(' · ') || null));
+    }
+    return h('ol', { class: 'voyage' }, nodes);
+  }
+
+  function toolNode(it) {
+    const raw = rawOf(it);
+    const cmd = (it.summary || '').replace(/^Run:\s*/, '');
+    const denied = it.is_error && /\b(denied|blocked|refused|not allowed)\b/i.test(it.result || '');
+    const res = (it.result || '').trim().split('\n').filter(Boolean);
+    const lastLine = res.length ? res[res.length - 1] : '';
+    let cls = 'step', ic = 'spark', label;
+    if (it.tool_kind === 'shell') {
+      const kind = /(?:^|[\s;&|(])(?:(?:npm|pnpm|yarn|bun)(?:\s+run)?\s+test|go\s+test|cargo\s+test|pytest|jest|vitest|mocha|make\s+test)\b/.test(cmd) ? 'Tests'
+        : /(?:^|[\s;&|(])(?:(?:npm|pnpm|yarn|bun)(?:\s+run)?\s+(?:lint|typecheck)|eslint|golangci-lint|staticcheck|go\s+vet|ruff|cargo\s+clippy)\b/.test(cmd) ? 'Lint'
+          : /(?:^|[\s;&|(])(?:(?:npm|pnpm|yarn|bun)(?:\s+run)?\s+build|go\s+build|cargo\s+build|vite\s+build|next\s+build)\b/.test(cmd) ? 'Build' : '';
+      const commit = cmd.match(/\bgit\s+commit\b.*?-[a-zA-Z]*m\s*["']([^"'\n]+)/);
+      if (denied) { cls = 'block'; ic = 'shieldOff'; const l = commandLabel(cmd); label = 'Blocked: ' + l[0].toLowerCase() + l.slice(1); }
+      else if (it.pending) { cls = 'now'; ic = 'hourglass'; label = kind ? `${kind} running` : commandLabel(cmd); }
+      else if (kind) { cls = it.is_error ? 'fail' : 'ok'; ic = it.is_error ? 'x' : 'check'; label = it.is_error ? `${kind} failed` : `${kind} passed`; }
+      else if (commit) { cls = 'ok'; ic = 'branch'; label = `Committed “${commit[1]}”`; }
+      else if (/\bgit\s+push\b/.test(cmd)) { cls = it.is_error ? 'fail' : 'ok'; ic = 'upload'; label = it.is_error ? 'Push failed' : 'Pushed'; }
+      else { cls = it.is_error ? 'fail' : 'step'; ic = it.is_error ? 'x' : 'terminal'; label = it.is_error ? commandLabel(cmd) + ' failed' : commandLabel(cmd); }
+    } else if (it.tool_kind === 'edit') {
+      ic = 'pencil';
+      const path = (it.summary || '').replace(/^(?:Edit|Write):?\s*/, '');
+      label = (/^Write/.test(it.summary || '') ? 'Wrote ' : 'Edited ') + (path.split('/').pop() || 'a file');
+      if (it.is_error) { cls = denied ? 'block' : 'fail'; ic = denied ? 'shieldOff' : 'x'; label = (denied ? 'Blocked: ' : 'Couldn’t edit ') + (path.split('/').pop() || 'a file'); }
+    } else if (it.tool_kind === 'web') { ic = 'globe'; label = 'Read the web'; }
+    else if (it.tool_kind === 'mcp') { ic = 'plug'; label = 'Used ' + ((it.summary || '').replace(/^MCP\s+/, '').split(':')[0] || it.tool); }
+    else { label = it.summary || it.tool || 'Used a tool'; }
+    const sub = it.is_error && !denied && lastLine ? oneLine(lastLine, 140) : null;
+    return node(cls + ' k-' + (it.tool_kind || 'other') + (it.pending ? ' pending' : ''), ic, label, sub, it.result ? 'o:' + it.id : null, [h('span', { class: 'raw' }, raw)], it.pending, it.result);
+  }
+
+  /** One voyage node; key makes it expandable (its raw lines, or the output). */
+  function node(cls, ic, label, sub, key, extra, spin, output, folded) {
+    const open = key && openSteps.has(key);
+    const shownExtra = !extra ? null : folded ? (open ? extra : null) : key && !output && !open ? extra.slice(0, 1) : extra;
+    const body = h('div', { class: 'vt2' }, label ? h('b', null, label) : null, sub ? h('span', { class: 'sub' }, sub) : null,
+      shownExtra, open && output ? h('pre', { class: 'out' }, output) : null);
+    const mark = h('span', { class: 'vm', 'aria-hidden': 'true' }, spin ? h('span', { class: 'spin' }) : ic ? icon(ic, 'sm') : null);
+    if (!key) return h('li', { class: 'vs ' + cls }, mark, body);
+    return h('li', { class: 'vs ' + cls },
+      mark, h('button', { class: 'vbtn', type: 'button', 'aria-expanded': String(!!open), onclick: () => { if (open) openSteps.delete(key); else openSteps.add(key); feedKey = ''; renderFeed(); } }, body));
   }
 
   function countTurns() {
@@ -759,7 +949,7 @@ export function sessionView(id) {
     return list.length ? h('ol', { class: 'timeline' }, list) : h('p', { class: 'quiet' }, 'Nothing has happened yet.');
   }
 
-  // ---- Files changed ----
+  // ---- Changes ----
   let allFiles = false;
   function renderFiles() {
     if (!files || !files.length) { fill(filesEl); return; }
@@ -767,10 +957,10 @@ export function sessionView(id) {
     const added = files.reduce((n, f) => n + (f.added || 0), 0);
     const removed = files.reduce((n, f) => n + (f.removed || 0), 0);
     const shown = allFiles ? files : files.slice(0, 8);
-    fill(filesEl, h('section', { class: 'section', 'aria-labelledby': 'files-h' },
-      h('h2', { class: 'section-head', id: 'files-h' }, 'Files changed', h('span', { class: 'count' }, String(files.length)),
-        h('span', { class: 'files-total' }, h('span', { class: 'n-add' }, '+' + added), ' ', h('span', { class: 'n-del' }, '−' + removed))),
-      h('ul', { class: 'list files' }, shown.map((f) => fileRow(f, s && s.cwd))),
+    fill(filesEl, h('section', { class: 'rsec', 'aria-labelledby': 'files-h' },
+      h('h2', { class: 'lbl', id: 'files-h' }, `Changes · ${files.length} ${files.length === 1 ? 'file' : 'files'} `,
+        h('span', { class: 'n-add' }, '+' + added), h('span', { class: 'n-del' }, '−' + removed)),
+      h('ul', { class: 'list files rfiles' }, shown.map((f) => fileRow(f, s && s.cwd))),
       files.length > shown.length ? h('button', {
         class: 'btn ghost block act-more', type: 'button', onclick: () => { allFiles = true; renderFiles(); },
       }, `Show all ${files.length} files`) : null));
@@ -781,6 +971,7 @@ export function sessionView(id) {
     renderHead();
     renderNeeds();
     renderReply();
+    renderReport();
     if (actState !== 'loading') renderFeed(); // the "Working…" row follows the live state
   }
 
@@ -809,6 +1000,9 @@ export function sessionView(id) {
     if (!destroyed) render();
   }
 
+  const clocks = setInterval(() => {
+    for (const el of root.querySelectorAll('[data-since]')) el.textContent = elapsedText(el.getAttribute('data-since'));
+  }, 1000);
   render();
   renderFeed();
   ensureSession();
@@ -820,6 +1014,7 @@ export function sessionView(id) {
     update: render,
     destroy() {
       destroyed = true;
+      clearInterval(clocks);
       off();
       clearTimeout(timer);
       clearTimeout(refetch);
@@ -827,6 +1022,52 @@ export function sessionView(id) {
       markVisited(id);
     },
   };
+}
+
+// ---------- Report helpers ----------
+
+/** "finished 3 min ago", "working", "needs you" — the state in words. */
+function statusWords(s) {
+  switch (s.state) {
+    case 'working': return 'working';
+    case 'starting': return 'ready for a prompt';
+    case 'blocked': return 'waiting on you';
+    case 'errored': return 'stopped with an error ' + agoLong(s.updated_at);
+    case 'exited': return 'ended ' + agoLong(s.updated_at);
+    case 'unknown': return 'quiet';
+    default: return 'finished ' + agoLong(s.updated_at);
+  }
+}
+
+/** ": expected 3 attempts, got 5" — the telling line of the check's last failed run. */
+function failReason(t, c) {
+  const fail = [...t.steps].reverse().find((it) => it.kind === 'tool' && it.is_error && (it.summary || '').includes(c.command.slice(0, 40)));
+  const lines = ((fail && fail.result) || '').split('\n').map((l) => l.trim()).filter(Boolean);
+  const telling = lines.find((l) => /expected|assert|want|got|error:/i.test(l) && !/^(FAIL|ok)\b/.test(l)) || '';
+  return telling ? ': ' + oneLine(telling.replace(/^[^:]*_test\.go:\d+:\s*/, '').replace(/^[×✗x]\s*/, ''), 90) : ', then passed';
+}
+
+function elapsedText(t) {
+  const sec = Math.max(0, Math.floor((Date.now() - toMs(t)) / 1000));
+  if (sec >= 3600) return Math.floor(sec / 3600) + 'h ' + String(Math.floor((sec % 3600) / 60)).padStart(2, '0') + 'm';
+  return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0');
+}
+
+function oneLine(t, max) {
+  const s = String(t || '').replace(/\s+/g, ' ').trim();
+  return s.length > max ? s.slice(0, max - 1) + '…' : s;
+}
+
+function isSearch(it) {
+  return /grep|glob|search|find/i.test(it.tool || '') || /^Search\b/.test(it.summary || '') || /^Run:\s*(?:cd\s+\S+\s*(?:&&|;)\s*)?(?:grep|rg|ag|find|fd)\b/.test(it.summary || '');
+}
+
+function readShell(it) {
+  return it.tool_kind === 'shell' && /^Run:\s*(?:cd\s+\S+\s*(?:&&|;)\s*)?(?:grep|rg|ag|find|fd|cat|head|tail|sed\s+-n|less|wc|ls|tree)\b/.test(it.summary || '');
+}
+
+function rawOf(it) {
+  return (it.summary || it.tool || '').replace(/^(?:Run|Read|Edit|Write|Search|Fetch):?\s+/, '');
 }
 
 // ---------- Feed structure ----------

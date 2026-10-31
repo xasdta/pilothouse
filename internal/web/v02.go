@@ -161,7 +161,7 @@ func (s *Server) handleActivity(w http.ResponseWriter, r *http.Request) {
 		writeUnsupported(w, "")
 		return
 	}
-	q := api.ActivityQuery{Cursor: r.URL.Query().Get("cursor")}
+	q := api.ActivityQuery{Cursor: r.URL.Query().Get("cursor"), Peek: r.URL.Query().Get("peek") == "1"}
 	if v := r.URL.Query().Get("limit"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 1 {

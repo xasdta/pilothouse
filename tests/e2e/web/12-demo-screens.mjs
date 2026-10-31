@@ -18,7 +18,6 @@ const routes = [
   ['request-plan', '/r/r_plan0006'],
   ['request-question', '/r/r_question05'],
   ['request-diff', '/r/r_tfedit04'],
-  ['sessions', '/sessions'],
   ['rules', '/rules'],
   ['settings', '/settings'],
 ].filter(([n]) => !only || n.includes(only));

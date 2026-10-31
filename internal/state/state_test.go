@@ -135,6 +135,35 @@ func TestResolve(t *testing.T) {
 			}},
 			state: api.StateStarting, rule: RuleStarting, fresh: []bool{false},
 		},
+		{
+			name:  "just started is starting",
+			in:    Input{HasHooks: true, Evidence: []Evidence{hook(5*time.Second, api.StateStarting, "")}},
+			state: api.StateStarting, rule: RuleHook, fresh: []bool{true},
+		},
+		{
+			name:  "started and silent past the grace is waiting for a prompt",
+			in:    Input{HasHooks: true, Evidence: []Evidence{hook(StartGrace+time.Second, api.StateStarting, "")}},
+			state: api.StateWaiting, rule: RuleIdleStart, fresh: []bool{true},
+		},
+		{
+			name:  "started days ago and never used is still waiting, not stale",
+			in:    Input{HasHooks: true, Evidence: []Evidence{hook(48*time.Hour, api.StateStarting, "")}},
+			state: api.StateWaiting, rule: RuleIdleStart, fresh: []bool{true},
+		},
+		{
+			name: "work after a start wins",
+			in: Input{HasHooks: true, Evidence: []Evidence{
+				hook(time.Minute, api.StateStarting, ""), hook(time.Second, api.StateWorking, ""),
+			}},
+			state: api.StateWorking, rule: RuleHook, fresh: []bool{false, true},
+		},
+		{
+			name: "pending permission beats an idle start",
+			in: Input{PendingPermission: true, HasHooks: true, Evidence: []Evidence{
+				hook(time.Hour, api.StateStarting, ""),
+			}},
+			state: api.StateBlocked, kind: api.BlockPermission, rule: RulePermission, fresh: []bool{true},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -177,6 +206,8 @@ func TestNeedsAttention(t *testing.T) {
 		{api.StateWorking, "", api.StateErrored, "", true},
 		{api.StateWaiting, "", api.StateExited, "", true},
 		{api.StateStarting, "", api.StateUnknown, "", false},
+		{api.StateStarting, "", api.StateWaiting, "", false},
+		{api.StateStarting, "", api.StateBlocked, api.BlockPermission, true},
 	}
 	for _, tt := range tests {
 		if got := NeedsAttention(tt.ps, tt.pk, tt.s, tt.k); got != tt.want {

@@ -40,6 +40,40 @@ export function h(tag, attrs, ...kids) {
 }
 
 /**
+ * svg('circle', {cx: 10, class: 'x'}, ...kids): an SVG element (artwork
+ * built from data, never parsed from markup). Attributes are set as given.
+ */
+export function svg(tag, attrs, ...kids) {
+  const el = document.createElementNS(SVG, tag);
+  if (attrs) for (const [k, v] of Object.entries(attrs)) if (v != null && v !== false) el.setAttribute(k, String(v));
+  append(el, kids);
+  return el;
+}
+
+let stampN = 0;
+/**
+ * inkStamp('TESTS PASSED', '48', 'PNPM TEST', 'ok'): a round rubber stamp
+ * (top and bottom text on arcs, a big middle), inked by the #ink filter.
+ * tone: ok | bad | stale | ro. Thumps in when its view enters.
+ */
+export function inkStamp(top, mid, bot, tone = 'ok', midSize = 27) {
+  const id = 'stp' + (++stampN);
+  const t = (attrs, text) => svg('text', { fill: 'currentColor', 'text-anchor': 'middle', 'font-weight': 800, ...attrs }, text);
+  return h('div', { class: 'stampw ' + tone, role: 'img', 'aria-label': [top, mid, bot].filter(Boolean).join(' ') },
+    svg('svg', { viewBox: '0 0 120 120', 'aria-hidden': 'true', focusable: 'false' },
+      svg('defs', null, svg('path', { id: id + 't', d: 'M22,60 A38,38 0 0 1 98,60' }), svg('path', { id: id + 'b', d: 'M12,60 A48,48 0 0 0 108,60' })),
+      svg('g', { filter: 'url(#ink)' },
+        svg('circle', { cx: 60, cy: 60, r: 55, fill: 'none', stroke: 'currentColor', 'stroke-width': 3.4 }),
+        svg('circle', { cx: 60, cy: 60, r: 50, fill: 'none', stroke: 'currentColor', 'stroke-width': 1.2 }),
+        svg('circle', { cx: 60, cy: 60, r: 31, fill: 'none', stroke: 'currentColor', 'stroke-width': 1.3 }),
+        t({ 'font-size': 9.6, 'letter-spacing': 1.5 }, svg('textPath', { href: '#' + id + 't', startOffset: '50%' }, top)),
+        t({ 'font-size': 9.5, 'letter-spacing': 1.5 }, svg('textPath', { href: '#' + id + 'b', startOffset: '50%' }, bot)),
+        t({ x: 60, y: 60 + midSize * 0.36, 'font-size': midSize }, mid),
+        t({ x: 12, y: 63.5, 'font-size': 8, 'font-weight': 400 }, '★'),
+        t({ x: 108, y: 63.5, 'font-size': 8, 'font-weight': 400 }, '★'))));
+}
+
+/**
  * fill(el, ...kids) replaces el's children; add(el, ...kids) appends.
  * Unlike the native replaceChildren/append they skip null/undefined/false
  * (which the DOM would render as the text "null") and flatten arrays.
@@ -151,6 +185,8 @@ const ICONS = {
   eye: ['M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z', 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z'],
   info: ['M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z', 'M12 11v6', 'M12 7.5h.01'],
   flask: ['M9 3h6', 'M10 3v6L4.5 18.5A1.7 1.7 0 0 0 6 21h12a1.7 1.7 0 0 0 1.5-2.5L14 9V3', 'M7 15h10'],
+  wheel: ['M12 18.5a6.5 6.5 0 1 0 0-13 6.5 6.5 0 0 0 0 13Z', 'M12 14.2a2.2 2.2 0 1 0 0-4.4 2.2 2.2 0 0 0 0 4.4Z', 'M12 2.5v7.3', 'M12 14.2v7.3', 'M2.5 12h7.3', 'M14.2 12h7.3', 'M5.3 5.3l5.1 5.1', 'M13.6 13.6l5.1 5.1', 'M18.7 5.3l-5.1 5.1', 'M10.4 13.6l-5.1 5.1'],
+  book: ['M6 3.5h11.5a1 1 0 0 1 1 1V20.5H7.5A2.5 2.5 0 0 1 5 18V4.5a1 1 0 0 1 1-1Z', 'M5 18a2.5 2.5 0 0 1 2.5-2.5h11', 'M9 7.5h6'],
   agent: ['M12 3v2', 'M5 9a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2Z', 'M9.5 12h.01', 'M14.5 12h.01', 'M9.5 15.5h5'],
 };
 

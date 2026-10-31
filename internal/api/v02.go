@@ -236,6 +236,9 @@ type ActivityQuery struct {
 	Cursor string    `json:"cursor,omitempty"` // from a previous Activity: only newer items
 	Limit  int       `json:"limit,omitempty"`  // default 200, max 1000 (newest kept)
 	Since  time.Time `json:"since,omitempty"`  // catch-up start; zero = when a person last looked
+	// Peek reads without counting as a person looking: the next catch-up
+	// still starts from their last real visit (the home screen's receipts).
+	Peek bool `json:"peek,omitempty"`
 }
 
 // Activity is a session's feed plus what can be derived from it.
@@ -248,6 +251,40 @@ type Activity struct {
 	Usage     *Usage         `json:"usage,omitempty"`
 	Files     []FileChange   `json:"files,omitempty"`
 	CatchUp   *CatchUp       `json:"catch_up,omitempty"`
+	Receipt   *Receipt       `json:"receipt,omitempty"`
+}
+
+// Receipt is what a session's latest turn did, read off its transcript:
+// the checks it ran with their last result, the files it changed, the
+// commit it made and the calls refused or failed. Counts, commands and
+// parsed numbers only; nothing is summarised.
+type Receipt struct {
+	Turn     int        `json:"turn"`
+	Since    time.Time  `json:"since"` // the turn's prompt (zero: no prompt seen)
+	Searches int        `json:"searches"`
+	Reads    int        `json:"reads"`
+	Edits    int        `json:"edits"` // edit tool calls
+	Files    int        `json:"files"` // distinct files changed
+	Added    int        `json:"added"`
+	Removed  int        `json:"removed"`
+	LastEdit *time.Time `json:"last_edit,omitempty"`
+	Tests    *Check     `json:"tests,omitempty"`
+	Lint     *Check     `json:"lint,omitempty"`
+	Build    *Check     `json:"build,omitempty"`
+	Commit   string     `json:"commit,omitempty"` // subject of the turn's last git commit
+	Blocked  int        `json:"blocked"`          // tool calls refused (by a person or a rule)
+	Failed   int        `json:"failed"`           // other tool calls that failed
+}
+
+// Check is the last run of a test, lint or build command in a turn.
+type Check struct {
+	Name         string    `json:"name"` // the runner as people say it: "go test", "pnpm lint"
+	Command      string    `json:"command"`
+	At           time.Time `json:"at"`
+	Status       string    `json:"status"`                  // running | passed | failed
+	Count        int       `json:"count,omitempty"`         // tests passed, when the output says
+	Fresh        bool      `json:"fresh"`                   // ran after the turn's last edit (or nothing was edited)
+	FailedBefore int       `json:"failed_before,omitempty"` // failed runs of this check earlier in the turn
 }
 
 // ---------- Insights (F6) ----------

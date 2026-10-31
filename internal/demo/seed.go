@@ -150,6 +150,7 @@ func (c *Core) seed() {
 	item(ph, 24*m, api.ActivityItem{Kind: api.ActivityTool, Tool: "Read", ToolKind: api.ToolRead, Summary: "Read internal/web/signed.go", Result: "Read 134 lines", Sidechain: true})
 	item(ph, 22*m, api.ActivityItem{Kind: api.ActivitySubagent, Summary: "code-reviewer finished", Text: "No issues. One nit: cap the deny reason at 2,000 characters like the server does."})
 	item(ph, 21*m, edit("Edit", "internal/web/static/js/card.js", 1, 1), fileEdit("internal/web/static/js/card.js", 1, 1))
+	item(ph, 17*m, run("Bash", "go test -race ./...", "ok  \tgithub.com/xasdta/pilothouse/internal/api\t0.398s\nok  \tgithub.com/xasdta/pilothouse/internal/daemon\t9.712s\nok  \tgithub.com/xasdta/pilothouse/internal/policy\t2.288s\nok  \tgithub.com/xasdta/pilothouse/internal/web\t4.006s\n214 tests passed", false))
 	item(ph, 12*m, run("Bash", `git commit -am "web: signed answers with rollback"`, "[main 8d03e7b] web: signed answers with rollback\n 3 files changed, 60 insertions(+), 18 deletions(-)", false))
 	item(ph, 80*time.Second, say("All 214 tests pass and the build is clean. Pushing to main so CI can cut the release."))
 	request(70*time.Second, api.Request{ID: "r_gitpush03", SessionID: ph, Checkpoint: api.CheckpointPermission, Tool: "Bash", ToolKind: api.ToolShell,

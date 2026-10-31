@@ -25,8 +25,16 @@
 //   commandView(cmd) → <pre class="code"> with shell highlighting
 //   highlightShell(cmd) → nodes
 //   openRuleSheet(req)              the "Make it a rule" sheet
+//   holdButton(onDone, label?)      press-and-hold button (1 s) for risky answers
+//
+// opts.variant 'ledger' (permission only): Today's compact layout — the
+// command or short diff, one risk line, opts.proof (an element the caller
+// keeps up to date), Deny · Hold to allow · Details.
+// opts.variant 'decision': the request page — outcome on top, the whole
+// command/diff, risk tags, opts.before/opts.after (elements the page keeps
+// up to date) and a sticky answer bar (Hold to allow once for permissions).
 
-import { h, icon, agentBadge, agentClass, agentName, repoName, ago, toMs, requestVerb, grantPrefix, vibrate, relPath, fill, add, richText, uid } from './dom.js';
+import { h, svg, icon, agentBadge, agentClass, agentName, repoName, ago, toMs, requestVerb, grantPrefix, vibrate, relPath, fill, add, richText, uid } from './dom.js';
 import { store, api, changed, signed } from './api.js';
 import { toast, openSheet, go, link, skeleton } from './ui.js';
 import { diffView } from './diff.js';
@@ -190,6 +198,71 @@ function riskRow(req) {
   }, icon(RISK_ICONS[r.code] || 'alert'), h('span', { class: 'sr-only' }, (r.level || 'low') + ' risk: '), r.text || r.code)));
 }
 
+/** One line: the most severe risk, and the rule that asked (Today's open decision). */
+function riskLine(req) {
+  const r = req.risk && req.risk[0];
+  if (!r && !req.policy_rule) return null;
+  return h('div', { class: 'rline ' + (r ? r.level || 'low' : 'none') },
+    r ? icon(RISK_ICONS[r.code] || 'alert', 'sm') : icon('shield', 'sm'),
+    h('span', { class: 'rt' }, r ? r.text || r.code : 'Asked by your rule'),
+    req.policy_rule ? h('span', { class: 'rname', title: 'The rule that asked' }, req.policy_rule) : null);
+}
+
+/** Every risk as an outlined tag (the request page). */
+function riskTags(req) {
+  if (!req.risk || !req.risk.length) return null;
+  return h('div', { class: 'dec-risks' }, req.risk.map((r) => h('span', { class: 'dtag ' + (r.level || 'low') },
+    icon(RISK_ICONS[r.code] || 'alert', 'sm'), h('span', { class: 'sr-only' }, (r.level || 'low') + ' risk: '), r.text || r.code)));
+}
+
+const HOLD_MS = 1000;
+
+/**
+ * A button that acts only after being held for HOLD_MS (pointer, Enter or
+ * Space), so a stray tap in a pocket can't allow anything. Letting go
+ * early says so and does nothing.
+ */
+export function holdButton(onDone, label = 'Hold to allow') {
+  const ring = svg('svg', { viewBox: '0 0 20 20', class: 'ring', 'aria-hidden': 'true' },
+    ['bg', 'fg'].map((cls) => svg('circle', { cx: 10, cy: 10, r: 8, class: cls })));
+  const text = h('span', { class: 'hold-label' }, label);
+  const b = h('button', { class: 'btn primary hold', type: 'button', 'aria-label': label + ': press and hold for one second' }, ring, text);
+  let timer = 0;
+  let hintTimer = 0;
+  const start = () => {
+    if (b.disabled || timer) return;
+    clearTimeout(hintTimer);
+    text.textContent = label;
+    b.classList.add('holding');
+    vibrate(8);
+    timer = setTimeout(() => {
+      timer = 0;
+      b.classList.remove('holding');
+      b.classList.add('held');
+      onDone();
+    }, HOLD_MS);
+  };
+  const stop = () => {
+    if (!timer) return;
+    clearTimeout(timer);
+    timer = 0;
+    b.classList.remove('holding');
+    text.textContent = 'Keep holding';
+    hintTimer = setTimeout(() => { text.textContent = label; }, 1400);
+  };
+  b.addEventListener('pointerdown', (e) => {
+    if (e.button) return;
+    e.preventDefault();
+    if (b.setPointerCapture) { try { b.setPointerCapture(e.pointerId); } catch { /* synthetic event */ } }
+    start();
+  });
+  for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) b.addEventListener(ev, stop);
+  b.addEventListener('keydown', (e) => { if ((e.key === ' ' || e.key === 'Enter') && !e.repeat) { e.preventDefault(); start(); } });
+  b.addEventListener('keyup', (e) => { if (e.key === ' ' || e.key === 'Enter') stop(); });
+  b.addEventListener('contextmenu', (e) => e.preventDefault());
+  return b;
+}
+
 function who(by) {
   const me = store.me && 'device:' + store.me.device.id;
   if (!by || by === me) return '';
@@ -267,10 +340,22 @@ function build(req, opts) {
   function showOutcome(o) {
     els.outcome.className = 'outcome ' + o.cls;
     fill(els.outcome, icon(o.icon, '', 'check'), h('span', null, o.text));
+    if (opts.variant === 'ledger' || opts.variant === 'decision') {
+      // An ink stamp slams onto the decision, as on paper.
+      const word = /answer/i.test(o.text) ? 'ANSWERED' : /approv/i.test(o.text) ? 'APPROVED' : /change/i.test(o.text) ? 'SENT BACK'
+        : o.cls === 'allow' ? 'ALLOWED' : o.cls === 'deny' ? 'DENIED' : 'CLOSED';
+      const old = card.querySelector(':scope > .slip-stamp');
+      if (old) old.remove();
+      add(card, h('span', { class: 'slip-stamp ' + o.cls, 'aria-hidden': 'true' }, word));
+      card.classList.add('stamped');
+    }
     card.classList.add('resolved');
     card.classList.remove('denying', 'revising');
   }
   function clearOutcome() {
+    const st = card.querySelector(':scope > .slip-stamp');
+    if (st) st.remove();
+    card.classList.remove('stamped');
     card.classList.remove('resolved');
     fill(els.outcome);
   }
@@ -342,6 +427,7 @@ function build(req, opts) {
   let reason;
   let denyConfirm;
   let ruleBtn;
+  let denyForm;
   function buildPermission() {
     allowBtn = h('button', { class: 'btn primary', type: 'button', title: 'Allow this one call' }, icon('check'), 'Allow once');
     sessionBtn = h('button', { class: 'btn secondary', type: 'button', title: 'Allow this tool or command prefix until the session ends' }, 'Allow for session');
@@ -367,14 +453,15 @@ function build(req, opts) {
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); denyConfirm.click(); }
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); denyCancel.click(); }
     });
+    denyForm = h('div', { class: 'deny-form' },
+      h('label', { class: 'field-label', for: reasonId }, 'Tell the agent why (optional)'),
+      reason,
+      h('div', { class: 'row-btns' }, denyCancel, denyConfirm));
     return [
       h('div', { class: 'actions' + (opts.slot === 'main' || opts.slot === 'detail' ? ' wide-row' : '') }, denyBtn, sessionBtn, allowBtn),
       h('div', { class: 'card-foot' }, ruleBtn, h('span', { class: 'spacer' }),
         opts.keep ? null : link('/r/' + req.id, { class: 'link-btn quiet-link' }, 'Details', h('span', { class: 'sr-only' }, ' of this request'), icon('chev', 'sm'))),
-      h('div', { class: 'deny-form' },
-        h('label', { class: 'field-label', for: reasonId }, 'Tell the agent why (optional)'),
-        reason,
-        h('div', { class: 'row-btns' }, denyCancel, denyConfirm)),
+      denyForm,
     ];
   }
   function allowOnce() { if (kind === 'permission') send({ behavior: 'allow', scope: 'once' }, { cls: 'allow', icon: 'check', text: 'Allowed' }); }
@@ -467,12 +554,13 @@ function build(req, opts) {
         h('legend', null,
           q.header ? h('span', { class: 'q-head' }, q.header) : null,
           h('span', { class: 'q-text', id: textId }, q.question),
-          multi ? h('span', { class: 'q-multi' }, 'Choose any that apply') : null),
+          multi ? h('span', { class: 'q-multi' }, opts.variant === 'decision' ? 'Choose any' : 'Choose any that apply')
+            : opts.variant === 'decision' ? h('span', { class: 'q-multi' }, 'Pick one') : null),
         opts2));
       st.index = qi;
     });
     hint = h('p', { class: 'answer-hint', 'aria-live': 'polite' });
-    sendAnswer = h('button', { class: 'btn primary', type: 'button' }, icon('check'), 'Send answer');
+    sendAnswer = h('button', { class: 'btn primary', type: 'button' }, icon('check'), opts.variant === 'decision' && (req.questions || []).length > 1 ? 'Send answers' : 'Send answer');
     declineBtn = h('button', { class: 'btn secondary', type: 'button' }, 'Decline');
     controls.push(declineBtn);
     sendAnswer.addEventListener('click', () => {
@@ -500,7 +588,7 @@ function build(req, opts) {
   let feedback;
   function buildPlan() {
     const md = (req.plan && req.plan.markdown) || '';
-    const long = md.length > 700 || md.split('\n').length > 16;
+    const long = opts.variant !== 'decision' && (md.length > 700 || md.split('\n').length > 16);
     const box = h('div', { class: 'plan' + (long ? '' : ' open'), tabindex: '0', role: 'region', 'aria-label': 'Plan' }, renderMarkdown(md, { dropTitle: !!markdownTitle(md), baseLevel: opts.headingLevel || 3 }));
     const more = long ? h('div', { class: 'plan-more' }, h('button', { class: 'link-btn', type: 'button', 'aria-expanded': 'false' }, icon('chevDown', 'sm'), 'Show the whole plan')) : null;
     if (more) {
@@ -550,9 +638,60 @@ function build(req, opts) {
   }
 
   const tail = kind === 'question' ? buildQuestion() : kind === 'plan' ? buildPlan() : buildPermission();
-  add(card, els.timer,
-    h('div', { class: 'req-top' }, agentBadge(req.agent), els.where, els.age),
-    els.context, els.what, els.body, els.risks, kind === 'permission' ? els.meta : null, tail, els.outcome);
+  const ledger = opts.variant === 'ledger' && kind === 'permission';
+  if (ledger) {
+    // Today's open decision: the row above it already says who asks and
+    // what for, so the card is the exact command, its risk, what this
+    // turn proved (opts.proof, owned by the caller) and the answer.
+    card.classList.add('ledger-dec');
+    denyBtn.className = 'btn ghost deny';
+    const hold = holdButton(() => allowOnce());
+    controls.push(hold);
+    allowBtn.hidden = true;
+    add(card, els.body, els.risks, opts.proof || null, denyForm,
+      h('div', { class: 'acts3' }, denyBtn, hold,
+        link('/r/' + req.id, { class: 'btn ghost sq', 'aria-label': 'Details and other options' }, icon('chev'))),
+      els.outcome);
+  } else if (opts.variant === 'decision') {
+    // The request page: the outcome (once closed) on top, then what it
+    // wants in full, the caller's sections (opts.before / opts.after,
+    // owned and kept up to date by the page) and a bar of answers that
+    // stays at the bottom of the screen.
+    card.classList.add('decision');
+    const bar = (...kids) => h('div', { class: 'dec-bar' }, ...kids);
+    const before = opts.before || [];
+    const after = opts.after || [];
+    if (kind === 'permission') {
+      denyBtn.className = 'btn outline deny';
+      const hold = holdButton(() => allowOnce(), 'Hold to allow once');
+      controls.push(hold);
+      allowBtn.hidden = true;
+      sessionBtn.className = 'link-btn dec-session';
+      ruleBtn.className = 'link-btn quiet-link dec-rule';
+      add(card, els.outcome, before, els.body, els.risks, after, denyForm,
+        bar(h('div', { class: 'actions dec-main' }, denyBtn, hold), h('div', { class: 'dec-links' }, sessionBtn, ruleBtn)));
+    } else if (kind === 'question') {
+      const actions = tail[tail.length - 1];
+      const hintEl = tail[tail.length - 2];
+      declineBtn.className = 'btn outline';
+      add(card, els.outcome, before, tail.slice(0, -3), after, bar(hintEl, actions));
+    } else {
+      // [box, more, path, meta, actions, revise form]
+      const [box, , path, , actions, revise] = tail;
+      reviseBtn.className = 'btn outline';
+      const md = box.firstChild;
+      const list = md && [...md.children].find((c) => c.tagName === 'OL' || c.tagName === 'UL');
+      if (list && !/^H\d$/.test((list.previousElementSibling || {}).tagName || '')) {
+        const n = [...list.children].filter((c) => c.tagName === 'LI').length;
+        list.before(h('div', { class: 'dec-lbl' }, `${n} ${n === 1 ? 'step' : 'steps'}`));
+      }
+      add(card, els.outcome, before, box, path, after, revise, bar(actions));
+    }
+  } else {
+    add(card, els.timer,
+      h('div', { class: 'req-top' }, agentBadge(req.agent), els.where, els.age),
+      els.context, els.what, els.body, els.risks, kind === 'permission' ? els.meta : null, tail, els.outcome);
+  }
   if (kind !== 'permission') fill(els.body); // body is part of the tail
 
   function tick(now = Date.now()) {
@@ -597,15 +736,14 @@ function build(req, opts) {
       // The details only change if the request itself does (a new id never reuses a card).
       const sig = r.id + (r.preview ? r.preview.files.length : '') + (r.command || '');
       if (sig !== renderedBodyFor) {
-        fill(els.body, details(r, opts.keep ? 24 : 10)); // the inbox shows a short diff
+        fill(els.body, details(r, opts.variant === 'decision' ? 0 : opts.keep ? 24 : opts.variant === 'ledger' ? 6 : 10)); // lists show a short diff; the page all of it
         renderedBodyFor = sig;
       }
       sessionBtn.title = `Also allow ${grantPrefix(r)} for the rest of this session`;
       sessionBtn.setAttribute('aria-label', `Allow for session: also allow ${grantPrefix(r)} until this session ends`);
       allowBtn.setAttribute('aria-label', `Allow once: ${verb.toLowerCase()} ${r.command || r.summary || r.tool}`);
     }
-    const rr = riskRow(r);
-    fill(els.risks, rr);
+    fill(els.risks, kind !== 'permission' ? riskRow(r) : opts.variant === 'ledger' ? riskLine(r) : opts.variant === 'decision' ? riskTags(r) : riskRow(r));
     // The inbox card keeps to what you need to decide; the rule that asked
     // is shown on the request page.
     const metas = [];

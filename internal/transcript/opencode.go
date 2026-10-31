@@ -128,7 +128,11 @@ func ReadOpenCode(dbPath, sessionID, cwd, cursor string, limit int, now time.Tim
 	if err != nil {
 		return Result{}, err
 	}
-	return Result{Items: items, Cursor: next, Usage: usage}, nil
+	res := Result{Items: items, Cursor: next, Usage: usage}
+	if cursor == "" { // a cursor read has only the newest parts: too few for a receipt
+		res.Receipt = ReceiptOf(items, nil)
+	}
+	return res, nil
 }
 
 type ocRow struct {

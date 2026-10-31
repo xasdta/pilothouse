@@ -89,6 +89,10 @@ func (d *Daemon) act() *activityState {
 }
 
 // Activity reads a session's transcript into a feed.
+// peekOpenCodeLimit is how many OpenCode parts a peek reads, so the
+// receipt sees the whole latest turn even when the caller wants one item.
+const peekOpenCodeLimit = 400
+
 func (d *Daemon) Activity(ctx context.Context, sessionID string, q api.ActivityQuery) (api.Activity, error) {
 	full, err := d.db.ResolveSessionID(ctx, sessionID)
 	if err != nil {
@@ -102,7 +106,11 @@ func (d *Daemon) Activity(ctx context.Context, sessionID string, q api.ActivityQ
 	now := d.now()
 	out := api.Activity{SessionID: s.ID, Items: []api.ActivityItem{}}
 	if s.Agent == api.AgentOpenCode {
-		res, err := transcript.ReadOpenCode(transcript.OpenCodeDB(), s.AgentSessionID, s.Cwd, q.Cursor, q.Limit, now)
+		limit := q.Limit
+		if q.Peek && q.Cursor == "" {
+			limit = max(limit, peekOpenCodeLimit) // enough of the turn for its receipt
+		}
+		res, err := transcript.ReadOpenCode(transcript.OpenCodeDB(), s.AgentSessionID, s.Cwd, q.Cursor, limit, now)
 		if err != nil {
 			if errors.Is(err, transcript.ErrMissing) {
 				out.Note = "No OpenCode transcript yet: OpenCode hasn't written this session to its database."
@@ -114,7 +122,11 @@ func (d *Daemon) Activity(ctx context.Context, sessionID string, q api.ActivityQ
 		if err := d.markReplies(ctx, s.ID, res.Items); err != nil {
 			return api.Activity{}, err
 		}
-		out.Available, out.Items, out.Cursor = true, res.Items, res.Cursor
+		items := res.Items
+		if q.Limit > 0 && len(items) > q.Limit {
+			items = items[len(items)-q.Limit:]
+		}
+		out.Available, out.Items, out.Cursor, out.Receipt = true, items, res.Cursor, res.Receipt
 		if res.Usage != (api.Usage{}) {
 			u := res.Usage
 			out.Usage = &u
@@ -128,7 +140,7 @@ func (d *Daemon) Activity(ctx context.Context, sessionID string, q api.ActivityQ
 	}
 	since := q.Since
 	if since.IsZero() {
-		since = st.lookedSince(s.ID, q.Cursor == "", now)
+		since = st.lookedSince(s.ID, q.Cursor == "" && !q.Peek, now)
 	}
 	extra, err := d.catchUpExtra(ctx, s.ID, since)
 	if err != nil {
@@ -143,7 +155,7 @@ func (d *Daemon) Activity(ctx context.Context, sessionID string, q api.ActivityQ
 	if err := d.markReplies(ctx, s.ID, res.Items); err != nil {
 		return api.Activity{}, err
 	}
-	out.Available, out.Items, out.Cursor, out.Files, out.CatchUp = true, res.Items, res.Cursor, res.Files, res.CatchUp
+	out.Available, out.Items, out.Cursor, out.Files, out.CatchUp, out.Receipt = true, res.Items, res.Cursor, res.Files, res.CatchUp, res.Receipt
 	if res.Usage != (api.Usage{}) {
 		u := res.Usage
 		out.Usage = &u

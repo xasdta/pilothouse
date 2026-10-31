@@ -15,12 +15,14 @@ git diff | pilothouse reply s_k3m -         # text from stdin (up to 16 KB)
 
 On the phone, a session's page shows a reply box when the session can take
 replies (`caps.reply` in the API). How a reply arrives depends on how the
-agent was started:
+agent was started. **For Claude Code, start it with `pilothouse run claude`**:
+replies are then typed into its terminal like your own keystrokes, so Claude
+never holds them.
 
 | Session | How the reply arrives | Interrupt |
 |---|---|---|
 | Started with `pilothouse run` (any agent) | Typed into the agent's terminal: the text as one paste, then Enter | Yes: Esc first |
-| Claude Code started on its own (2.1.224+) | Claude's session messaging socket | No |
+| Claude Code started on its own (2.1.224+) | Claude's session messaging socket. Recent Claude Code versions may hold it until you allow it in the terminal (see below) | No |
 | OpenCode | Its Pilothouse plugin | Yes: aborts the turn |
 | Codex started on its own | Not possible: start it with `pilothouse run codex` | — |
 
@@ -50,6 +52,16 @@ the model treats it as your next prompt. Tool calls it makes still go through
 Claude's permission settings and Pilothouse's rules as usual. If Claude has
 exited or restarted, the reply fails with a clear message and the session
 offers replies again after its next hook.
+
+**Held messages.** Recent Claude Code versions (seen from 2.1.316) can hold
+messages from other sessions until you allow them in Claude's own terminal.
+The message then waits there and the reply looks stuck on the phone.
+Pilothouse does not pretend to be a different kind of sender to get around
+this. Start Claude with `pilothouse run claude` instead (add its own flags
+after `--`, for example `pilothouse run -- claude --continue`): replies to a
+wrapped session are typed into the terminal and are never held. A session
+you already started with plain `claude` keeps holding them until you quit it
+and start it again that way.
 
 Every reply is recorded as a `session.reply` event (text, channel, who sent
 it). Replies from devices are signed by the device key like decisions;

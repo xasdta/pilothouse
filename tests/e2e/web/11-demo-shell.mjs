@@ -20,13 +20,13 @@ const press = async (...keys) => { for (const k of keys) { await page.keyboard.p
 // ---------- Layouts ----------
 check('desktop: sidebar, view and needs-you pane', await visible('.sidebar') && await visible('main') && await visible('.queue'));
 check('desktop: no tab bar', !(await visible('.tabbar')));
-check('desktop: the queue holds the four requests', (await page.$$('.queue article.req')).length === 4);
-check('desktop: inbox centre doesn’t repeat the cards', (await page.$$('main article.req')).length === 0);
+check('desktop: the queue holds the four requests', (await page.$$('.queue .qcard')).length === 4);
+check('desktop: Today lists them as rows and doesn’t repeat the cards', (await page.$$('main .g-need .nrow')).length === 4 && (await page.$$('main article.req')).length === 0);
 check('desktop: sidebar lists sessions', (await page.$$('.sidebar .side-session')).length >= 8);
 await page.setViewport(PHONE);
 await sleep(200);
-check('phone: tab bar with five tabs, no side panes', await visible('.tabbar') && (await page.$$('.tabbar .tab')).length === 5 && !(await visible('.sidebar')) && !(await visible('.queue')));
-check('phone: the cards move into the inbox', (await page.$$('main article.req')).length === 4);
+check('phone: tab bar with three tabs (Today, Rules, Settings), no side panes', await visible('.tabbar') && (await page.$$eval('.tabbar .tab', (t) => t.map((x) => x.innerText.replace(/\d+/g, '').trim()).join(','))) === 'Today,Rules,Settings' && !(await visible('.sidebar')) && !(await visible('.queue')));
+check('phone: Today lists the four, with the oldest permission open in place', (await page.$$('main .g-need .nrow')).length === 4 && (await page.$$('main article.req.ledger-dec')).length === 1);
 await page.setViewport(DESKTOP);
 await sleep(200);
 
@@ -65,7 +65,9 @@ await press('k');
 check('k moves back', (await page.$eval('.is-selected', (e) => e.dataset.request).catch(() => '')) === sel1);
 await shot(page, 'h-keys-selected-desktop-light');
 await press('a');
-check('a allows the selected request', await waitText(page, 'Allowed', 3000, '.queue article[data-request="r_gitpush03"]'));
+check('a once only asks to press it again', await waitText(page, 'Press a again', 3000));
+await press('a');
+check('a a allows the selected request', await waitText(page, 'Allowed', 3000, '.queue article[data-request="r_gitpush03"]'));
 await sleep(1600);
 const gp = await page.evaluate(() => fetch('/api/requests/r_gitpush03').then((r) => r.json()));
 check('a sent a signed allow that the daemon accepted', gp.status === 'decided' && gp.decision.behavior === 'allow', gp.status);
@@ -97,19 +99,23 @@ await shot(page, 'h-help-desktop-light');
 await press('Escape');
 await sleep(150);
 await press('g', 's');
-check('g s goes to sessions', (await path()) === '/sessions');
+check('g s goes to Today (sessions live there now)', (await path()) === '/');
 await press('g', 'r');
 check('g r goes to rules', (await path()) === '/rules');
 await press('n');
 check('n starts a new task', (await path()) === '/new');
 // r on a selected session (phone: j walks the list).
 await page.setViewport(PHONE);
-await goto(page, demo, '/sessions');
-await press('j');
-const sid = await page.$eval('.is-selected', (e) => e.dataset.session || '').catch(() => '');
+await goto(page, demo, '/');
+// j walks Today's rows; step past the requests to a session row.
+let sid = '';
+for (let i = 0; i < 12 && !sid; i++) {
+  await press('j');
+  sid = await page.$eval('.is-selected', (e) => e.dataset.session || '').catch(() => '');
+}
 await press('r');
 await sleep(300);
-check('r on a selected session opens it to reply', sid && (await path()) === '/s/' + sid, `${sid} → ${await path()}`);
+check('r on a selected row opens its session to reply', /^\/s\/s_\w+$/.test(await path()), `${sid} → ${await path()}`);
 await page.setViewport(DESKTOP);
 
 // ---------- Dark mode ----------
@@ -117,21 +123,21 @@ await goto(page, demo, '/settings');
 const bg = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
 await scheme(page, 'dark');
 await sleep(100);
-check('system dark: dark background', (await bg()) === 'rgb(10, 12, 16)', await bg());
+check('system dark: dark background', (await bg()) === 'rgb(18, 17, 14)', await bg());
 await scheme(page, 'light');
 await sleep(100);
-check('system light: light background', (await bg()) === 'rgb(244, 245, 248)', await bg());
+check('system light: light background', (await bg()) === 'rgb(244, 240, 232)', await bg());
 await page.click('[data-theme-mode="dark"]');
 await sleep(100);
-check('manual dark overrides a light system', (await bg()) === 'rgb(10, 12, 16)' && (await page.evaluate(() => document.documentElement.dataset.theme)) === 'dark');
+check('manual dark overrides a light system', (await bg()) === 'rgb(18, 17, 14)' && (await page.evaluate(() => document.documentElement.dataset.theme)) === 'dark');
 await page.reload({ waitUntil: 'domcontentloaded' });
 await page.waitForSelector('main .page-title');
-check('the choice survives a reload (applied before first paint)', (await page.evaluate(() => document.documentElement.dataset.theme)) === 'dark' && (await bg()) === 'rgb(10, 12, 16)');
-check('theme-color follows the choice', (await page.$$eval('meta[name="theme-color"]', (m) => m.map((x) => x.content))).every((c) => c === '#0a0c10'));
+check('the choice survives a reload (applied before first paint)', (await page.evaluate(() => document.documentElement.dataset.theme)) === 'dark' && (await bg()) === 'rgb(18, 17, 14)');
+check('theme-color follows the choice', (await page.$$eval('meta[name="theme-color"]', (m) => m.map((x) => x.content))).every((c) => c === '#12110e'));
 await shot(page, 'h-settings-desktop-manual-dark');
 await page.click('[data-theme-mode="system"]');
 await sleep(100);
-check('System follows the device again', (await bg()) === 'rgb(244, 245, 248)' && !(await page.evaluate(() => document.documentElement.dataset.theme)));
+check('System follows the device again', (await bg()) === 'rgb(244, 240, 232)' && !(await page.evaluate(() => document.documentElement.dataset.theme)));
 await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'reduce' }]);
 check('reduced motion: animations are off', (await page.evaluate(() => {
   const el = document.querySelector('.view');
@@ -183,11 +189,11 @@ check('a card’s rule link lands on the rule', await page.$eval('#rule-protect-
 const swOK = await page.evaluate(async () => {
   const reg = await navigator.serviceWorker.ready;
   const keys = await caches.keys();
-  const c = await caches.open('pilothouse-shell-v2');
+  const c = await caches.open('pilothouse-shell-v5');
   const n = (await c.keys()).length;
   return { active: !!reg.active, keys, n };
 });
-check('service worker: active, shell precached', swOK.active && swOK.keys.includes('pilothouse-shell-v2') && swOK.n >= 30, JSON.stringify(swOK));
+check('service worker: active, shell precached', swOK.active && swOK.keys.includes('pilothouse-shell-v5') && swOK.n >= 30, JSON.stringify(swOK));
 const ctx = browser.defaultBrowserContext();
 await ctx.overridePermissions(demo.base, ['notifications']);
 const cdp = await page.createCDPSession();

@@ -55,7 +55,7 @@ func history(d time.Time, fraction float64) dayRec {
 	case time.Saturday, time.Sunday:
 		n = 1 + rng.IntN(4)
 	}
-	n = int(math.Round(float64(n) * fraction))
+	n = max(1, int(math.Round(float64(n)*fraction))) // a quiet weekend morning still shows something
 	for i := 0; i < n; i++ {
 		var agent, model string
 		switch x := rng.Float64(); {

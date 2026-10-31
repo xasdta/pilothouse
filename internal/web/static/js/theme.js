@@ -10,7 +10,7 @@
 (function (g) {
   'use strict';
   var KEY = 'ph-theme';
-  var COLORS = { light: '#f4f5f8', dark: '#0a0c10' };
+  var COLORS = { light: '#f4f0e8', dark: '#12110e' };
   var root = document.documentElement;
 
   function get() {

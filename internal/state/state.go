@@ -18,6 +18,12 @@ const (
 	// ContradictionWindow: an OSC report that disagrees with a hook less than
 	// this much older is treated as terminal-rendering lag, not news.
 	ContradictionWindow = 2 * time.Second
+	// StartGrace is how long a session that has only reported starting is
+	// shown as "starting". Agents sit at their input box after starting, so
+	// a session that has said nothing since is idle, not still starting.
+	// The grace keeps a session started with a prompt from flashing
+	// "waiting" before that prompt's first hook arrives.
+	StartGrace = 30 * time.Second
 )
 
 // Rule names which resolver rule decided the state.
@@ -31,6 +37,7 @@ const (
 	RuleHookOverOSC Rule = "hook-over-osc"      // 4: OSC contradicted a hook < 2 s older; hook kept
 	RuleStale       Rule = "stale-working"      // 5: last evidence is old "working"
 	RuleStarting    Rule = "starting"           // 6: nothing to go on yet
+	RuleIdleStart   Rule = "idle-since-start"   // 3: started, then nothing for StartGrace
 )
 
 // Evidence is one observation about a session.
@@ -120,6 +127,9 @@ func Resolve(in Input) Result {
 	}
 	if hook >= 0 && res.Fresh[hook] {
 		h := in.Evidence[hook]
+		if h.State == api.StateStarting && in.Now.Sub(h.At) > StartGrace {
+			return res.with(api.StateWaiting, "", h.Layer, "Ready for a prompt", RuleIdleStart)
+		}
 		return res.with(h.State, h.Kind, h.Layer, h.Detail, RuleHook)
 	}
 	if n := len(in.Evidence); n > 0 {
@@ -199,7 +209,10 @@ func orDefault(s, def string) string {
 // errored or exited, or changing why it is blocked.
 func NeedsAttention(prevState api.State, prevKind api.BlockKind, state api.State, kind api.BlockKind) bool {
 	switch state {
-	case api.StateBlocked, api.StateWaiting, api.StateErrored, api.StateExited:
+	case api.StateWaiting:
+		// A session that started and was never used has finished nothing.
+		return prevState != state && prevState != api.StateStarting
+	case api.StateBlocked, api.StateErrored, api.StateExited:
 		return prevState != state || prevKind != kind
 	}
 	return false

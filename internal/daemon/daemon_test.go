@@ -1121,3 +1121,33 @@ func TestPruneReducesRows(t *testing.T) {
 		t.Fatal("database not compacted after pruning")
 	}
 }
+
+// TestIdleStartSweep: a session that starts and is then left alone shows
+// as waiting for a prompt once state.StartGrace passes (the background
+// sweep re-resolves it), without being marked as needing attention; a
+// prompt afterwards makes it working again.
+func TestIdleStartSweep(t *testing.T) {
+	h := newHarness(t)
+	// The clock is read by background loops, so it moves through an
+	// atomic rather than by swapping the function after start.
+	var skew atomic.Int64
+	h.opts = func(o *Options) { o.Now = func() time.Time { return time.Now().Add(time.Duration(skew.Load())) } }
+	h.start(t)
+	h.hook(bg, t, adapters.HookEvent{Kind: adapters.HookSessionStart, AgentSessionID: "idle"})
+	ss, _ := h.c.Sessions(bg)
+	if len(ss) != 1 || ss[0].State != api.StateStarting {
+		t.Fatalf("after start: %+v", ss)
+	}
+	unseen := ss[0].Unseen
+	h.d.db.SetClock(func() time.Time { return time.Now().UTC().Add(time.Hour) })
+	skew.Store(int64(time.Hour))
+	h.d.sweepStale(bg)
+	ss, _ = h.c.Sessions(bg)
+	if ss[0].State != api.StateWaiting || ss[0].StateDetail != "Ready for a prompt" || ss[0].Unseen != unseen {
+		t.Fatalf("after grace: state=%s detail=%q unseen=%v (was %v)", ss[0].State, ss[0].StateDetail, ss[0].Unseen, unseen)
+	}
+	h.hook(bg, t, adapters.HookEvent{Kind: adapters.HookPromptSubmit, AgentSessionID: "idle", Message: "hi"})
+	if ss, _ = h.c.Sessions(bg); ss[0].State != api.StateWorking {
+		t.Fatalf("after prompt: %s", ss[0].State)
+	}
+}

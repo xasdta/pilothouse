@@ -419,7 +419,7 @@ func TestSetupShowsDiffBeforeAsking(t *testing.T) {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	ibxContains(t, out, "--- ~/.claude/settings.json", `-  "theme": "dark"`, `+  "hooks": {"Stop": "pilothouse hook claude"}`,
-		"Phone", "skipped with --yes", "Checklist", "✓ test notification sent", "pilothouse demo")
+		"Phone", "skipped with --yes", "Checklist", "✓ test notification sent", "pilothouse demo", "pilothouse run claude")
 	if strings.Index(out, `+  "hooks"`) > strings.Index(out, "? Install Pilothouse hooks") {
 		t.Fatalf("diff shown after the question:\n%s", out)
 	}
