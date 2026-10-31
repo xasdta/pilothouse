@@ -54,6 +54,7 @@ function repaired(me, wantsNotifications) {
   refreshChrome();
   navigate(wantsNotifications ? '/settings' : '/', true);
   connect();
+  syncPush().catch(() => {});
 }
 
 function render(path) {

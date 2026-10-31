@@ -220,7 +220,13 @@ func (s *Server) handlePair(w http.ResponseWriter, r *http.Request) {
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
 		}
-		if err := s.revoke(context.WithoutCancel(r.Context()), old.ID); err != nil {
+		// It is the same browser, so its notifications carry over; revoke
+		// would otherwise delete them and the phone would go quiet.
+		ctx := context.WithoutCancel(r.Context())
+		if _, err := s.d.DB.ExecContext(ctx, `UPDATE web_push_subs SET device_id = ? WHERE device_id = ?`, id, old.ID); err != nil {
+			s.log.Warn("move push subscriptions", "device", old.ID, "err", err)
+		}
+		if err := s.revoke(ctx, old.ID); err != nil {
 			s.log.Warn("revoke replaced device", "device", old.ID, "err", err)
 		} else {
 			s.log.Info("device replaced", "old", old.ID, "new", id)

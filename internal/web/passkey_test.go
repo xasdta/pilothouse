@@ -275,6 +275,7 @@ func TestPairAgainReplacesSignedInDevice(t *testing.T) {
 	e := newEnv(t)
 	_, pub := genKey(t)
 	ck, oldID := e.pair(pub)
+	e.subscribe(t, ck, "https://push.example/phone")
 	_, pub2 := genKey(t)
 	w := e.do("POST", "/api/pair", pairBody{Code: e.pairCode(), Name: "Test phone", PublicKey: pub2}, reqOpt{cookie: ck})
 	if w.Code != 200 {
@@ -292,5 +293,13 @@ func TestPairAgainReplacesSignedInDevice(t *testing.T) {
 	mustJSON(t, e.localDo("GET", "/v1/devices"), &ds)
 	if len(ds) != 1 || ds[0].ID != me.Device.ID {
 		t.Fatalf("devices = %+v", ds)
+	}
+	// The browser's push subscription moved to the new device.
+	var owner string
+	if err := e.db.QueryRow(`SELECT device_id FROM web_push_subs WHERE endpoint = ?`, "https://push.example/phone").Scan(&owner); err != nil || owner != me.Device.ID {
+		t.Fatalf("push subscription owner = %q, %v; want %s", owner, err, me.Device.ID)
+	}
+	if !ds[0].PushOK {
+		t.Fatal("new device doesn't report push")
 	}
 }
